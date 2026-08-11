@@ -20,8 +20,9 @@ Every platform in the architecture has a defined role.
 
 This project is being developed into an Australian inflation forecasting
 platform using Python, ABS/RBA/market data ingestion, leakage-aware ETL,
-validation, curated modelling datasets, SQL analytics, SARIMA/SARIMAX modelling,
-walk-forward validation, MLflow experiment tracking, FastAPI model serving,
+validation, curated modelling datasets, SQL analytics, SARIMA/SARIMAX/LSTM
+model comparison, walk-forward validation, MLflow experiment tracking, FastAPI
+model serving,
 Docker, Streamlit, automated tests, GitHub Actions, and free-tier cloud
 deployment.
 
@@ -54,15 +55,36 @@ The project asks:
 > prices, interest rates, exchange rates, inflation expectations, commodity
 > prices, and oil prices?
 
-The model comparison will evaluate:
+The model comparison will use a **seasonal naive forecast as the benchmark**
+and three primary forecasting models:
 
-1. Seasonal naive benchmark
-2. SARIMA
-3. SARIMAX with external economic variables
-4. Optional machine-learning benchmark using lagged features
+1. **SARIMA** - univariate statistical forecasting using CPI history
+2. **SARIMAX** - multivariate statistical forecasting using CPI and selected
+   external macroeconomic indicators
+3. **LSTM** - multivariate deep-learning forecasting using historical sequences
+   of CPI and selected macroeconomic indicators
 
-Models will be evaluated using chronological walk-forward validation so the
-forecasting setup reflects how the model would behave in practice.
+The comparison is designed to test whether additional information and model
+complexity improve forecasting performance:
+
+```text
+Seasonal Naive benchmark
+        v
+SARIMA
+univariate statistical model
+        v
+SARIMAX
+multivariate statistical model
+        v
+LSTM
+multivariate nonlinear sequence model
+```
+
+Models will be evaluated using the same chronological walk-forward validation
+framework so the comparison reflects how each model would behave in practice.
+The LSTM is treated as a deep-learning challenger rather than an assumed
+winner, because the quarterly dataset contains relatively few observations for
+training a neural network.
 
 ## 4. Current Status vs Target Architecture
 
@@ -78,7 +100,7 @@ This distinction is important for portfolio credibility.
 | Validation | Implemented with custom checks and optional Pandera in `src/platform_validation.py` | Expand Pandera schemas later |
 | SQL analytics | DuckDB load hook and SQL queries scaffolded | DuckDB locally, BigQuery in cloud |
 | Application database | Schema and optional PostgreSQL quality-report load scaffolded | Supabase PostgreSQL for metrics and run metadata |
-| Multivariate modelling | Planned | SARIMAX and optional Ridge benchmark |
+| Multivariate/deep-learning modelling | Planned | SARIMAX and a compact TensorFlow/Keras LSTM challenger |
 | Experiment tracking | Dependency/config scaffolded | MLflow runs and model artifacts after model comparison |
 | API | Implemented baseline FastAPI service in `api/main.py` | Replace baseline forecast with selected model |
 | Dashboard | Implemented initial Streamlit app in `app/streamlit_app.py` | Add EDA and model-comparison pages |
@@ -100,12 +122,18 @@ flowchart TD
 
     CURATED --> DUCKDB[DuckDB local SQL analysis<br/>implemented]
     CURATED -. optional cloud load .-> BQ[BigQuery analytical warehouse]
-    CURATED --> MODEL[Forecast modelling]
 
-    MODEL --> MLFLOW[MLflow experiment tracking]
+    CURATED --> SARIMA[SARIMA<br/>CPI history]
+    CURATED --> SARIMAX[SARIMAX<br/>CPI + macro predictors]
+    CURATED --> LSTM[LSTM<br/>multivariate sequences]
+    SARIMA --> EVAL[Walk-forward model evaluation]
+    SARIMAX --> EVAL
+    LSTM --> EVAL
+
+    EVAL --> MLFLOW[MLflow experiment tracking]
     VALIDATE -. optional quality-report load .-> POSTGRES[Supabase PostgreSQL<br/>metrics and run metadata]
-    MODEL --> POSTGRES
-    MODEL --> API[FastAPI model-serving API]
+    EVAL --> POSTGRES
+    EVAL --> API[FastAPI model-serving API]
     API --> RENDER[Render API hosting]
     API --> STREAMLIT[Streamlit dashboard]
 
@@ -143,8 +171,8 @@ job-search portfolio:
 | Local analytics | DuckDB | SQL over local analytical files |
 | Cloud warehouse | BigQuery optional load hook | GCP, analytical SQL, warehouse design |
 | Relational store | Supabase PostgreSQL optional load hook | application metadata and relational modelling |
-| Forecasting | statsmodels, pmdarima | SARIMA/SARIMAX, time-series modelling |
-| ML benchmark | scikit-learn | lagged-feature regression baseline |
+| Statistical forecasting | statsmodels, pmdarima | SARIMA/SARIMAX, time-series modelling |
+| Deep learning | TensorFlow, Keras | LSTM sequence modelling, regularisation, neural forecasting |
 | Experiment tracking | MLflow | MLOps and reproducibility |
 | API | FastAPI, Pydantic | backend development and model serving |
 | Dashboard | Streamlit | interactive data product development |
@@ -574,17 +602,22 @@ brent_growth_lag1
 
 ## 16. Forecasting Models
 
-The project should use a small number of justified models.
+The project will use one simple benchmark and three primary models. Each model
+has a different role in the research question rather than being included only
+to increase the number of algorithms.
 
-### Model 1: Seasonal Naive
+### Benchmark: Seasonal Naive
 
 Purpose:
 
-- simple benchmark
-- difficult-to-beat baseline for seasonal economic data
-- tests whether complex models add real value
+- provide a simple seasonal reference forecast
+- test whether the primary models add genuine predictive value
+- retain a difficult-to-beat benchmark for quarterly economic data
 
-### Model 2: SARIMA
+The seasonal naive forecast is a benchmark and is **not counted as one of the
+three primary models**.
+
+### Primary Model 1: SARIMA
 
 The original notebook selected:
 
@@ -592,13 +625,24 @@ The original notebook selected:
 SARIMA(0, 1, 1)(0, 1, 1)[4]
 ```
 
+Inputs:
+
+```text
+historical CPI only
+```
+
 Purpose:
 
-- captures CPI trend
-- captures quarterly seasonality
-- provides an interpretable statistical benchmark
+- capture CPI autoregressive behaviour
+- capture trend through differencing
+- capture quarterly seasonality
+- provide the interpretable univariate statistical baseline
 
-### Model 3: SARIMAX
+Research question:
+
+> How well can CPI be forecast using only its own historical structure?
+
+### Primary Model 2: SARIMAX
 
 SARIMAX extends SARIMA by adding external variables.
 
@@ -615,19 +659,97 @@ SARIMAX + selected combined predictors
 Purpose:
 
 - test whether external economic indicators improve CPI forecasts
-- connect model performance to economic reasoning
+- connect predictive performance to economic reasoning
 - compare variable groups through ablation studies
 
-### Optional Model 4: Ridge Regression
+Research question:
 
-A Ridge regression model can use lagged CPI and macroeconomic features.
+> Does adding economically justified macroeconomic information improve on the
+> univariate SARIMA forecast?
+
+### Primary Model 3: LSTM
+
+A compact Long Short-Term Memory (LSTM) network will be implemented with
+TensorFlow/Keras as the deep-learning challenger.
+
+Unlike SARIMAX, the LSTM can learn nonlinear relationships from multivariate
+historical sequences.
+
+Example input structure:
+
+```text
+Previous 8 quarters
+        |
+        +-- CPI
+        +-- unemployment
+        +-- WPI growth
+        +-- PPI growth
+        +-- cash rate
+        +-- commodity growth
+        +-- oil-price growth
+        +-- inflation expectations
+        |
+        v
+       LSTM
+        |
+        v
+Future CPI forecast
+```
+
+The LSTM should use the same core predictor set as SARIMAX where possible so the
+comparison focuses on modelling approach rather than giving one model more
+information.
+
+A deliberately small architecture should be used, for example:
+
+```text
+Input sequence
+-> LSTM with approximately 8-16 hidden units
+-> Dropout / regularisation
+-> Dense forecast output
+```
 
 Purpose:
 
-- provides a simple machine-learning benchmark
-- handles correlated predictors better than plain linear regression
-- demonstrates ML skills without forcing deep learning onto a small quarterly dataset
+- test whether nonlinear temporal relationships add forecasting value
+- demonstrate sequence modelling and deep-learning workflow
+- compare a neural forecasting method with traditional statistical models
 
+Research question:
+
+> Can a nonlinear sequence model learn useful CPI relationships that are not
+> captured by SARIMAX?
+
+### LSTM Sample-Size Limitation
+
+The quarterly dataset from approximately 1995 onward contains only around
+120-125 observations before sequence construction and train/test splitting.
+This is small for deep learning.
+
+Therefore:
+
+- the LSTM should remain compact
+- aggressive hyperparameter tuning should be avoided
+- early stopping and regularisation should be used
+- feature scaling must be fitted on the training portion only
+- chronological validation must be preserved
+- overfitting should be explicitly assessed
+
+The LSTM is not expected to outperform SARIMA or SARIMAX automatically. If it
+performs worse, that is still an informative result showing that additional
+model complexity is not necessarily beneficial for a small quarterly economic
+dataset.
+
+### Final Model Comparison
+
+The main recruiter-facing comparison will therefore be:
+
+| Model | Role | External predictors | Nonlinear |
+|---|---|---|---|
+| Seasonal Naive | benchmark | No | No |
+| SARIMA | primary model 1 | No | No |
+| SARIMAX | primary model 2 | Yes | No |
+| LSTM | primary model 3 | Yes | Yes |
 ## 17. Model Evaluation
 
 Time-series data should never be randomly shuffled for forecasting evaluation.
@@ -650,10 +772,12 @@ Example output:
 | Model | Horizon | RMSE | MAE | Notes |
 |---|---:|---:|---:|---|
 | Seasonal naive | 1Q | ... | ... | benchmark |
-| SARIMA | 1Q | ... | ... | univariate |
-| SARIMAX | 1Q | ... | ... | selected predictors |
-| SARIMAX | 4Q | ... | ... | selected predictors |
-| SARIMAX | 8Q | ... | ... | selected predictors |
+| SARIMA | 1Q | ... | ... | univariate statistical |
+| SARIMAX | 1Q | ... | ... | multivariate statistical |
+| LSTM | 1Q | ... | ... | multivariate deep learning |
+| SARIMA | 8Q | ... | ... | univariate statistical |
+| SARIMAX | 8Q | ... | ... | multivariate statistical |
+| LSTM | 8Q | ... | ... | multivariate deep learning |
 
 Additional diagnostics:
 
@@ -677,6 +801,7 @@ training window
 test window
 forecast horizon
 validation strategy
+LSTM lookback / hidden units / dropout, when applicable
 RMSE
 MAE
 MSE
@@ -1023,7 +1148,7 @@ cpi-forecast/
 |   |   +-- seasonal_naive.py
 |   |   +-- sarima.py
 |   |   +-- sarimax.py
-|   |   +-- ridge.py
+|   |   +-- lstm.py
 |   +-- evaluation/
 |       +-- backtesting.py
 +-- sql/
@@ -1090,10 +1215,12 @@ Deliverables:
 - seasonal naive benchmark
 - refactored SARIMA baseline
 - SARIMAX feature-group experiments
-- optional Ridge regression benchmark
-- walk-forward validation
+- compact TensorFlow/Keras LSTM challenger
+- leakage-safe feature scaling and sequence construction for LSTM
+- walk-forward validation using comparable forecast periods
 - horizon-level metrics
-- residual diagnostics
+- residual/statistical diagnostics for SARIMA/SARIMAX
+- overfitting and training-history review for LSTM
 
 Portfolio outcome:
 
@@ -1153,7 +1280,7 @@ The project can be considered portfolio-ready when the following works:
 - all variables are transformed to quarterly frequency
 - a curated modelling dataset is generated
 - DuckDB or BigQuery SQL examples work
-- seasonal naive, SARIMA, and SARIMAX are compared
+- seasonal naive is retained as the benchmark and SARIMA, SARIMAX, and LSTM are compared as the three primary models
 - walk-forward validation produces model metrics
 - MLflow records experiments
 - FastAPI returns forecast outputs
@@ -1174,7 +1301,7 @@ Airflow
 Terraform
 Databricks
 SageMaker
-deep learning transformers
+large transformer-based forecasting architectures
 real-time streaming
 complex microservices
 OAuth
@@ -1194,7 +1321,7 @@ sound modelling and clean engineering judgment, not excessive infrastructure.
 | Data wrangling | date parsing, frequency conversion, merging, lag generation |
 | Time-series forecasting | SARIMA, SARIMAX, seasonality, stationarity, backtesting |
 | Econometrics | macroeconomic feature rationale, lag relationships, Granger screening |
-| Machine learning | optional Ridge benchmark with lagged predictors |
+| Deep learning | TensorFlow/Keras LSTM, sequence construction, scaling, regularisation, early stopping |
 | Data engineering | raw/processed/curated layers, manifests, validation, Parquet |
 | SQL | DuckDB queries, BigQuery warehouse tables, aggregation queries |
 | Cloud | BigQuery, Supabase, Render, Streamlit Cloud |
@@ -1216,7 +1343,7 @@ University SARIMA assignment
 -> multi-source macroeconomic dataset
 -> validation and leakage-aware ETL
 -> curated quarterly modelling table
--> SARIMA/SARIMAX/Ridge comparison
+-> SARIMA/SARIMAX/LSTM comparison
 -> walk-forward validation
 -> MLflow experiment tracking
 -> SQL analytics and cloud storage

@@ -6,6 +6,15 @@ This repository contains a university time-series forecasting project for Austra
 
 The assignment goal was to forecast Australian CPI for the next 8 quarters and evaluate how well a time-series model can capture CPI trend and seasonality. CPI is an important inflation indicator, so the project frames the forecast as useful for economic planning, policy analysis, budgeting, and business decision-making.
 
+The portfolio extension will compare **three primary forecasting approaches**:
+
+1. **SARIMA** - the existing univariate statistical model using CPI history
+2. **SARIMAX** - a multivariate statistical model using selected macroeconomic predictors
+3. **LSTM** - a TensorFlow/Keras deep-learning model using multivariate historical sequences
+
+A **seasonal naive forecast** will remain as the common benchmark but will not
+be counted as one of the three primary models.
+
 ## What `cpi_forecast_V1.ipynb` Does
 
 The notebook follows a complete forecasting workflow:
@@ -181,7 +190,7 @@ A future Streamlit dashboard could include:
 
 4. **Forecasting Interface**
 
-   Allow users to select a model type, forecast horizon, training window, and candidate external variables. The interface should display forecasts with confidence intervals and make it easy to compare SARIMA and SARIMAX outputs.
+   Allow users to select a model type, forecast horizon, training window, and candidate external variables. The interface should display forecasts with confidence intervals and make it easy to compare SARIMA, SARIMAX, and LSTM outputs against the seasonal naive benchmark.
 
 5. **Model Evaluation**
 
@@ -203,15 +212,15 @@ A possible future structure is:
 
 ```text
 .
-├── app.py                     # Streamlit dashboard
-├── src/
-│   ├── data_processing.py      # Data loading, cleaning, merging, resampling
-│   ├── eda.py                  # EDA summaries and plotting helpers
-│   ├── modelling.py            # SARIMA, SARIMAX, and benchmark models
-│   └── forecasting.py          # Forecast generation and evaluation helpers
-├── dataset/
-├── README.md
-└── requirements.txt
++-- app.py                     # Streamlit dashboard
++-- src/
+|   +-- data_processing.py      # Data loading, cleaning, merging, resampling
+|   +-- eda.py                  # EDA summaries and plotting helpers
+|   +-- modelling.py            # SARIMA, SARIMAX, LSTM, and benchmark models
+|   +-- forecasting.py          # Forecast generation and evaluation helpers
++-- dataset/
++-- README.md
++-- requirements.txt
 ```
 
 The recommended development path is to build the Streamlit dashboard first, then add FastAPI only if the forecasting model needs to be served through an API.
@@ -250,35 +259,135 @@ The full MSP-EDA deep learning architecture is probably too complex for the curr
 
 These additions would make the next version more research-informed while keeping the modelling approach realistic for the available data size.
 
+## Planned Three-Model Comparison
+
+The portfolio version will use a seasonal naive forecast as a common benchmark
+and compare three primary models that represent increasing modelling
+complexity.
+
+| Model | Type | Main inputs | Purpose |
+|---|---|---|---|
+| SARIMA | univariate statistical | CPI history | measure how far CPI trend, autocorrelation, and seasonality can forecast CPI |
+| SARIMAX | multivariate statistical | CPI + selected macro indicators | test whether external economic information improves the forecast |
+| LSTM | multivariate deep learning | sequences of CPI + selected macro indicators | test whether nonlinear temporal relationships add predictive value |
+
+### SARIMA
+
+The existing SARIMA model remains the statistical baseline. It uses only
+historical CPI and therefore provides a clean reference for measuring the value
+of external predictors.
+
+### SARIMAX
+
+SARIMAX will use economically justified lagged predictors selected through the
+EDA and feature-availability audit. Candidate features include unemployment,
+WPI growth, PPI growth, cash rate, commodity prices, oil-price changes, and
+inflation expectations.
+
+Where possible, the final LSTM should use the same core predictor set so that
+the SARIMAX-versus-LSTM comparison reflects modelling differences rather than
+different information sets.
+
+### LSTM
+
+A compact Long Short-Term Memory network will be implemented using
+**TensorFlow/Keras**.
+
+The LSTM will receive multivariate historical sequences, for example the
+previous 8 quarters of selected features, and forecast future CPI. The initial
+architecture should remain deliberately small, such as one LSTM layer with
+approximately 8-16 hidden units, regularisation/dropout, and a dense output
+layer.
+
+The LSTM is included as a **deep-learning challenger**, not because it is
+expected to outperform SARIMAX automatically.
+
+The quarterly sample is small: a history from approximately 1995 onward
+provides only around 120-125 quarterly observations before sequence creation
+and train/test splitting. This creates a meaningful risk of overfitting.
+
+To make the comparison credible:
+
+- all models should use the same chronological evaluation periods
+- the LSTM scaler must be fitted on training data only
+- validation/test observations must never influence preprocessing
+- the LSTM architecture should remain small
+- early stopping and regularisation should be used
+- results should be reported by forecast horizon where possible
+- worse LSTM performance should be treated as an informative result rather
+  than a failed experiment
+
+A useful research framing is:
+
+> How does forecasting performance change as the project moves from univariate
+> statistical modelling (SARIMA), to multivariate statistical modelling
+> (SARIMAX), to nonlinear sequence modelling (LSTM)?
+
 ## Next Development Plan
 
-The next stage of the project will extend `notebooks/cpi_forecast_V1.ipynb` into a second modelling version. The ETL and validation platform is now implemented, so the planned improvements are:
+The next stage of the project will extend `notebooks/cpi_forecast_V1.ipynb`
+into a consistent three-model forecasting comparison. The ETL and validation
+platform is already implemented, so the modelling work can use the curated
+quarterly macroeconomic dataset directly.
 
 1. **Run EDA on the curated modelling dataset**
 
-   Use `data/curated/quarterly_macro_features.csv` to audit coverage, missingness, CPI inflation behaviour, predictor relationships, lag correlations, and feature suitability.
+   Use `data/curated/quarterly_macro_features.csv` or `.parquet` to audit
+   coverage, missingness, CPI behaviour, predictor relationships, lag
+   correlations, stationarity, and feature suitability.
 
-2. **Choose a long-sample SARIMAX feature set**
+2. **Choose a common long-sample predictor set**
 
-   Start with CPI lags, unemployment, cash rate, WPI growth, PPI growth, commodity growth, WTI growth, and business inflation expectations. Treat shorter-history variables such as household spending, AUD/USD, and Brent as optional experiments.
+   Start with variables that have enough history for a fair multivariate
+   comparison, such as unemployment, cash rate, WPI growth, PPI growth,
+   commodity growth, WTI growth, and business inflation expectations. Treat
+   shorter-history variables as optional sensitivity experiments.
 
-3. **Compare SARIMA with SARIMAX**
+3. **Refactor the existing SARIMA model**
 
-   The current model is SARIMA, which only uses past CPI. The next model will test SARIMAX, which allows external variables. This will help evaluate whether macroeconomic indicators improve CPI forecast accuracy.
+   Preserve the original SARIMA specification and evaluation logic as the
+   univariate statistical baseline, then move the reusable forecasting logic
+   into the modelling pipeline.
 
-4. **Add stronger benchmark models**
+4. **Build SARIMAX**
 
-   The project will compare SARIMAX against simpler benchmarks such as seasonal naive forecasting and possibly ETS/exponential smoothing. This makes the evaluation stronger because the final model must prove that it improves on simpler alternatives.
+   Fit SARIMAX using selected lagged external variables and run feature-group
+   or ablation experiments to determine whether macroeconomic predictors
+   improve CPI forecast accuracy.
 
-5. **Use rolling-window validation**
+5. **Build a compact TensorFlow/Keras LSTM**
 
-   Time-series models should be evaluated in chronological order. The next version will continue using rolling-window validation so the model is tested in a realistic forecasting setting.
+   Convert the curated dataset into chronological multivariate sequences,
+   scale features using training data only, and fit a deliberately small LSTM
+   with regularisation and early stopping. The LSTM will test whether nonlinear
+   temporal relationships improve on SARIMA/SARIMAX.
 
-6. **Interpret which variables matter**
+6. **Keep seasonal naive as the common benchmark**
 
-   The final model should not only forecast CPI, but also explain which indicators appear useful. This will make the project more attractive for a CV because it connects modelling results to economic reasoning.
+   The seasonal naive model remains a reference forecast so that all three
+   primary models must demonstrate value relative to a simple seasonal method.
 
-The goal of the next version is to turn the project from a univariate CPI forecasting assignment into a tested multivariate inflation forecasting workflow using the curated macroeconomic dataset.
+7. **Use the same walk-forward validation framework**
+
+   SARIMA, SARIMAX, and LSTM should be evaluated over comparable forecast
+   origins and horizons. Report RMSE, MAE, and other justified metrics overall
+   and by horizon where possible.
+
+8. **Track all experiments in MLflow**
+
+   Record model parameters, selected features, forecast horizons, metrics, and
+   model-specific settings. For LSTM, also record lookback length, hidden
+   units, dropout, epochs, and early-stopping information.
+
+9. **Interpret the result rather than assuming the most complex model wins**
+
+   SARIMAX may outperform LSTM because the quarterly sample is small. If that
+   occurs, the result should be discussed as evidence that model complexity
+   must be matched to data availability.
+
+The goal is to turn the original univariate assignment into a defensible
+comparison of **SARIMA vs SARIMAX vs LSTM**, supported by a common benchmark,
+leakage-aware preprocessing, and chronological validation.
 
 ## Repository Structure
 
@@ -395,6 +504,7 @@ platforms while keeping cloud credentials out of source control.
 | Docker | API container scaffolded | `Dockerfile` |
 | GitHub Actions | CI and scheduled ETL scaffolded | `.github/workflows/` |
 | MLflow | dependency/config scaffolded | `requirements.txt`, `.env.example` |
+| TensorFlow/Keras LSTM | planned modelling implementation | future `src/models/lstm.py` and model-comparison workflow |
 
 Generate a platform status report with:
 
@@ -421,7 +531,7 @@ those services are deployed until the public URLs and credentials are configured
 
 ## Notes
 
-The notebook is the main submitted university project. The newer `data_retrieval.py` script is an update that improves reproducibility and prepares the repository for future model extensions using external economic indicators. The next modelling step is expected to be a new notebook or script that merges these datasets and tests whether external variables improve forecast performance.
+The notebook is the main submitted university project. The newer `data_retrieval.py` script is an update that improves reproducibility and prepares the repository for future model extensions using external economic indicators. The next modelling step is expected to be a new notebook or script that merges these datasets and tests whether external variables and nonlinear sequence modelling improve forecast performance.
 
 ## References
 
