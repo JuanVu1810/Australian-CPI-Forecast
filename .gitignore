@@ -3,3 +3,31 @@
 .vscode/
 __pycache__/
 *.py[cod]
+
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Python/test caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local logs and runtime outputs
+logs/
+*.log
+
+# OS/browser metadata
+*.Zone.Identifier
+Zone.Identifier
+
+# Regenerable local analytics databases
+data/analytics/*.duckdb
+data/analytics/*.duckdb.wal
+*.sqlite
+*.sqlite3
+
+# Local MLflow runs can grow quickly; keep tracked summaries in reports/ instead.
+mlruns/
