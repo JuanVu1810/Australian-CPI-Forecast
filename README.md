@@ -1,6 +1,6 @@
 # CPI Forecast
 
-This repository contains a university time-series forecasting project for Australian Consumer Price Index (CPI). The main notebook, `cpi_forecast_V1.ipynb`, builds and evaluates a quarterly CPI forecasting model using historical CPI observations from 1995 Q1 to 2022 Q4.
+This repository contains a university time-series forecasting project for Australian Consumer Price Index (CPI), now being extended into an end-to-end data science portfolio project. The original notebook, `notebooks/cpi_forecast_V1.ipynb`, builds and evaluates a quarterly CPI forecasting model using historical CPI observations from 1995 Q1 to 2022 Q4.
 
 ## Project Objective
 
@@ -35,6 +35,34 @@ This model was chosen because the CPI series has a clear upward trend and a repe
 The notebook found that SARIMA slightly improved on a simple seasonal random walk benchmark during rolling validation. On the 8-quarter test period, the final SARIMA model achieved a test MSE of about `46.25` and an RMSE of about `6.8` CPI points.
 
 Residual diagnostics in the notebook suggest that the final model residuals are reasonably well behaved: there is no strong remaining autocorrelation, the residuals are approximately normal, and no obvious trend remains in the residual series.
+
+## Current Portfolio Implementation
+
+The project now has three implemented layers:
+
+1. **Univariate forecasting baseline:** `notebooks/cpi_forecast_V1.ipynb`
+2. **Reproducible data retrieval:** `data_retrieval.py`
+3. **ETL and validation platform:** `src/build_curated_dataset.py`
+
+The ETL/validation layer now uses the target local platforms first:
+
+- custom validation checks for raw, processed, and curated datasets
+- Pandera schema validation for the curated modelling table
+- Parquet output for modelling and analytics
+- DuckDB local analytical database load
+- pytest tests for transformation, validation, and feature logic
+- optional BigQuery and PostgreSQL/Supabase load hooks
+
+Generated ETL outputs:
+
+```text
+data/processed/
+data/curated/quarterly_macro_features.csv
+data/curated/quarterly_macro_features.parquet
+data/analytics/cpi_forecast.duckdb
+reports/data_quality_report.csv
+reports/platform_implementation_status.csv
+```
 
 ## Current Update: `data_retrieval.py`
 
@@ -81,9 +109,9 @@ The additional variables are included because they represent possible drivers of
 
 Adding these variables should help the next version of the project move beyond "CPI depends only on past CPI" toward a more realistic economic forecasting model.
 
-## Planned Exploratory Data Analysis
+## Next Exploratory Data Analysis
 
-Before fitting a multivariate forecasting model, the next version should include a leakage-aware EDA process for the CPI target and all external indicators. This is important because the downloaded datasets have different frequencies, different start dates, and different real-world publication timings.
+Before fitting a multivariate forecasting model, the next notebook should use `data/curated/quarterly_macro_features.csv` or `.parquet` for leakage-aware EDA on the CPI target and all external indicators. This is important because the ETL has aligned the original monthly, quarterly, and daily datasets into one quarterly modelling table.
 
 The planned EDA steps are:
 
@@ -131,7 +159,7 @@ The planned EDA steps are:
 
     For each candidate predictor, document whether the value would actually be known at the forecast origin. Many macroeconomic indicators are published with a delay, and future values of external variables are unknown for an 8-quarter forecast unless they are separately forecast. The final SARIMAX setup should therefore distinguish between lagged historical features that are available at forecast time and future exogenous paths that would need their own assumptions or forecasts.
 
-The EDA should finish with a clean quarterly modelling dataset, a variable coverage table, transformation decisions, candidate lag choices, multicollinearity diagnostics, and a justified shortlist of external predictors for SARIMAX.
+The EDA should finish with a variable coverage table, transformation decisions, candidate lag choices, multicollinearity diagnostics, and a justified shortlist of external predictors for SARIMAX.
 
 ## Planned Interactive Interface
 
@@ -224,15 +252,15 @@ These additions would make the next version more research-informed while keeping
 
 ## Next Development Plan
 
-The next stage of the project will extend `cpi_forecast_V1.ipynb` into a second modelling version. The planned improvements are:
+The next stage of the project will extend `notebooks/cpi_forecast_V1.ipynb` into a second modelling version. The ETL and validation platform is now implemented, so the planned improvements are:
 
-1. **Build a merged modelling dataset**
+1. **Run EDA on the curated modelling dataset**
 
-   Combine CPI with the downloaded ABS, RBA, and market variables. Since the data comes at different frequencies, the monthly and daily variables will need to be converted to quarterly frequency before modelling.
+   Use `data/curated/quarterly_macro_features.csv` to audit coverage, missingness, CPI inflation behaviour, predictor relationships, lag correlations, and feature suitability.
 
-2. **Create lagged economic features**
+2. **Choose a long-sample SARIMAX feature set**
 
-   Many economic variables affect inflation with a delay. For example, interest rate changes, wage growth, exchange rate movements, and oil price shocks may influence CPI one or more quarters later. The next version will create lagged features such as 1-quarter, 2-quarter, and 4-quarter lags.
+   Start with CPI lags, unemployment, cash rate, WPI growth, PPI growth, commodity growth, WTI growth, and business inflation expectations. Treat shorter-history variables such as household spending, AUD/USD, and Brent as optional experiments.
 
 3. **Compare SARIMA with SARIMAX**
 
@@ -250,19 +278,32 @@ The next stage of the project will extend `cpi_forecast_V1.ipynb` into a second 
 
    The final model should not only forecast CPI, but also explain which indicators appear useful. This will make the project more attractive for a CV because it connects modelling results to economic reasoning.
 
-The goal of the next version is to turn the project from a univariate CPI forecasting assignment into a more complete inflation forecasting pipeline using real external economic indicators.
+The goal of the next version is to turn the project from a univariate CPI forecasting assignment into a tested multivariate inflation forecasting workflow using the curated macroeconomic dataset.
 
 ## Repository Structure
 
 ```text
 .
-├── cpi_forecast_V1.ipynb       # Main university forecasting notebook
-├── CPI_train.csv               # Original CPI training data
-├── CPI_forecast.csv            # Forecast output from the notebook
-├── data_retrieval.py           # Updated data download pipeline
-├── requirements-data.txt       # Packages needed for data retrieval
-├── dataset/                    # Downloaded ABS, RBA, and market datasets
-└── README.md                   # Project summary and development plan
++-- notebooks/
+|   +-- cpi_forecast_V1.ipynb       # Main university forecasting notebook
+|   +-- CPI_train.csv               # Original CPI training data
+|   +-- CPI_forecast.csv            # Forecast output from the notebook
++-- dataset/                        # Downloaded ABS, RBA, and market datasets
++-- data/
+|   +-- processed/                  # Quarterly individual series
+|   +-- curated/                    # Final modelling dataset
++-- reports/                        # Data quality and platform status reports
++-- src/                            # ETL, validation, feature, and status code
++-- tests/                          # Validation/transform/feature tests
++-- api/                            # FastAPI baseline forecast service
++-- app/                            # Streamlit dashboard
++-- sql/                            # SQL queries and metadata schema
++-- .github/workflows/              # CI and scheduled ETL workflows
++-- data_retrieval.py
++-- PROJECT_ARCHITECTURE.md
++-- requirements-data.txt
++-- requirements.txt
++-- README.md
 ```
 
 ## Running the Data Retrieval Script
@@ -284,6 +325,99 @@ Or choose a custom output folder:
 ```bash
 python data_retrieval.py 1995 2025 --output-dir dataset
 ```
+
+## Running the ETL and Validation Pipeline
+
+After the source datasets exist under `dataset/`, build the quarterly modelling
+dataset with:
+
+```bash
+python -m src.build_curated_dataset
+```
+
+The ETL pipeline:
+
+1. validates the raw ABS, RBA, and market CSV files
+2. converts monthly, quarterly, and daily series to quarterly frequency
+3. creates CPI inflation, growth-rate, and lagged predictor features
+4. merges all indicators into one modelling table
+5. validates the curated output with custom checks
+6. attempts Pandera schema validation when Pandera is installed
+7. attempts a DuckDB analytical load when DuckDB is installed
+8. writes a data-quality report
+
+Outputs:
+
+```text
+data/processed/
+data/curated/quarterly_macro_features.csv
+data/curated/quarterly_macro_features.parquet
+data/analytics/cpi_forecast.duckdb
+reports/data_quality_report.csv
+```
+
+The Parquet file requires `pyarrow`. Pandera and DuckDB are also optional local
+platform dependencies. If one is not installed, the pipeline records a warning
+and continues with the CSV output and custom validation.
+
+Optional cloud ETL loads:
+
+```bash
+python -m src.build_curated_dataset --load-bigquery
+python -m src.build_curated_dataset --load-postgres
+```
+
+These require the relevant environment variables in `.env.example` to be
+configured first.
+
+Run the validation and transformation tests with:
+
+```bash
+python -m pytest tests
+```
+
+## Target Platform Implementation Status
+
+The repository now includes implementation hooks for the target portfolio
+platforms while keeping cloud credentials out of source control.
+
+| Platform | Current status | Evidence |
+|---|---|---|
+| ETL | implemented | `src/build_curated_dataset.py` |
+| Data validation | implemented | `src/validation.py`, `src/platform_validation.py`, `reports/data_quality_report.csv` |
+| Pandera | implemented in ETL | `src/platform_validation.py` |
+| Parquet | implemented in ETL | `data/curated/quarterly_macro_features.parquet` |
+| DuckDB/SQL analytics | implemented in ETL | `data/analytics/cpi_forecast.duckdb`, `src/platform_loads.py`, `sql/queries/` |
+| Supabase PostgreSQL | schema scaffolded | `sql/schema_app_metadata.sql`, `.env.example` |
+| BigQuery | optional ETL load implemented, configuration required | `src/platform_loads.py`, `.env.example`, `sql/queries/` |
+| FastAPI | baseline service implemented | `api/main.py` |
+| Streamlit | initial dashboard implemented | `app/streamlit_app.py` |
+| Docker | API container scaffolded | `Dockerfile` |
+| GitHub Actions | CI and scheduled ETL scaffolded | `.github/workflows/` |
+| MLflow | dependency/config scaffolded | `requirements.txt`, `.env.example` |
+
+Generate a platform status report with:
+
+```bash
+python -m src.platform_status
+```
+
+Run the baseline API locally after installing `requirements.txt`:
+
+```bash
+uvicorn api.main:app --reload
+```
+
+Run the initial dashboard locally with:
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+Cloud services such as BigQuery, Supabase, Render, and Streamlit Community Cloud
+still require account setup, credentials, and deployment configuration. The
+repository contains the code/configuration entry points, but it should not claim
+those services are deployed until the public URLs and credentials are configured.
 
 ## Notes
 

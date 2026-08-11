@@ -1,0 +1,16 @@
+pandas
+readabs
+yfinance
+xlrd
+pytest
+pyarrow
+pandera
+fastapi
+uvicorn
+pydantic
+streamlit
+mlflow
+duckdb
+google-cloud-bigquery
+sqlalchemy
+psycopg2-binary
