@@ -231,8 +231,8 @@ flowchart TD
     LSTM --> MLFLOW
     EVAL --> MLFLOW
     INTERP --> MLFLOW
-    MLFLOW --> POSTGRES["Supabase PostgreSQL<br/>experiment + run metadata"]
-    MLFLOW --> ARTIFACTS["Artifact storage<br/>models + plots + SHAP"]
+    MLFLOW --> POSTGRES["Supabase PostgreSQL experiment + run metadata"]
+    MLFLOW --> ARTIFACTS["Artifact storage models + plots + SHAP"]
     MLFLOW --> REGISTRY["MLflow Model Registry"]
     REGISTRY --> CHAMPION["Selected champion model"]
     CHAMPION --> API["FastAPI inference API"]
