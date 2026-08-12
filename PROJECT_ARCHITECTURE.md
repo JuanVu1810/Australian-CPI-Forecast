@@ -213,22 +213,22 @@ flowchart TD
     YF["Yahoo Finance market data"] --> INGEST
 
     INGEST --> RAW["Raw data layer (CSV)"]
-    RAW --> VALIDATE["Data validation<br/>Pandera + custom checks"]
+    RAW --> VALIDATE["Data validation (Pandera + custom checks)"]
     VALIDATE --> ETL["ETL + feature engineering"]
-    ETL --> CURATED["Curated quarterly modelling dataset<br/>Parquet"]
+    ETL --> CURATED["Curated quarterly modelling dataset (Parquet)"]
 
-    CURATED --> DUCKDB["DuckDB<br/>primary SQL analytics"]
+    CURATED --> DUCKDB["DuckDB (primary SQL analytics)"]
     CURATED -. "documented target, not built" .-> BQ["BigQuery analytical warehouse"]
 
-    CURATED --> SARIMA["SARIMA<br/>univariate CPI forecasting"]
-    CURATED --> SARIMAX["SARIMAX<br/>CPI + macro predictors"]
-    CURATED --> LSTM["LSTM<br/>multivariate sequences"]
+    CURATED --> SARIMA["SARIMA (univariate CPI forecasting)"]
+    CURATED --> SARIMAX["SARIMAX (CPI + macro predictors)"]
+    CURATED --> LSTM["LSTM (multivariate sequences)"]
 
     SARIMA --> EVAL["Walk-forward evaluation<br/>vs seasonal naive + RBA forecasts"]
     SARIMAX --> EVAL
     LSTM --> EVAL
 
-    EVAL --> INTERP["Interpretability<br/>SARIMAX coefficients + LSTM SHAP"]
+    EVAL --> INTERP["Interpretability (SARIMAX coefficients + LSTM SHAP)"]
 
     SARIMA --> MLFLOW["MLflow Tracking Server"]
     SARIMAX --> MLFLOW
@@ -236,8 +236,8 @@ flowchart TD
     EVAL --> MLFLOW
     INTERP --> MLFLOW
 
-    MLFLOW --> POSTGRES["Supabase PostgreSQL<br/>optional MLflow backend store"]
-    MLFLOW --> ARTIFACTS["Artifact storage<br/>models + plots + SHAP"]
+    MLFLOW --> POSTGRES["Supabase PostgreSQL (optional MLflow backend store)"]
+    MLFLOW --> ARTIFACTS["Artifact storage (models + plots + SHAP)"]
     MLFLOW --> REGISTRY["MLflow Model Registry"]
 
     REGISTRY --> CHAMPION["MLflow @champion alias"]
@@ -246,7 +246,7 @@ flowchart TD
     STREAMLIT["Streamlit dashboard"] --> API
 
     API --> DOCKER["Docker image"]
-    DOCKER --> RENDER["Render API hosting<br/>planned deployment"]
+    DOCKER --> RENDER["Render API hosting (planned deployment)"]
 
     GITHUB["GitHub"] --> ACTIONS["GitHub Actions"]
     ACTIONS --> TESTS["pytest"]
