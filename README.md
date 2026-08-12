@@ -6,14 +6,46 @@ This repository contains a university time-series forecasting project for Austra
 
 The assignment goal was to forecast Australian CPI for the next 8 quarters and evaluate how well a time-series model can capture CPI trend and seasonality. CPI is an important inflation indicator, so the project frames the forecast as useful for economic planning, policy analysis, budgeting, and business decision-making.
 
-The portfolio extension will compare **three primary forecasting approaches**:
+The portfolio extension compares **three primary forecasting approaches** against **two benchmarks**:
 
 1. **SARIMA** - the existing univariate statistical model using CPI history
 2. **SARIMAX** - a multivariate statistical model using selected macroeconomic predictors
 3. **LSTM** - a TensorFlow/Keras deep-learning model using multivariate historical sequences
 
-A **seasonal naive forecast** will remain as the common benchmark but will not
-be counted as one of the three primary models.
+Benchmarks:
+
+- **Seasonal naive** - a simple statistical reference forecast
+- **RBA published inflation forecast** - the Reserve Bank of Australia's own
+  projection for the same period, used to check whether the project's models
+  are competitive with a real professional forecaster, not just better than a
+  naive baseline
+
+Neither benchmark is counted as one of the three primary models.
+
+## Architecture Decisions
+
+This project deliberately does **not** try to wire up every platform a data
+role might touch. Each tool below has a specific, defensible job; anything
+without a clear job is documented as a target rather than built. Full
+reasoning is in `PROJECT_ARCHITECTURE.md` Section 5 -- summary:
+
+| Decision | Reasoning |
+|---|---|
+| DuckDB is the built SQL/analytics layer; BigQuery is a documented target, not deployed | The curated dataset is ~125 quarterly rows read from a local Parquet file. A managed cloud warehouse adds real value at higher data volume or concurrency, neither of which applies yet. |
+| Supabase PostgreSQL holds run/metrics/forecast-output metadata, not a second copy of the curated dataset | Two databases holding the same data demonstrates nothing new. Postgres gets a distinct job: making run history and metrics queryable from the dashboard. |
+| MLflow + FastAPI + Docker + Render is the flagship deployment path | This is the combination that produces something clickable -- a live, tracked, served model -- rather than partially-configured infrastructure. |
+| Kubernetes, Terraform, Spark, Kafka, Airflow are excluded | None of them solve a problem this project actually has: one small model, a handful of requests, no elastic-scaling requirement. |
+| A second benchmark (RBA's own published forecast) was added alongside seasonal naive | Beating seasonal naive is a low bar for an inflation model. Comparing against a real institutional forecaster is the bar that actually matters, and the project reports honestly if it isn't cleared. |
+
+The project is organised around three "flagship" deliverables -- one per data
+role -- so each pillar is demonstrated deeply rather than every pillar being
+demonstrated shallowly:
+
+| Pillar | Flagship (built deep) | Supporting evidence |
+|---|---|---|
+| Data Science | SARIMA vs SARIMAX vs LSTM, walk-forward validated against seasonal naive **and** the RBA forecast, with SARIMAX coefficient and LSTM SHAP interpretability | EDA notebook, feature engineering |
+| Data Engineering | Ingestion → validation → curated Parquet → DuckDB, fully local and credential-free | BigQuery documented as target, not deployed |
+| ML Engineering | Real MLflow runs, FastAPI serving the selected model, Dockerised, deployed on Render | Postgres as the run/metrics metadata store |
 
 ## What `cpi_forecast_V1.ipynb` Does
 
@@ -45,6 +77,11 @@ The notebook found that SARIMA slightly improved on a simple seasonal random wal
 
 Residual diagnostics in the notebook suggest that the final model residuals are reasonably well behaved: there is no strong remaining autocorrelation, the residuals are approximately normal, and no obvious trend remains in the residual series.
 
+**Note on benchmarking:** these results are currently only compared against
+the seasonal naive benchmark. The next modelling phase adds the RBA's own
+published inflation forecast as a second, more demanding benchmark -- see
+"Planned Three-Model Comparison" below.
+
 ## Current Portfolio Implementation
 
 The project now has three implemented layers:
@@ -53,14 +90,14 @@ The project now has three implemented layers:
 2. **Reproducible data retrieval:** `data_retrieval.py`
 3. **ETL and validation platform:** `src/build_curated_dataset.py`
 
-The ETL/validation layer now uses the target local platforms first:
+The ETL/validation layer uses the target local platforms first:
 
 - custom validation checks for raw, processed, and curated datasets
 - Pandera schema validation for the curated modelling table
 - Parquet output for modelling and analytics
-- DuckDB local analytical database load
+- DuckDB local analytical database load (the primary SQL layer -- see Architecture Decisions)
 - pytest tests for transformation, validation, and feature logic
-- optional BigQuery and PostgreSQL/Supabase load hooks
+- optional BigQuery and PostgreSQL/Supabase load hooks, treated as stretch goals
 
 Generated ETL outputs:
 
@@ -96,6 +133,10 @@ The current script retrieves and saves:
 - commodity price indexes
 - WTI crude oil futures
 - Brent crude oil futures
+
+**Planned addition:** RBA published inflation forecast series, retrieved
+through the same pipeline so the second benchmark (see below) is built
+reproducibly rather than pasted in manually.
 
 Downloaded data is saved under `dataset/`, separated into `abs/`, `rba/`, and `market/` folders. A `download_manifest.json` file is also created to record the download time, package versions, selected year range, output files, row counts, and column names.
 
@@ -168,11 +209,15 @@ The planned EDA steps are:
 
     For each candidate predictor, document whether the value would actually be known at the forecast origin. Many macroeconomic indicators are published with a delay, and future values of external variables are unknown for an 8-quarter forecast unless they are separately forecast. The final SARIMAX setup should therefore distinguish between lagged historical features that are available at forecast time and future exogenous paths that would need their own assumptions or forecasts.
 
-The EDA should finish with a variable coverage table, transformation decisions, candidate lag choices, multicollinearity diagnostics, and a justified shortlist of external predictors for SARIMAX.
+12. **Review historical RBA forecast accuracy**
+
+    Before comparing model results to the RBA benchmark, summarise how accurate the RBA's own published forecasts have historically been at each horizon. This sets a realistic accuracy target and avoids over-interpreting a small RMSE difference against a moving reference point.
+
+The EDA should finish with a variable coverage table, transformation decisions, candidate lag choices, multicollinearity diagnostics, a note on historical RBA forecast accuracy, and a justified shortlist of external predictors for SARIMAX.
 
 ## Planned Interactive Interface
 
-The project should use **Streamlit** as the first interactive user interface. Streamlit is a good fit because this is primarily a data science and forecasting project where users need to explore datasets, view EDA charts, choose model settings, and inspect forecast outputs.
+The project uses **Streamlit** as the interactive user interface, and **FastAPI** as the model-serving backend behind it -- both are part of the plan, not an either/or choice. Streamlit is the right fit for exploration, EDA, and model comparison because this is primarily a data science and forecasting project; FastAPI is the right fit for serving the selected model as a reusable endpoint once it's chosen. Streamlit calls FastAPI rather than fitting models directly in the UI, which keeps the dashboard simple and keeps model logic in one place.
 
 A future Streamlit dashboard could include:
 
@@ -190,15 +235,11 @@ A future Streamlit dashboard could include:
 
 4. **Forecasting Interface**
 
-   Allow users to select a model type, forecast horizon, training window, and candidate external variables. The interface should display forecasts with confidence intervals and make it easy to compare SARIMA, SARIMAX, and LSTM outputs against the seasonal naive benchmark.
+   Allow users to select a model type, forecast horizon, training window, and candidate external variables. The interface should display forecasts with confidence intervals and make it easy to compare SARIMA, SARIMAX, and LSTM outputs against both the seasonal naive and RBA published forecast benchmarks.
 
 5. **Model Evaluation**
 
-   Present RMSE, MSE, MAE, benchmark comparisons, rolling-window validation results, and residual diagnostics.
-
-FastAPI is not necessary for the first version of the interface because it does not provide a visual dashboard by itself. It would become useful later if the project needs a model-serving backend, such as an endpoint that returns CPI forecasts to another application.
-
-If a more advanced multivariate forecasting framework is applied later, FastAPI should be considered as an optional deployment layer rather than a replacement for Streamlit. Streamlit would remain useful for exploration, EDA, model comparison, and portfolio demonstration. FastAPI would be useful if the trained model needs to be exposed through endpoints such as:
+   Present RMSE, MSE, MAE, benchmark comparisons against both baselines, rolling-window validation results, residual diagnostics, and interpretability outputs (SARIMAX coefficients, LSTM SHAP values).
 
 ```text
 POST /forecast
@@ -206,13 +247,14 @@ GET /model-metrics
 GET /available-features
 ```
 
-In that setup, Streamlit could act as the user-facing dashboard while FastAPI serves model predictions in the background.
-
-A possible future structure is:
+A possible structure once FastAPI and Streamlit are both wired up:
 
 ```text
 .
-+-- app.py                     # Streamlit dashboard
++-- app/
+|   +-- streamlit_app.py        # Streamlit dashboard, calls the FastAPI backend
++-- api/
+|   +-- main.py                 # FastAPI model-serving endpoints
 +-- src/
 |   +-- data_processing.py      # Data loading, cleaning, merging, resampling
 |   +-- eda.py                  # EDA summaries and plotting helpers
@@ -222,8 +264,6 @@ A possible future structure is:
 +-- README.md
 +-- requirements.txt
 ```
-
-The recommended development path is to build the Streamlit dashboard first, then add FastAPI only if the forecasting model needs to be served through an API.
 
 ## Advanced Forecasting Ideas From Recent Literature
 
@@ -261,15 +301,22 @@ These additions would make the next version more research-informed while keeping
 
 ## Planned Three-Model Comparison
 
-The portfolio version will use a seasonal naive forecast as a common benchmark
-and compare three primary models that represent increasing modelling
-complexity.
+The portfolio version uses two benchmarks -- seasonal naive and the RBA's own
+published inflation forecast -- and compares three primary models that
+represent increasing modelling complexity.
 
 | Model | Type | Main inputs | Purpose |
 |---|---|---|---|
 | SARIMA | univariate statistical | CPI history | measure how far CPI trend, autocorrelation, and seasonality can forecast CPI |
 | SARIMAX | multivariate statistical | CPI + selected macro indicators | test whether external economic information improves the forecast |
 | LSTM | multivariate deep learning | sequences of CPI + selected macro indicators | test whether nonlinear temporal relationships add predictive value |
+
+**Why two benchmarks:** seasonal naive tests whether a model beats a simple
+statistical floor. The RBA published forecast tests something more useful --
+whether the model is competitive with a real institution that has access to
+policy intentions, business liaison data, and analyst judgment the statistical
+models don't see. A model that only clears the naive bar is a weaker result
+than one that also holds up against the RBA's own track record.
 
 ### SARIMA
 
@@ -287,6 +334,11 @@ inflation expectations.
 Where possible, the final LSTM should use the same core predictor set so that
 the SARIMAX-versus-LSTM comparison reflects modelling differences rather than
 different information sets.
+
+**Interpretability:** fitted SARIMAX coefficients will be reported alongside
+accuracy metrics, with a check that each coefficient's sign and approximate
+magnitude match basic macroeconomic expectations (e.g. cash rate increases
+should eventually be associated with lower inflation, with a lag).
 
 ### LSTM
 
@@ -317,24 +369,34 @@ To make the comparison credible:
 - worse LSTM performance should be treated as an informative result rather
   than a failed experiment
 
+**Interpretability:** permutation importance or SHAP values will be computed
+for the trained LSTM and compared to the SARIMAX coefficients. Similar
+rankings across both models strengthen confidence in which predictors
+actually matter; disagreement is itself worth discussing.
+
 A useful research framing is:
 
 > How does forecasting performance change as the project moves from univariate
 > statistical modelling (SARIMA), to multivariate statistical modelling
-> (SARIMAX), to nonlinear sequence modelling (LSTM)?
+> (SARIMAX), to nonlinear sequence modelling (LSTM) -- and does any of that
+> added complexity close the gap to the RBA's own forecast accuracy?
 
 ## Next Development Plan
 
-The next stage of the project will extend `notebooks/cpi_forecast_V1.ipynb`
-into a consistent three-model forecasting comparison. The ETL and validation
-platform is already implemented, so the modelling work can use the curated
-quarterly macroeconomic dataset directly.
+The next stage of the project extends `notebooks/cpi_forecast_V1.ipynb` into a
+consistent three-model forecasting comparison, then builds outward into the
+two other flagship pillars (see Architecture Decisions). The ETL and
+validation platform is already implemented, so the modelling work can use the
+curated quarterly macroeconomic dataset directly.
+
+**Data Science flagship (build first):**
 
 1. **Run EDA on the curated modelling dataset**
 
    Use `data/curated/quarterly_macro_features.csv` or `.parquet` to audit
    coverage, missingness, CPI behaviour, predictor relationships, lag
-   correlations, stationarity, and feature suitability.
+   correlations, stationarity, and feature suitability, including a review of
+   historical RBA forecast accuracy.
 
 2. **Choose a common long-sample predictor set**
 
@@ -351,43 +413,71 @@ quarterly macroeconomic dataset directly.
 
 4. **Build SARIMAX**
 
-   Fit SARIMAX using selected lagged external variables and run feature-group
-   or ablation experiments to determine whether macroeconomic predictors
-   improve CPI forecast accuracy.
+   Fit SARIMAX using selected lagged external variables, run feature-group or
+   ablation experiments, and report coefficient interpretation alongside
+   accuracy metrics.
 
 5. **Build a compact TensorFlow/Keras LSTM**
 
    Convert the curated dataset into chronological multivariate sequences,
-   scale features using training data only, and fit a deliberately small LSTM
-   with regularisation and early stopping. The LSTM will test whether nonlinear
-   temporal relationships improve on SARIMA/SARIMAX.
+   scale features using training data only, fit a deliberately small LSTM
+   with regularisation and early stopping, and compute SHAP or permutation
+   importance.
 
-6. **Keep seasonal naive as the common benchmark**
+6. **Keep both benchmarks in every comparison**
 
-   The seasonal naive model remains a reference forecast so that all three
-   primary models must demonstrate value relative to a simple seasonal method.
+   Seasonal naive and the RBA published forecast should both appear in every
+   result table, so all three primary models are shown against a statistical
+   floor and a real-world bar.
 
 7. **Use the same walk-forward validation framework**
 
    SARIMA, SARIMAX, and LSTM should be evaluated over comparable forecast
    origins and horizons. Report RMSE, MAE, and other justified metrics overall
-   and by horizon where possible.
+   and by horizon, against both benchmarks.
 
-8. **Track all experiments in MLflow**
+8. **Interpret the result rather than assuming the most complex model wins**
 
-   Record model parameters, selected features, forecast horizons, metrics, and
-   model-specific settings. For LSTM, also record lookback length, hidden
-   units, dropout, epochs, and early-stopping information.
+   SARIMAX may outperform LSTM because the quarterly sample is small, and none
+   of the models may beat the RBA. If that occurs, the result should be
+   discussed as evidence that model complexity must be matched to data
+   availability, and that institutional forecasters have information
+   advantages a purely statistical model can't replicate.
 
-9. **Interpret the result rather than assuming the most complex model wins**
+**ML Engineering flagship (build second):**
 
-   SARIMAX may outperform LSTM because the quarterly sample is small. If that
-   occurs, the result should be discussed as evidence that model complexity
-   must be matched to data availability.
+9. **Track all experiments in MLflow**
+
+   Record model parameters, selected features, forecast horizons, metrics,
+   and model-specific settings for every run from step 3-5 above, not as a
+   later add-on. For LSTM, also record lookback length, hidden units,
+   dropout, epochs, and early-stopping information.
+
+10. **Serve the selected model through FastAPI, and deploy it**
+
+    Wire up `/health`, `/models`, `/metrics`, and `/forecast`, containerise
+    with Docker, and deploy to Render so there is a live, clickable endpoint.
+
+**Data Engineering flagship (build third):**
+
+11. **Finalise DuckDB analytics and automate the pipeline**
+
+    Confirm the DuckDB SQL examples run against the finished curated dataset,
+    add the Postgres run/metrics metadata store, and wire up GitHub Actions
+    for CI and scheduled ETL.
+
+**Supporting polish (build last):**
+
+12. **Build out the Streamlit dashboard**
+
+    Add the EDA, forecast, and model-comparison pages, calling the deployed
+    FastAPI endpoint rather than fitting models in the UI.
 
 The goal is to turn the original univariate assignment into a defensible
-comparison of **SARIMA vs SARIMAX vs LSTM**, supported by a common benchmark,
-leakage-aware preprocessing, and chronological validation.
+comparison of **SARIMA vs SARIMAX vs LSTM**, against both a statistical
+baseline and a real institutional forecaster, supported by leakage-aware
+preprocessing, chronological validation, and one deep, working example of
+each of the three skill pillars in Architecture Decisions.
 
 ## Repository Structure
 
@@ -404,7 +494,7 @@ leakage-aware preprocessing, and chronological validation.
 +-- reports/                        # Data quality and platform status reports
 +-- src/                            # ETL, validation, feature, and status code
 +-- tests/                          # Validation/transform/feature tests
-+-- api/                            # FastAPI baseline forecast service
++-- api/                            # FastAPI model-serving service
 +-- app/                            # Streamlit dashboard
 +-- sql/                            # SQL queries and metadata schema
 +-- .github/workflows/              # CI and scheduled ETL workflows
@@ -469,15 +559,17 @@ The Parquet file requires `pyarrow`. Pandera and DuckDB are also optional local
 platform dependencies. If one is not installed, the pipeline records a warning
 and continues with the CSV output and custom validation.
 
-Optional cloud ETL loads:
+Optional, stretch-goal cloud ETL loads (documented target architecture, not
+required for the MVP -- see Architecture Decisions above):
 
 ```bash
 python -m src.build_curated_dataset --load-bigquery
 python -m src.build_curated_dataset --load-postgres
 ```
 
-These require the relevant environment variables in `.env.example` to be
-configured first.
+`--load-postgres` writes run/metrics metadata, not a duplicate of the curated
+dataset. These require the relevant environment variables in `.env.example`
+to be configured first.
 
 Run the validation and transformation tests with:
 
@@ -487,24 +579,27 @@ python -m pytest tests
 
 ## Target Platform Implementation Status
 
-The repository now includes implementation hooks for the target portfolio
-platforms while keeping cloud credentials out of source control.
+The repository includes implementation hooks for the target portfolio
+platforms while keeping cloud credentials out of source control. The
+"Flagship" column indicates which pieces are the three deep, headline
+deliverables described in Architecture Decisions above -- these should be
+fully working before anything else gets added.
 
-| Platform | Current status | Evidence |
-|---|---|---|
-| ETL | implemented | `src/build_curated_dataset.py` |
-| Data validation | implemented | `src/validation.py`, `src/platform_validation.py`, `reports/data_quality_report.csv` |
-| Pandera | implemented in ETL | `src/platform_validation.py` |
-| Parquet | implemented in ETL | `data/curated/quarterly_macro_features.parquet` |
-| DuckDB/SQL analytics | implemented in ETL | `data/analytics/cpi_forecast.duckdb`, `src/platform_loads.py`, `sql/queries/` |
-| Supabase PostgreSQL | schema scaffolded | `sql/schema_app_metadata.sql`, `.env.example` |
-| BigQuery | optional ETL load implemented, configuration required | `src/platform_loads.py`, `.env.example`, `sql/queries/` |
-| FastAPI | baseline service implemented | `api/main.py` |
-| Streamlit | initial dashboard implemented | `app/streamlit_app.py` |
-| Docker | API container scaffolded | `Dockerfile` |
-| GitHub Actions | CI and scheduled ETL scaffolded | `.github/workflows/` |
-| MLflow | dependency/config scaffolded | `requirements.txt`, `.env.example` |
-| TensorFlow/Keras LSTM | planned modelling implementation | future `src/models/lstm.py` and model-comparison workflow |
+| Platform | Current status | Flagship? | Evidence |
+|---|---|---|---|
+| ETL | implemented | | `src/build_curated_dataset.py` |
+| Data validation | implemented | | `src/validation.py`, `src/platform_validation.py`, `reports/data_quality_report.csv` |
+| Pandera | implemented in ETL | | `src/platform_validation.py` |
+| Parquet | implemented in ETL | | `data/curated/quarterly_macro_features.parquet` |
+| DuckDB/SQL analytics | implemented in ETL | **DE flagship** | `data/analytics/cpi_forecast.duckdb`, `src/platform_loads.py`, `sql/queries/` |
+| BigQuery | documented target only, optional load hook, not deployed | | `src/platform_loads.py`, `.env.example`, `sql/queries/`, `PROJECT_ARCHITECTURE.md` Section 5.1 |
+| Supabase PostgreSQL | schema scaffolded, scoped to run/metrics metadata | supporting for MLE flagship | `sql/schema_app_metadata.sql`, `.env.example`, `PROJECT_ARCHITECTURE.md` Section 5.2 |
+| SARIMA / SARIMAX / LSTM comparison + RBA benchmark | planned modelling implementation | **DS flagship** | future `src/models/`, `src/interpretability/` |
+| MLflow | dependency/config scaffolded, real runs planned | **MLE flagship** | `requirements.txt`, `.env.example` |
+| FastAPI | baseline service implemented, deployment planned | **MLE flagship** | `api/main.py` |
+| Docker / Render | container scaffolded, live deployment planned | **MLE flagship** | `Dockerfile` |
+| Streamlit | initial dashboard implemented | supporting | `app/streamlit_app.py` |
+| GitHub Actions | CI and scheduled ETL scaffolded | supporting | `.github/workflows/` |
 
 Generate a platform status report with:
 
@@ -524,14 +619,15 @@ Run the initial dashboard locally with:
 streamlit run app/streamlit_app.py
 ```
 
-Cloud services such as BigQuery, Supabase, Render, and Streamlit Community Cloud
-still require account setup, credentials, and deployment configuration. The
-repository contains the code/configuration entry points, but it should not claim
-those services are deployed until the public URLs and credentials are configured.
+Cloud services such as Supabase and Render still require account setup,
+credentials, and deployment configuration. BigQuery is intentionally not on
+that path yet (see Architecture Decisions). The repository contains the
+code/configuration entry points, but it should not claim services are
+deployed until public URLs and credentials are configured and verified.
 
 ## Notes
 
-The notebook is the main submitted university project. The newer `data_retrieval.py` script is an update that improves reproducibility and prepares the repository for future model extensions using external economic indicators. The next modelling step is expected to be a new notebook or script that merges these datasets and tests whether external variables and nonlinear sequence modelling improve forecast performance.
+The notebook is the main submitted university project. The newer `data_retrieval.py` script is an update that improves reproducibility and prepares the repository for future model extensions using external economic indicators. The next modelling step is expected to be a new notebook or script that merges these datasets and tests whether external variables, nonlinear sequence modelling, and comparison against a real professional forecaster improve on the original SARIMA result.
 
 ## References
 
