@@ -111,36 +111,36 @@ This distinction is important for portfolio credibility.
 
 ```mermaid
 flowchart TD
-    ABS[ABS economic data] --> INGEST[Python ingestion]
-    RBA[RBA economic data] --> INGEST
-    YF[Yahoo Finance market data] --> INGEST
+    ABS["ABS economic data"] --> INGEST["Python ingestion"]
+    RBA["RBA economic data"] --> INGEST
+    YF["Yahoo Finance market data"] --> INGEST
 
-    INGEST --> RAW[Raw data layer<br/>CSV files]
-    RAW --> VALIDATE[Data validation<br/>Pandera and custom checks]
-    VALIDATE --> ETL[ETL and feature engineering]
-    ETL --> CURATED[Curated quarterly modelling dataset<br/>Parquet]
+    INGEST --> RAW["Raw data layer (CSV files)"]
+    RAW --> VALIDATE["Data validation (Pandera and custom checks)"]
+    VALIDATE --> ETL["ETL and feature engineering"]
+    ETL --> CURATED["Curated quarterly modelling dataset (Parquet)"]
 
-    CURATED --> DUCKDB[DuckDB local SQL analysis<br/>implemented]
-    CURATED -. optional cloud load .-> BQ[BigQuery analytical warehouse]
+    CURATED --> DUCKDB["DuckDB local SQL analysis implemented"]
+    CURATED -. "optional cloud load" .-> BQ["BigQuery analytical warehouse"]
 
-    CURATED --> SARIMA[SARIMA<br/>CPI history]
-    CURATED --> SARIMAX[SARIMAX<br/>CPI + macro predictors]
-    CURATED --> LSTM[LSTM<br/>multivariate sequences]
-    SARIMA --> EVAL[Walk-forward model evaluation]
+    CURATED --> SARIMA["SARIMA CPI history"]
+    CURATED --> SARIMAX["SARIMAX CPI + macro predictors"]
+    CURATED --> LSTM["LSTM multivariate sequences"]
+    SARIMA --> EVAL["Walk-forward model evaluation"]
     SARIMAX --> EVAL
     LSTM --> EVAL
 
-    EVAL --> MLFLOW[MLflow experiment tracking]
-    VALIDATE -. optional quality-report load .-> POSTGRES[Supabase PostgreSQL<br/>metrics and run metadata]
+    EVAL --> MLFLOW["MLflow experiment tracking"]
+    VALIDATE -. "optional quality-report load" .-> POSTGRES["Supabase PostgreSQL metrics and run metadata"]
     EVAL --> POSTGRES
-    EVAL --> API[FastAPI model-serving API]
-    API --> RENDER[Render API hosting]
-    API --> STREAMLIT[Streamlit dashboard]
+    EVAL --> API["FastAPI model-serving API"]
+    API --> RENDER["Render API hosting"]
+    API --> STREAMLIT["Streamlit dashboard"]
 
-    GITHUB[GitHub] --> ACTIONS[GitHub Actions]
-    ACTIONS --> TESTS[pytest]
-    ACTIONS --> SCHEDULE[Scheduled ETL]
-    API --> DOCKER[Docker image]
+    GITHUB["GitHub"] --> ACTIONS["GitHub Actions"]
+    ACTIONS --> TESTS["pytest"]
+    ACTIONS --> SCHEDULE["Scheduled ETL"]
+    API --> DOCKER["Docker image"]
     DOCKER --> RENDER
 ```
 
