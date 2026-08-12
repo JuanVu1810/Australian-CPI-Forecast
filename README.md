@@ -32,7 +32,7 @@ reasoning is in `PROJECT_ARCHITECTURE.md` Section 5 -- summary:
 | Decision | Reasoning |
 |---|---|
 | DuckDB is the built SQL/analytics layer; BigQuery is a documented target, not deployed | The curated dataset is ~125 quarterly rows read from a local Parquet file. A managed cloud warehouse adds real value at higher data volume or concurrency, neither of which applies yet. |
-| Supabase PostgreSQL holds run/metrics/forecast-output metadata, not a second copy of the curated dataset | Two databases holding the same data demonstrates nothing new. Postgres gets a distinct job: making run history and metrics queryable from the dashboard. |
+| Supabase PostgreSQL holds MLflow backend and application run metadata, not a second copy of the curated dataset | Two databases holding the same data demonstrates nothing new. Postgres gets a distinct job: storing experiment/run metadata that can be queried from the dashboard, while artifacts stay in MLflow artifact storage. |
 | MLflow + FastAPI + Docker + Render is the flagship deployment path | This is the combination that produces something clickable once deployed -- a tracked, served model -- rather than partially-configured infrastructure. |
 | Kubernetes, Terraform, Spark, Kafka, Airflow are excluded | None of them solve a problem this project actually has: one small model, a handful of requests, no elastic-scaling requirement. |
 | A second benchmark (RBA's own published forecast) was added alongside seasonal naive | Beating seasonal naive is a low bar for an inflation model. Comparing against a real institutional forecaster is the bar that actually matters, and the project reports honestly if it isn't cleared. |
@@ -45,7 +45,7 @@ demonstrated shallowly:
 |---|---|---|
 | Data Science | SARIMA vs SARIMAX vs LSTM, walk-forward validated against seasonal naive **and** the RBA forecast, with SARIMAX coefficient and LSTM SHAP interpretability | EDA notebook, feature engineering |
 | Data Engineering | Ingestion → validation → curated Parquet → DuckDB, fully local and credential-free | BigQuery documented as target, not deployed |
-| ML Engineering | MLflow runs, model registry, FastAPI selected-model serving, Docker, and planned Render deployment | Postgres as the run/metrics metadata store |
+| ML Engineering | MLflow runs, model registry with `@champion`, FastAPI selected-model serving, Docker, and planned Render deployment | Postgres as the optional MLflow backend and run metadata store |
 
 ## What `cpi_forecast_V1.ipynb` Does
 
@@ -593,7 +593,7 @@ fully working before anything else gets added.
 | Parquet | implemented in ETL | | `data/curated/quarterly_macro_features.parquet` |
 | DuckDB/SQL analytics | implemented in ETL | **DE flagship** | `data/analytics/cpi_forecast.duckdb`, `src/platform_loads.py`, `sql/queries/` |
 | BigQuery | documented target only, optional load hook, not deployed | | `src/platform_loads.py`, `.env.example`, `sql/queries/`, `PROJECT_ARCHITECTURE.md` Section 5.1 |
-| Supabase PostgreSQL | schema scaffolded, scoped to run/metrics metadata | supporting for MLE flagship | `sql/schema_app_metadata.sql`, `.env.example`, `PROJECT_ARCHITECTURE.md` Section 5.2 |
+| Supabase PostgreSQL | schema scaffolded, scoped to MLflow backend and run metadata | supporting for MLE flagship | `sql/schema_app_metadata.sql`, `.env.example`, `PROJECT_ARCHITECTURE.md` Section 5.2 |
 | SARIMA / SARIMAX / LSTM comparison + RBA benchmark | planned modelling implementation | **DS flagship** | future `src/models/`, `src/interpretability/` |
 | MLflow | dependency/config scaffolded, real runs planned | **MLE flagship** | `requirements.txt`, `.env.example` |
 | FastAPI | baseline service implemented, deployment planned | **MLE flagship** | `api/main.py` |

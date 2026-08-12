@@ -28,7 +28,7 @@ were scoped out for now.
 |---|---|---|
 | Data Science | SARIMA vs SARIMAX vs LSTM comparison, walk-forward validated, benchmarked against both seasonal naive and the RBA's own published inflation forecast, with interpretability | EDA notebook, feature engineering |
 | Data Engineering | Ingestion -> validation -> curated Parquet -> DuckDB, fully local and credential-free | BigQuery documented as target warehouse architecture, not deployed |
-| ML Engineering | MLflow experiment tracking, model registry, FastAPI selected-model serving, Docker, and planned Render deployment | Postgres/Supabase as the run/metrics metadata store (not a duplicate warehouse) |
+| ML Engineering | MLflow experiment tracking, model registry, FastAPI selected-model serving, Docker, and planned Render deployment | Postgres/Supabase as the optional MLflow backend/run metadata store (not a duplicate warehouse) |
 
 ## 2. Recruiter-Facing Summary
 
@@ -159,16 +159,18 @@ decision itself -- recognising when a managed warehouse is not yet justified
 -- is the data-engineering judgment being demonstrated, not the absence of
 GCP exposure.
 
-### 5.2 Why Postgres/Supabase holds run metadata, not a second copy of the data
+### 5.2 Why Postgres/Supabase holds MLflow backend and run metadata, not a second copy of the data
 
 Rather than duplicating the analytical dataset in a second database (which
 would just be "BigQuery lite" with no new skill demonstrated), Postgres is
 scoped narrowly to what a relational store is actually good at: tracking
-`pipeline_runs`, `model_metrics`, and `forecast_results` over time, i.e. the
-same kind of metadata MLflow tracks, but queryable from the Streamlit
-dashboard without re-running MLflow's API. This gives Postgres a distinct job
-from DuckDB instead of overlapping with it, which is the detail an
-interviewer is actually checking for when they ask "why two databases."
+MLflow experiment metadata and application-level `pipeline_runs`,
+`model_metrics`, and `forecast_results` over time. Supabase PostgreSQL can be
+used as the planned MLflow backend store once configured, while model files,
+plots, and SHAP outputs remain in MLflow artifact storage. This gives
+Postgres a distinct job from DuckDB instead of overlapping with it, which is
+the detail an interviewer is actually checking for when they ask "why two
+databases."
 
 ### 5.3 Why MLflow + FastAPI + Docker + Render is the ML Engineering flagship
 
@@ -210,40 +212,45 @@ flowchart TD
     RBA["RBA economic data + published forecasts"] --> INGEST
     YF["Yahoo Finance market data"] --> INGEST
 
-    INGEST --> RAW["Raw data layer (CSV files)"]
-    RAW --> VALIDATE["Data validation (Pandera and custom checks)"]
-    VALIDATE --> ETL["ETL and feature engineering"]
-    ETL --> CURATED["Curated quarterly modelling dataset (Parquet)"]
+    INGEST --> RAW["Raw data layer (CSV)"]
+    RAW --> VALIDATE["Data validation<br/>Pandera + custom checks"]
+    VALIDATE --> ETL["ETL + feature engineering"]
+    ETL --> CURATED["Curated quarterly modelling dataset<br/>Parquet"]
 
-    CURATED --> DUCKDB["DuckDB - built, primary SQL analytics"]
+    CURATED --> DUCKDB["DuckDB<br/>primary SQL analytics"]
     CURATED -. "documented target, not built" .-> BQ["BigQuery analytical warehouse"]
 
-    CURATED --> SARIMA["SARIMA CPI history"]
-    CURATED --> SARIMAX["SARIMAX CPI + macro predictors"]
-    CURATED --> LSTM["LSTM multivariate sequences"]
-    SARIMA --> EVAL["Walk-forward evaluation vs seasonal naive + RBA forecast"]
+    CURATED --> SARIMA["SARIMA<br/>univariate CPI forecasting"]
+    CURATED --> SARIMAX["SARIMAX<br/>CPI + macro predictors"]
+    CURATED --> LSTM["LSTM<br/>multivariate sequences"]
+
+    SARIMA --> EVAL["Walk-forward evaluation<br/>vs seasonal naive + RBA forecasts"]
     SARIMAX --> EVAL
     LSTM --> EVAL
-    EVAL --> INTERP["Interpretability: SARIMAX coefficients, LSTM SHAP"]
+
+    EVAL --> INTERP["Interpretability<br/>SARIMAX coefficients + LSTM SHAP"]
 
     SARIMA --> MLFLOW["MLflow Tracking Server"]
     SARIMAX --> MLFLOW
     LSTM --> MLFLOW
     EVAL --> MLFLOW
     INTERP --> MLFLOW
-    MLFLOW --> POSTGRES["Supabase PostgreSQL<br/>experiment + run metadata"]
+
+    MLFLOW --> POSTGRES["Supabase PostgreSQL<br/>optional MLflow backend store"]
     MLFLOW --> ARTIFACTS["Artifact storage<br/>models + plots + SHAP"]
     MLFLOW --> REGISTRY["MLflow Model Registry"]
-    REGISTRY --> CHAMPION["Selected champion model"]
+
+    REGISTRY --> CHAMPION["MLflow @champion alias"]
     CHAMPION --> API["FastAPI inference API"]
-    API --> RENDER["Render API hosting - planned deployment"]
-    API --> STREAMLIT["Streamlit dashboard"]
+
+    STREAMLIT["Streamlit dashboard"] --> API
+
+    API --> DOCKER["Docker image"]
+    DOCKER --> RENDER["Render API hosting<br/>planned deployment"]
 
     GITHUB["GitHub"] --> ACTIONS["GitHub Actions"]
     ACTIONS --> TESTS["pytest"]
     ACTIONS --> SCHEDULE["Scheduled ETL"]
-    API --> DOCKER["Docker image"]
-    DOCKER --> RENDER
 ```
 
 ## 7. Architecture Principles
@@ -1057,11 +1064,13 @@ Skills demonstrated:
 - analytical SQL
 - the judgment to scope infrastructure to actual data volume
 
-### Supabase PostgreSQL (Run/metrics metadata store)
+### Supabase PostgreSQL (Optional MLflow backend/run metadata store)
 
-Supabase PostgreSQL is scoped specifically to run and metrics metadata --
-the same kind of information MLflow tracks, made queryable from the Streamlit
-dashboard -- rather than a second copy of the curated dataset (Section 5.2).
+Supabase PostgreSQL is scoped specifically to MLflow backend metadata and
+application-level run/metrics metadata -- the same kind of information made
+queryable from the Streamlit dashboard -- rather than a second copy of the
+curated dataset (Section 5.2). Model binaries, plots, and SHAP files belong in
+artifact storage, not in Postgres.
 
 Tables:
 
