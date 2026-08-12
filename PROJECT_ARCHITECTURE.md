@@ -235,9 +235,14 @@ flowchart TD
     LSTM --> MLFLOW
     EVAL --> MLFLOW
     INTERP --> MLFLOW
+<<<<<<< HEAD
 
     MLFLOW --> POSTGRES["Supabase PostgreSQL<br/>optional MLflow backend store"]
     MLFLOW --> ARTIFACTS["Artifact storage<br/>models + plots + SHAP"]
+=======
+    MLFLOW --> POSTGRES["Supabase PostgreSQL experiment + run metadata"]
+    MLFLOW --> ARTIFACTS["Artifact storage models + plots + SHAP"]
+>>>>>>> 044f96efc9ec1cb11c09f6d540322b9438a2f1d1
     MLFLOW --> REGISTRY["MLflow Model Registry"]
 
     REGISTRY --> CHAMPION["MLflow @champion alias"]
