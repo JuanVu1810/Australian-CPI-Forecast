@@ -33,7 +33,7 @@ reasoning is in `PROJECT_ARCHITECTURE.md` Section 5 -- summary:
 |---|---|
 | DuckDB is the built SQL/analytics layer; BigQuery is a documented target, not deployed | The curated dataset is ~125 quarterly rows read from a local Parquet file. A managed cloud warehouse adds real value at higher data volume or concurrency, neither of which applies yet. |
 | Supabase PostgreSQL holds run/metrics/forecast-output metadata, not a second copy of the curated dataset | Two databases holding the same data demonstrates nothing new. Postgres gets a distinct job: making run history and metrics queryable from the dashboard. |
-| MLflow + FastAPI + Docker + Render is the flagship deployment path | This is the combination that produces something clickable -- a live, tracked, served model -- rather than partially-configured infrastructure. |
+| MLflow + FastAPI + Docker + Render is the flagship deployment path | This is the combination that produces something clickable once deployed -- a tracked, served model -- rather than partially-configured infrastructure. |
 | Kubernetes, Terraform, Spark, Kafka, Airflow are excluded | None of them solve a problem this project actually has: one small model, a handful of requests, no elastic-scaling requirement. |
 | A second benchmark (RBA's own published forecast) was added alongside seasonal naive | Beating seasonal naive is a low bar for an inflation model. Comparing against a real institutional forecaster is the bar that actually matters, and the project reports honestly if it isn't cleared. |
 
@@ -41,11 +41,11 @@ The project is organised around three "flagship" deliverables -- one per data
 role -- so each pillar is demonstrated deeply rather than every pillar being
 demonstrated shallowly:
 
-| Pillar | Flagship (built deep) | Supporting evidence |
+| Pillar | Flagship portfolio deliverable | Supporting evidence |
 |---|---|---|
 | Data Science | SARIMA vs SARIMAX vs LSTM, walk-forward validated against seasonal naive **and** the RBA forecast, with SARIMAX coefficient and LSTM SHAP interpretability | EDA notebook, feature engineering |
 | Data Engineering | Ingestion → validation → curated Parquet → DuckDB, fully local and credential-free | BigQuery documented as target, not deployed |
-| ML Engineering | Real MLflow runs, FastAPI serving the selected model, Dockerised, deployed on Render | Postgres as the run/metrics metadata store |
+| ML Engineering | MLflow runs, model registry, FastAPI selected-model serving, Docker, and planned Render deployment | Postgres as the run/metrics metadata store |
 
 ## What `cpi_forecast_V1.ipynb` Does
 
@@ -470,8 +470,8 @@ curated quarterly macroeconomic dataset directly.
 
 12. **Build out the Streamlit dashboard**
 
-    Add the EDA, forecast, and model-comparison pages, calling the deployed
-    FastAPI endpoint rather than fitting models in the UI.
+    Add the EDA, forecast, and model-comparison pages, calling the forecast
+    API endpoint rather than fitting models in the UI.
 
 The goal is to turn the original univariate assignment into a defensible
 comparison of **SARIMA vs SARIMAX vs LSTM**, against both a statistical

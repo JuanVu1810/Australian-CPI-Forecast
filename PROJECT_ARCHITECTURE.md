@@ -24,11 +24,11 @@ implementation of ten platforms is a weaker signal than a deep, working
 implementation of three, backed by a written explanation of why the others
 were scoped out for now.
 
-| Pillar | Flagship (built deep, fully working) | Supporting evidence (present, but not the headline) |
+| Pillar | Flagship portfolio deliverable | Supporting evidence (present, but not the headline) |
 |---|---|---|
 | Data Science | SARIMA vs SARIMAX vs LSTM comparison, walk-forward validated, benchmarked against both seasonal naive and the RBA's own published inflation forecast, with interpretability | EDA notebook, feature engineering |
 | Data Engineering | Ingestion -> validation -> curated Parquet -> DuckDB, fully local and credential-free | BigQuery documented as target warehouse architecture, not deployed |
-| ML Engineering | MLflow experiment tracking with real runs, FastAPI serving the selected model, Dockerised, deployed to Render | Postgres/Supabase as the run/metrics metadata store (not a duplicate warehouse) |
+| ML Engineering | MLflow experiment tracking, model registry, FastAPI selected-model serving, Docker, and planned Render deployment | Postgres/Supabase as the run/metrics metadata store (not a duplicate warehouse) |
 
 ## 2. Recruiter-Facing Summary
 
@@ -134,9 +134,9 @@ This distinction is important for portfolio credibility.
 | Multivariate/deep-learning modelling (flagship) | Planned | SARIMAX and a compact TensorFlow/Keras LSTM challenger, with interpretability |
 | Benchmark forecasts | Seasonal naive only | Seasonal naive + RBA published inflation forecast |
 | Experiment tracking (flagship) | Dependency/config scaffolded | Real MLflow runs logged for every model, not just configured |
-| API (flagship) | Implemented baseline FastAPI service in `api/main.py` | Serves the selected model, deployed to Render |
-| Dashboard | Implemented initial Streamlit app in `app/streamlit_app.py` | Add EDA and model-comparison pages, calling the deployed API |
-| Deployment (flagship) | Dockerfile scaffolded | Render API deployment, live and linked from the README |
+| API (flagship) | Implemented baseline FastAPI service in `api/main.py` | Serves the selected champion model; Render deployment planned |
+| Dashboard | Implemented initial Streamlit app in `app/streamlit_app.py` | Add EDA and model-comparison pages, calling the FastAPI forecast endpoint |
+| Deployment (flagship) | Dockerfile scaffolded | Render API deployment, live and linked from the README after verification |
 | Automation | Implemented pytest files and GitHub Actions workflows | Confirm workflows after GitHub push |
 
 ## 5. Architecture Decisions and Trade-offs
@@ -199,6 +199,11 @@ actually wants answered when the model disagrees with the benchmark.
 
 ## 6. High-Level Architecture
 
+The high-level flow is MLflow-centred: model training and walk-forward
+evaluation produce tracked runs, artifacts, and registry candidates; only the
+selected champion model is promoted to the serving path. This keeps the API
+focused on inference rather than training logic.
+
 ```mermaid
 flowchart TD
     ABS["ABS economic data"] --> INGEST["Python ingestion"]
@@ -221,10 +226,17 @@ flowchart TD
     LSTM --> EVAL
     EVAL --> INTERP["Interpretability: SARIMAX coefficients, LSTM SHAP"]
 
-    EVAL --> MLFLOW["MLflow experiment tracking - built, flagship"]
-    MLFLOW --> POSTGRES["Supabase PostgreSQL - run + metrics metadata"]
-    EVAL --> API["FastAPI model-serving API - built, flagship"]
-    API --> RENDER["Render API hosting - deployed, flagship"]
+    SARIMA --> MLFLOW["MLflow Tracking Server"]
+    SARIMAX --> MLFLOW
+    LSTM --> MLFLOW
+    EVAL --> MLFLOW
+    INTERP --> MLFLOW
+    MLFLOW --> POSTGRES["Supabase PostgreSQL<br/>experiment + run metadata"]
+    MLFLOW --> ARTIFACTS["Artifact storage<br/>models + plots + SHAP"]
+    MLFLOW --> REGISTRY["MLflow Model Registry"]
+    REGISTRY --> CHAMPION["Selected champion model"]
+    CHAMPION --> API["FastAPI inference API"]
+    API --> RENDER["Render API hosting - planned deployment"]
     API --> STREAMLIT["Streamlit dashboard"]
 
     GITHUB["GitHub"] --> ACTIONS["GitHub Actions"]
@@ -1144,7 +1156,7 @@ Recommended pages:
 | Forecast | choose model, horizon, and predictors; view forecasts vs seasonal naive and the RBA forecast |
 | Model Comparison | compare RMSE/MAE/MSE, selected feature sets, and interpretability outputs |
 
-The dashboard should call the deployed FastAPI endpoint for forecasts rather
+The dashboard should call the FastAPI forecast endpoint rather
 than fitting models directly in the UI. This demonstrates frontend/backend
 separation while keeping the user experience simple.
 
@@ -1161,7 +1173,7 @@ Skills demonstrated:
 ```text
 FastAPI
 -> Docker
--> Render (deployed, linked from README)
+-> Render (planned deployment, linked from README after verification)
 
 Streamlit app
 -> Streamlit Community Cloud
@@ -1433,7 +1445,7 @@ two databases.
 
 Deliverables:
 
-- Streamlit dashboard pages, calling the deployed API
+- Streamlit dashboard pages, calling the FastAPI forecast API
 - updated README with setup, architecture, and results
 - Architecture Decisions section kept current as scope changes
 - optional stretch: BigQuery load hook, if time allows
@@ -1459,8 +1471,8 @@ The project can be considered portfolio-ready when the following works:
 - walk-forward validation produces model metrics against both benchmarks
 - SARIMAX coefficients and LSTM feature importance are reported
 - MLflow records real experiment runs
-- FastAPI returns forecast outputs and is deployed to Render
-- Streamlit displays data, metrics, and forecasts via the deployed API
+- FastAPI returns forecast outputs and is ready for Render deployment
+- Streamlit displays data, metrics, and forecasts via the FastAPI API
 - pytest covers important transformation and modelling logic
 - GitHub Actions runs tests
 - README explains results, architecture decisions, and how to run the project
@@ -1505,12 +1517,12 @@ judgment.
 | Data engineering | raw/processed/curated layers, manifests, validation, Parquet | supporting |
 | SQL | DuckDB queries, documented BigQuery target design | **DE flagship** |
 | Cloud judgment | explicit reasoning for what's built vs documented (Section 5) | **DE flagship** |
-| Backend | FastAPI forecast service, deployed to Render | **MLE flagship** |
+| Backend | FastAPI forecast service, planned Render deployment | **MLE flagship** |
 | MLOps | real MLflow runs, model artifacts, metrics tracking | **MLE flagship** |
 | Frontend/data product | Streamlit dashboard for exploration and forecasts | supporting |
 | Testing | pytest coverage for data, features, models, API | supporting |
 | Automation | GitHub Actions CI and scheduled ETL | supporting |
-| Deployment | Dockerised, deployed API | **MLE flagship** |
+| Deployment | Dockerised API with planned Render hosting | **MLE flagship** |
 | Communication | README, architecture diagram, architecture decisions, model results, portfolio narrative | supporting, but read first by every reviewer |
 
 ## 32. Final Portfolio Story
@@ -1526,7 +1538,7 @@ University SARIMA assignment
 -> SARIMA/SARIMAX/LSTM comparison against seasonal naive AND the RBA
 -> walk-forward validation with interpretability
 -> real MLflow experiment tracking
--> deployed FastAPI model serving
+-> FastAPI selected-model serving
 -> Streamlit dashboard
 -> Docker + Render deployment
 -> GitHub Actions testing and scheduled pipeline
@@ -1542,7 +1554,7 @@ the finished project can be presented as:
 > Built an end-to-end Australian inflation forecasting platform that combines
 > public macroeconomic data ingestion, validated ETL, a SARIMA/SARIMAX/LSTM
 > comparison benchmarked against both a statistical baseline and the RBA's own
-> published forecasts, real experiment tracking, a deployed model-serving API,
+> published forecasts, real experiment tracking, a model-serving API,
 > and a dashboard -- with every architectural choice explained rather than
 > assumed.
 
