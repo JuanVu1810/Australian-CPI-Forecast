@@ -19,6 +19,11 @@ __pycache__/
 logs/
 *.log
 
+# Local AI/agent context files
+.ai/
+AGENTS.md
+CLAUDE.md
+
 # OS/browser metadata
 *.Zone.Identifier
 Zone.Identifier
