@@ -673,37 +673,43 @@ Skills demonstrated:
 
 ## 15. Exploratory Data Analysis
 
-The EDA should be statistically focused and leakage-aware.
+`notebooks/EDA.ipynb` implements a statistically focused, leakage-aware EDA
+pass over the curated dataset.
 
 Core EDA:
 
-- data coverage by variable
-- missingness by variable and time period
-- CPI index plot
-- quarterly inflation plot
-- year-ended inflation plot
-- external-indicator plots
-- seasonal decomposition
-- ACF and PACF analysis
-- Augmented Dickey-Fuller stationarity tests
-- optional KPSS stationarity tests
-- lagged correlation analysis
-- Granger causality screening
-- predictor correlation matrix
-- multicollinearity checks such as VIF
+- data coverage by variable (implemented)
+- missingness by variable and time period (implemented)
+- CPI index plot (implemented)
+- quarterly inflation plot (implemented)
+- year-ended inflation plot (implemented)
+- external-indicator plots (implemented)
+- seasonal decomposition (planned, not yet in the notebook)
+- ACF and PACF analysis (planned, not yet in the notebook)
+- Augmented Dickey-Fuller stationarity tests (implemented)
+- KPSS stationarity tests (implemented, run alongside ADF rather than optional)
+- lagged correlation analysis (implemented, as a cross-correlation screen)
+- Granger causality screening (implemented)
+- predictor correlation matrix (implemented)
+- multicollinearity checks such as VIF (implemented)
 - structural-period review around COVID and the post-COVID inflation surge
+  (implemented)
 - comparison of historical RBA forecast errors, to set a realistic accuracy
-  expectation before modelling begins
+  expectation before modelling begins (planned, not yet in the notebook)
 
 EDA deliverables:
 
-- variable coverage table
-- transformation decisions
-- candidate lag decisions
-- shortlist of SARIMAX predictors
-- notes on feature availability at forecast time
+- variable coverage table (implemented)
+- transformation decisions (implemented, via stationarity-driven transform
+  selection)
+- candidate lag decisions (implemented)
+- shortlist of SARIMAX predictors (implemented, screening-stage only;
+  confirmation via rolling-origin modelling is still planned)
+- notes on feature availability at forecast time (implemented, backed by
+  `data/metadata/series_availability.csv`)
 - a short note on how accurate the RBA's own forecasts have historically been,
-  used later to judge whether model results are competitive
+  used later to judge whether model results are competitive (planned, not yet
+  in the notebook)
 
 ## 16. Feature Engineering
 
@@ -1383,12 +1389,13 @@ Deliverables:
 
 - Pandera validation schemas
 - data quality report
-- coverage and missingness table
-- CPI and predictor EDA plots
-- stationarity tests
-- lag-correlation analysis
-- feature availability audit
-- historical RBA forecast error review
+- coverage and missingness table (implemented, in `notebooks/EDA.ipynb`)
+- CPI and predictor EDA plots (implemented, in `notebooks/EDA.ipynb`)
+- stationarity tests (implemented, in `notebooks/EDA.ipynb`)
+- lag-correlation analysis (implemented, in `notebooks/EDA.ipynb`)
+- feature availability audit (implemented, in `notebooks/EDA.ipynb`, backed by
+  `data/metadata/series_availability.csv`)
+- historical RBA forecast error review (planned, not yet built)
 
 Portfolio outcome:
 

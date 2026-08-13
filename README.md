@@ -159,17 +159,17 @@ The additional variables are included because they represent possible drivers of
 
 Adding these variables should help the next version of the project move beyond "CPI depends only on past CPI" toward a more realistic economic forecasting model.
 
-## Next Exploratory Data Analysis
+## Exploratory Data Analysis
 
-Before fitting a multivariate forecasting model, the next notebook should use `data/curated/quarterly_macro_features.csv` or `.parquet` for leakage-aware EDA on the CPI target and all external indicators. This is important because the ETL has aligned the original monthly, quarterly, and daily datasets into one quarterly modelling table.
+`notebooks/EDA.ipynb` implements a leakage-aware EDA pass over `data/curated/quarterly_macro_features.csv` / `.parquet`, covering the CPI target and all external indicators. This was needed because the ETL aligns the original monthly, quarterly, and daily datasets into one quarterly modelling table, and the resulting predictors needed a stationarity, lead-lag, and forecast-origin-availability screen before they could be trusted in SARIMAX.
 
-The planned EDA steps are:
+The EDA covers the following steps. Steps marked **(implemented)** are in `notebooks/EDA.ipynb`; steps marked **(planned)** are not yet built:
 
-1. **Validate data integrity and time alignment**
+1. **Validate data integrity and time alignment (implemented)**
 
    Check that each dataset has a valid date column, no duplicate timestamps, a monotonically increasing time index, and the expected frequency. CPI is quarterly, while unemployment, cash rate, commodity prices, exchange rates, and household spending are monthly, and oil prices are daily. These series need to be resampled to a common quarterly frequency before modelling.
 
-2. **Audit missing values and usable history**
+2. **Audit missing values and usable history (implemented)**
 
    Summarise the start date, end date, row count, missing values, and frequency of each variable. Some indicators do not cover the full CPI history: for example, household spending starts later than CPI, WTI and Brent oil prices start later than 1995, and some inflation expectation series contain many missing values. This audit will help decide whether to build one long-history model or several shorter-sample models.
 
@@ -177,43 +177,43 @@ The planned EDA steps are:
 
    Missing values and frequency conversion must be handled without using future information. Back-filling should be avoided because it can leak future values into earlier quarters. Forward-filling or interpolation should only be used when it is economically reasonable and clearly documented.
 
-4. **Inspect the CPI target**
+4. **Inspect the CPI target (implemented)**
 
    Plot the CPI index, quarterly CPI growth, and year-ended CPI growth. The EDA should check trend, seasonality, volatility, outliers, and structural breaks, especially around the Global Financial Crisis, COVID period, post-COVID inflation surge, and rapid RBA cash rate increases.
 
-5. **Inspect each external variable**
+5. **Inspect each external variable (implemented)**
 
    Plot each predictor over time and review its scale, distribution, outliers, and economic interpretation. Index variables such as wages, producer prices, commodity prices, and CPI may need differencing or percentage-change transformations. Rate variables such as unemployment, cash rate, and inflation expectations may be useful in levels or changes.
 
-6. **Test stationarity and choose transformations**
+6. **Test stationarity and choose transformations (implemented)**
 
    Apply Augmented Dickey-Fuller (ADF) and KPSS tests to CPI and candidate predictors. These tests should guide whether each series is modelled in levels, first differences, seasonal differences, percentage changes, or log changes.
 
-7. **Explore lead-lag relationships**
+7. **Explore lead-lag relationships (implemented)**
 
    Use cross-correlation analysis to test whether external variables lead CPI inflation. Candidate lags should include 1-quarter, 2-quarter, and 4-quarter lags. This is especially important for variables such as cash rate, wage growth, producer prices, exchange rates, commodity prices, and oil prices, which may affect inflation with a delay.
 
-8. **Test predictive usefulness**
+8. **Test predictive usefulness (implemented)**
 
    Use Granger causality tests to check whether lagged external variables add information beyond CPI's own past values. These tests should be treated as screening tools rather than final proof, but they can help justify which predictors should enter a SARIMAX model.
 
-9. **Check relationship stability**
+9. **Check relationship stability (planned)**
 
    Use rolling correlations to see whether relationships between CPI and candidate predictors are stable through time or only strong during unusual periods. Variables whose relationships reverse or disappear may be less reliable for forecasting.
 
-10. **Check multicollinearity**
+10. **Check multicollinearity (implemented)**
 
     Build a predictor correlation matrix and calculate variance inflation factors (VIFs) for candidate features. This is needed because commodity prices, oil prices, producer prices, and exchange rates may carry overlapping information.
 
-11. **Audit feature availability**
+11. **Audit feature availability (implemented)**
 
     For each candidate predictor, document whether the value would actually be known at the forecast origin. Many macroeconomic indicators are published with a delay, and future values of external variables are unknown for an 8-quarter forecast unless they are separately forecast. The final SARIMAX setup should therefore distinguish between lagged historical features that are available at forecast time and future exogenous paths that would need their own assumptions or forecasts.
 
-12. **Review historical RBA forecast accuracy**
+12. **Review historical RBA forecast accuracy (planned)**
 
     Before comparing model results to the RBA benchmark, summarise how accurate the RBA's own published forecasts have historically been at each horizon. This sets a realistic accuracy target and avoids over-interpreting a small RMSE difference against a moving reference point.
 
-The EDA should finish with a variable coverage table, transformation decisions, candidate lag choices, multicollinearity diagnostics, a note on historical RBA forecast accuracy, and a justified shortlist of external predictors for SARIMAX.
+`notebooks/EDA.ipynb` finishes with a variable coverage table, transformation decisions, candidate lag choices, multicollinearity diagnostics, and a justified screening-stage shortlist of external predictors for SARIMAX. A note on historical RBA forecast accuracy is still planned and not yet part of the notebook.
 
 ## Planned Interactive Interface
 
@@ -391,12 +391,12 @@ curated quarterly macroeconomic dataset directly.
 
 **Data Science flagship (build first):**
 
-1. **Run EDA on the curated modelling dataset**
+1. **EDA on the curated modelling dataset (implemented)**
 
-   Use `data/curated/quarterly_macro_features.csv` or `.parquet` to audit
-   coverage, missingness, CPI behaviour, predictor relationships, lag
-   correlations, stationarity, and feature suitability, including a review of
-   historical RBA forecast accuracy.
+   `notebooks/EDA.ipynb` audits coverage, missingness, CPI behaviour,
+   predictor relationships, lag correlations, stationarity, multicollinearity,
+   and forecast-origin feature availability. A historical RBA forecast-accuracy
+   review is still planned and not yet in the notebook.
 
 2. **Choose a common long-sample predictor set**
 
