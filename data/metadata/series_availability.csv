@@ -1,0 +1,18 @@
+variable,source_family,assumed_min_safe_lag_quarters,assumption_note
+unemployment_rate,ABS labour force,1,Monthly labour data can be revised and should be lagged in quarterly forecast-origin tests.
+cash_rate,RBA policy rate,0,Policy rate is public when set; lagged features remain conservative.
+wage_price_index,ABS WPI,1,Quarterly WPI is typically released after CPI for the same quarter.
+wpi_growth,derived ABS WPI growth,1,Inherits WPI release lag.
+producer_price_index,ABS PPI,1,Conservative quarterly release-lag assumption.
+ppi_growth,derived ABS PPI growth,1,Inherits PPI release lag.
+commodity_price_index,RBA commodity index,1,Monthly or quarterly aggregation should avoid same-quarter look-ahead.
+commodity_growth,derived RBA commodity growth,1,Inherits commodity index aggregation lag.
+wti_price,market price,0,Market data is observable daily; lagged features are conservative.
+wti_growth,derived WTI growth,0,Inherits market-data availability.
+brent_price,market price,0,Market data is observable daily; lagged features are conservative.
+brent_growth,derived Brent growth,0,Inherits market-data availability.
+aud_usd,market FX,0,FX data is observable daily; lagged features are conservative.
+aud_usd_change,derived FX change,0,Inherits FX availability.
+household_spending,ABS household spending,1,Conservative lag for monthly or quarterly publication timing.
+household_spending_growth,derived household spending growth,1,Inherits household spending release lag.
+inflation_expectations_business,survey expectations,1,Survey timing should be lagged unless release metadata confirms same-quarter availability.

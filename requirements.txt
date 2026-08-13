@@ -5,6 +5,8 @@ xlrd
 pytest
 pyarrow
 pandera
+statsmodels
+nbconvert
 fastapi
 uvicorn
 pydantic
