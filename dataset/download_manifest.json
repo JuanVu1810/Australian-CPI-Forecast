@@ -1,5 +1,5 @@
 {
-  "downloaded_at_utc": "2026-08-06T05:57:45.495164+00:00",
+  "downloaded_at_utc": "2026-08-14T13:55:05.624284+00:00",
   "python_version": "3.11.15 (main, Jun 11 2026, 15:20:16) [GCC 14.3.0]",
   "packages": {
     "pandas": "3.0.5",
@@ -305,6 +305,29 @@
           "Series ID",
           "Table",
           "Table Description"
+        ]
+      }
+    },
+    {
+      "variable": "rba_historical_cpi_forecasts_by_horizon",
+      "title": "RBA historical forecasts for CPI inflation, year-ended",
+      "source_url": "https://www.rba.gov.au/statistics/xls/cpi-by-horizon.xls",
+      "raw_workbook": {
+        "file": "dataset/rba/rba_historical_cpi_forecasts_by_horizon.xls",
+        "bytes": 180224,
+        "url": "https://www.rba.gov.au/statistics/xls/cpi-by-horizon.xls"
+      },
+      "data": {
+        "file": "dataset/rba/rba_historical_cpi_forecasts_by_horizon_1995_2025.csv",
+        "rows": 2904,
+        "columns": [
+          "forecast_date",
+          "source",
+          "horizon_label",
+          "horizon_quarters",
+          "rba_forecast_cpi_yoy",
+          "rba_actual_cpi_yoy",
+          "rba_forecast_error_cpi_yoy"
         ]
       }
     }

@@ -6,7 +6,7 @@ import pandas as pd
 
 
 def add_growth_rates(df: pd.DataFrame) -> pd.DataFrame:
-    """Add CPI inflation and external growth-rate features."""
+    """Add CPI inflation, external growth-rate, and rate-change features."""
     result = df.copy()
 
     if "cpi_index" in result:
@@ -28,6 +28,14 @@ def add_growth_rates(df: pd.DataFrame) -> pd.DataFrame:
     if "aud_usd" in result:
         result["aud_usd_change"] = result["aud_usd"].pct_change(1) * 100
 
+    rate_change_specs = {
+        "cash_rate": "cash_rate_change",
+        "unemployment_rate": "unemployment_rate_change",
+    }
+    for source_col, output_col in rate_change_specs.items():
+        if source_col in result:
+            result[output_col] = result[source_col].diff()
+
     return result
 
 
@@ -47,6 +55,9 @@ def add_lag_features(
         "wti_growth": [1],
         "brent_growth": [1],
         "aud_usd_change": [1],
+        "cash_rate_change": [1],
+        "unemployment_rate_change": [1, 2],
+        "household_spending_growth": [1],
         "inflation_expectations_business": [1],
     }
 
@@ -67,7 +78,9 @@ def order_feature_columns(df: pd.DataFrame) -> pd.DataFrame:
         "cpi_qoq",
         "cpi_yoy",
         "unemployment_rate",
+        "unemployment_rate_change",
         "cash_rate",
+        "cash_rate_change",
         "wage_price_index",
         "wpi_growth",
         "producer_price_index",

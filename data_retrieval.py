@@ -20,6 +20,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.request import urlopen
 
 import pandas as pd
 import readabs as ra
@@ -118,6 +119,10 @@ YFINANCE_TICKERS: dict[str, dict[str, str]] = {
         "ticker": "BZ=F",
         "title": "Brent crude oil futures",
     },
+}
+
+RBA_HISTORICAL_FORECASTS: dict[str, str] = {
+    "cpi_by_horizon": "https://www.rba.gov.au/statistics/xls/cpi-by-horizon.xls",
 }
 
 
@@ -247,6 +252,14 @@ def save_metadata(metadata: Any, path: Path) -> dict[str, Any] | None:
     return save_csv(flatten_columns(metadata.reset_index(drop=True)), path)
 
 
+def download_binary(url: str, path: Path) -> dict[str, Any]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with urlopen(url, timeout=60) as response:
+        payload = response.read()
+    path.write_bytes(payload)
+    return {"file": str(path), "bytes": len(payload), "url": url}
+
+
 def standardise_single_series(
     data: pd.DataFrame | pd.Series,
     variable_name: str,
@@ -258,6 +271,112 @@ def standardise_single_series(
     if result.shape[1] == 1:
         result.columns = [variable_name]
     return result
+
+
+def horizon_label_to_quarters(label: Any) -> int:
+    text = str(label).strip().lower()
+    if text == "t":
+        return 0
+    if text.startswith("t+"):
+        return int(text.removeprefix("t+"))
+    if text.startswith("t-"):
+        return -int(text.removeprefix("t-"))
+    raise ValueError(f"Unrecognised forecast horizon label: {label}")
+
+
+def parse_rba_cpi_by_horizon_workbook(path: Path) -> pd.DataFrame:
+    """Return tidy RBA CPI inflation forecasts, actuals and errors by horizon."""
+
+    def parse_sheet(sheet_name: str, value_col: str) -> pd.DataFrame:
+        raw = pd.read_excel(path, sheet_name=sheet_name, header=None)
+        header_matches = raw.index[
+            raw.iloc[:, 0].astype(str).str.strip().str.lower().eq("forecast date")
+        ]
+        if header_matches.empty:
+            raise ValueError(f"Could not find 'Forecast date' header in {sheet_name}.")
+
+        header_row = int(header_matches[0])
+        headers = raw.iloc[header_row].tolist()
+        data = raw.iloc[header_row + 1 :].copy()
+        data.columns = headers
+        data = data.dropna(how="all")
+
+        first_col = data.columns[0]
+        data = data.rename(columns={first_col: "forecast_date"})
+        data["forecast_date"] = pd.to_datetime(data["forecast_date"], errors="coerce")
+        data = data.loc[data["forecast_date"].notna()].copy()
+
+        if "Source" not in data.columns:
+            data["Source"] = pd.NA
+
+        horizon_cols = [
+            column
+            for column in data.columns
+            if str(column).strip().lower().startswith("t")
+        ]
+        tidy = data.melt(
+            id_vars=["forecast_date", "Source"],
+            value_vars=horizon_cols,
+            var_name="horizon_label",
+            value_name=value_col,
+        )
+        tidy = tidy.rename(columns={"Source": "source"})
+        tidy["horizon_quarters"] = tidy["horizon_label"].map(horizon_label_to_quarters)
+        tidy[value_col] = pd.to_numeric(tidy[value_col], errors="coerce")
+        return tidy
+
+    forecasts = parse_sheet("Forecasts", "rba_forecast_cpi_yoy")
+    actuals = parse_sheet("Actuals", "rba_actual_cpi_yoy").drop(columns="source")
+    errors = parse_sheet("Errors", "rba_forecast_error_cpi_yoy").drop(columns="source")
+
+    keys = ["forecast_date", "horizon_label", "horizon_quarters"]
+    tidy = forecasts.merge(actuals, on=keys, how="outer").merge(errors, on=keys, how="outer")
+    tidy = tidy.sort_values(["forecast_date", "horizon_quarters"]).reset_index(drop=True)
+    tidy["forecast_date"] = tidy["forecast_date"].dt.date.astype(str)
+    return tidy[
+        [
+            "forecast_date",
+            "source",
+            "horizon_label",
+            "horizon_quarters",
+            "rba_forecast_cpi_yoy",
+            "rba_actual_cpi_yoy",
+            "rba_forecast_error_cpi_yoy",
+        ]
+    ]
+
+
+def download_rba_historical_forecasts(
+    output_dir: Path,
+    start_year: int,
+    end_year: int,
+) -> dict[str, Any]:
+    """Download and tidy RBA historical CPI inflation forecasts by horizon."""
+    rba_dir = output_dir / "rba"
+    url = RBA_HISTORICAL_FORECASTS["cpi_by_horizon"]
+    workbook_path = rba_dir / "rba_historical_cpi_forecasts_by_horizon.xls"
+
+    print("RBA Historical Forecasts: CPI inflation (year-ended)", flush=True)
+    try:
+        workbook_record = download_binary(url, workbook_path)
+        tidy = parse_rba_cpi_by_horizon_workbook(workbook_path)
+    except Exception as exc:
+        raise RuntimeError(f"Could not retrieve RBA historical CPI forecasts: {exc}") from exc
+
+    forecast_dates = pd.to_datetime(tidy["forecast_date"], errors="raise")
+    filtered = tidy.loc[forecast_dates.dt.year.between(start_year, end_year)].copy()
+    data_record = save_csv(
+        filtered,
+        rba_dir / f"rba_historical_cpi_forecasts_by_horizon_{start_year}_{end_year}.csv",
+    )
+
+    return {
+        "variable": "rba_historical_cpi_forecasts_by_horizon",
+        "title": "RBA historical forecasts for CPI inflation, year-ended",
+        "source_url": url,
+        "raw_workbook": workbook_record,
+        "data": data_record,
+    }
 
 
 def download_abs_series(
@@ -456,6 +575,14 @@ def download_rba_data(
                 "metadata": metadata_record,
             }
         )
+
+    records.append(
+        download_rba_historical_forecasts(
+            output_dir=output_dir,
+            start_year=start_year,
+            end_year=end_year,
+        )
+    )
 
     return records
 
