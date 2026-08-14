@@ -1,0 +1,25 @@
+variable,test,observations,statistic,p_value,lags,stationary_at_5pct,notes
+cpi_yoy,ADF,120,-3.160227,0.022405,9,True,rejects unit root when p < 0.05
+cpi_yoy,KPSS,120,0.143267,0.1,5,True,fails to reject stationarity when p >= 0.05
+cpi_qoq,ADF,123,-8.650333,0.0,0,True,rejects unit root when p < 0.05
+cpi_qoq,KPSS,123,0.125094,0.1,4,True,fails to reject stationarity when p >= 0.05
+unemployment_rate,ADF,124,-2.035096,0.2714,1,False,rejects unit root when p < 0.05
+unemployment_rate,KPSS,124,1.030139,0.01,6,False,fails to reject stationarity when p >= 0.05
+cash_rate,ADF,124,-2.255838,0.186607,2,False,rejects unit root when p < 0.05
+cash_rate,KPSS,124,1.246599,0.01,6,False,fails to reject stationarity when p >= 0.05
+wpi_growth,ADF,113,-1.788705,0.386084,8,False,rejects unit root when p < 0.05
+wpi_growth,KPSS,113,0.617915,0.021008,4,False,fails to reject stationarity when p >= 0.05
+ppi_growth,ADF,109,-4.906026,3.4e-05,1,True,rejects unit root when p < 0.05
+ppi_growth,KPSS,109,0.148952,0.1,4,True,fails to reject stationarity when p >= 0.05
+commodity_growth,ADF,123,-6.250387,0.0,3,True,rejects unit root when p < 0.05
+commodity_growth,KPSS,123,0.043439,0.1,3,True,fails to reject stationarity when p >= 0.05
+wti_growth,ADF,101,-8.936926,0.0,0,True,rejects unit root when p < 0.05
+wti_growth,KPSS,101,0.094615,0.1,0,True,fails to reject stationarity when p >= 0.05
+brent_growth,ADF,73,-7.171776,0.0,0,True,rejects unit root when p < 0.05
+brent_growth,KPSS,73,0.077266,0.1,0,True,fails to reject stationarity when p >= 0.05
+aud_usd_change,ADF,63,-7.029493,0.0,0,True,rejects unit root when p < 0.05
+aud_usd_change,KPSS,63,0.081308,0.1,2,True,fails to reject stationarity when p >= 0.05
+household_spending_growth,ADF,53,-7.64381,0.0,0,True,rejects unit root when p < 0.05
+household_spending_growth,KPSS,53,0.137617,0.1,0,True,fails to reject stationarity when p >= 0.05
+inflation_expectations_business,ADF,124,-3.828202,0.002632,4,True,rejects unit root when p < 0.05
+inflation_expectations_business,KPSS,124,0.202372,0.1,5,True,fails to reject stationarity when p >= 0.05

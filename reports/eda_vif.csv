@@ -1,0 +1,12 @@
+variable,observations,vif,notes
+brent_growth_lag1,62,19.49023,above 10 threshold
+wti_growth_lag1,62,18.002455,above 10 threshold
+inflation_expectations_business_lag1,62,6.236856,within 10 threshold
+cpi_yoy_lag1,62,4.783495,within 10 threshold
+unemployment_rate_lag1,62,4.478038,within 10 threshold
+ppi_growth_lag1,62,4.096551,within 10 threshold
+wpi_growth_lag1,62,3.553258,within 10 threshold
+cpi_yoy_lag4,62,2.890974,within 10 threshold
+cash_rate_lag1,62,2.162046,within 10 threshold
+commodity_growth_lag1,62,1.726271,within 10 threshold
+aud_usd_change_lag1,62,1.548395,within 10 threshold

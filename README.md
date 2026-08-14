@@ -179,7 +179,7 @@ clear job is documented as a target rather than built.
 | MLflow | dependency/config scaffolded, real runs planned | **MLE flagship** | `requirements.txt`, `.env.example` |
 | FastAPI | baseline service implemented, deployment planned | **MLE flagship** | `api/main.py` |
 | Docker / Render | container scaffolded, live deployment planned | **MLE flagship** | `Dockerfile` |
-| Streamlit | initial dashboard implemented | supporting | `app/streamlit_app.py` |
+| Streamlit | multipage dashboard implemented for overview, data exploration, and static EDA summaries | supporting | `app/streamlit_app.py`, `app/pages/` |
 | GitHub Actions | CI + scheduled ETL scaffolded | supporting | `.github/workflows/` |
 
 Cloud services such as Supabase and Render still require account setup,
@@ -400,10 +400,10 @@ GET  /models
 POST /forecast
 ```
 
-Planned Streamlit pages: Overview, Data Explorer, EDA Dashboard, Forecasting
-Interface (model/horizon/feature selection with confidence intervals), and
-Model Evaluation (RMSE/MAE/MSE, benchmark comparisons, residual diagnostics,
-SHAP/coefficient interpretability).
+Implemented Streamlit pages: Overview, Data Explorer, EDA Dashboard. Planned
+Streamlit pages: Forecasting Interface (model/horizon/feature selection with
+confidence intervals), and Model Evaluation (RMSE/MAE/MSE, benchmark
+comparisons, residual diagnostics, SHAP/coefficient interpretability).
 
 Deployment path: FastAPI -> Docker -> Render (planned, to be linked here once
 verified live). Streamlit -> Streamlit Community Cloud. DuckDB stays local;
