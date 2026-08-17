@@ -6,6 +6,7 @@ pytest
 pyarrow
 pandera
 statsmodels
+tensorflow
 nbconvert
 fastapi
 uvicorn

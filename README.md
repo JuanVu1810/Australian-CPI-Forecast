@@ -44,7 +44,7 @@ demonstrated shallowly:
 
 | Pillar | Flagship deliverable | Supporting evidence |
 |---|---|---|
-| Data Science | SARIMA vs SARIMAX vs LSTM, walk-forward validated against seasonal naive **and** the RBA forecast, with SARIMAX coefficient and LSTM SHAP interpretability | EDA notebook, feature engineering |
+| Data Science | SARIMA vs SARIMAX vs LSTM, walk-forward validated against seasonal naive **and** the RBA forecast, with SARIMAX coefficient and LSTM permutation-importance interpretability | EDA notebook, feature engineering |
 | Data Engineering | Ingestion -> validation -> curated Parquet -> DuckDB, fully local and credential-free | BigQuery documented as target, not deployed |
 | ML Engineering | MLflow runs, model registry with `@champion`, FastAPI selected-model serving, Docker, and planned Render deployment | Postgres as the optional MLflow backend and run metadata store |
 
@@ -70,11 +70,12 @@ achieved a test MSE of about `46.25` and RMSE of about `6.8` CPI points.
 Residual diagnostics show no strong remaining autocorrelation, approximately
 normal residuals, and no obvious remaining trend.
 
-**Note on benchmarking:** these results are only compared against seasonal
-naive so far. The RBA published-forecast benchmark data is now retrieved (see
-[Data Retrieval](#data-retrieval) below); the historical-accuracy comparison
-itself is prepared in the EDA notebook but final model-vs-RBA comparison still
-needs the rolling-origin modelling stage (see [Roadmap](#roadmap)).
+**Note on benchmarking:** these notebook results are only compared against
+seasonal naive, since `cpi_forecast_V1.ipynb` predates the platform's
+walk-forward evaluation harness. The project-wide SARIMA/SARIMAX/LSTM
+comparison against seasonal naive **and** the RBA forecast is now implemented
+(see [Models In Detail](#models-in-detail) and `reports/model_comparison_sarima.csv`,
+`reports/model_comparison_sarimax.csv`, `reports/model_comparison_lstm.csv`).
 
 ## Models In Detail
 
@@ -83,28 +84,28 @@ needs the rolling-origin modelling stage (see [Roadmap](#roadmap)).
 The existing SARIMA model remains the univariate statistical baseline,
 providing a clean reference for measuring the value external predictors add.
 
-### SARIMAX (planned)
+### SARIMAX (implemented)
 
 SARIMAX extends SARIMA with economically justified lagged predictors selected
-through the EDA and feature-availability audit (unemployment, WPI/PPI growth,
-cash rate, commodity/oil prices, inflation expectations). Candidate variants
-will be compared through feature-group ablation studies (labour market,
-price-pressure, monetary/exchange-rate, commodity/oil, combined).
+through the EDA and feature-availability audit (unemployment, PPI growth,
+cash rate, commodity/oil prices, inflation expectations). Fixed feature-group
+ablations are reported in `reports/model_comparison_sarimax.csv`; order and
+level-vs-change choices are made before walk-forward evaluation, not tuned
+against backtest RMSE/MAE.
 
-**Interpretability:** fitted coefficients will be reported alongside accuracy
-metrics, with a check that each sign and approximate magnitude matches basic
-macroeconomic expectations (e.g. cash rate increases should eventually
-associate with lower inflation, with a lag). A coefficient that contradicts
-theory is worth flagging, not hiding.
+**Interpretability:** fitted coefficients are reported in
+`reports/sarimax_coefficients.csv` alongside accuracy metrics, with a check
+that each sign matches basic macroeconomic expectations. A coefficient that
+contradicts theory is worth flagging, not hiding.
 
-### LSTM (planned)
+### LSTM (implemented)
 
-A compact TensorFlow/Keras LSTM, included as a deep-learning **challenger**,
-not an assumed winner. It will use the same core predictor set as SARIMAX
-where possible (e.g. the previous 8 quarters of selected features) so the
-comparison reflects modelling approach rather than differing information
-sets. Architecture stays deliberately small: one LSTM layer with roughly
-8-16 hidden units, dropout/regularisation, and a dense output layer.
+A compact TensorFlow/Keras LSTM is included as a deep-learning **challenger**,
+not an assumed winner. It uses the same core predictor set as SARIMAX Group D
+plus `cpi_yoy` history, so the comparison reflects modelling approach rather
+than differing information sets. Architecture stays deliberately small and
+fixed: one LSTM layer with 16 hidden units, dropout 0.2, an 8-quarter lookback,
+and a dense direct 8-quarter output layer.
 
 The quarterly sample is small -- about 120-125 observations from 1995 onward
 before sequence construction and train/test splitting -- which risks
@@ -115,10 +116,13 @@ stopping and regularisation are used; results are reported by forecast
 horizon; and worse LSTM performance is treated as an informative result, not
 a failed experiment.
 
-**Interpretability:** permutation importance or SHAP values will be computed
-for the trained LSTM and compared to the SARIMAX coefficients. Agreement
-between the two strengthens confidence in which predictors actually matter;
-disagreement is itself worth discussing.
+**Interpretability:** permutation importance is reported in
+`reports/lstm_permutation_importance.csv` from one separate interpretation
+model on a chronological held-out tail. Negative RMSE increases are treated as
+small-sample instability/no robust positive importance, not as strong evidence
+that a feature is beneficially harmful. Agreement with SARIMAX coefficients
+strengthens confidence in which predictors actually matter; disagreement is
+itself worth discussing.
 
 A useful research framing:
 
@@ -154,7 +158,7 @@ clear job is documented as a target rather than built.
 | Relational store | Supabase PostgreSQL -- run/metrics metadata | scoped relational modelling |
 | Statistical forecasting | statsmodels, pmdarima | SARIMA/SARIMAX |
 | Deep learning | TensorFlow, Keras | LSTM sequence modelling |
-| Interpretability | SHAP, statsmodels coefficient summaries | model explainability |
+| Interpretability | Permutation importance, statsmodels coefficient summaries | model explainability |
 | Experiment tracking (flagship) | MLflow | MLOps and reproducibility |
 | API (flagship) | FastAPI, Pydantic | backend model serving |
 | Dashboard | Streamlit | interactive data product development |
@@ -174,8 +178,8 @@ clear job is documented as a target rather than built.
 | EDA | implemented, 14 sections | | `notebooks/EDA.ipynb` |
 | BigQuery | documented target only, optional load hook, not deployed | | `src/platform_loads.py`, `.env.example` |
 | Supabase PostgreSQL | schema scaffolded, scoped to MLflow backend + run metadata | supporting for MLE flagship | `sql/schema_app_metadata.sql`, `.env.example` |
-| SARIMA | implemented | **DS flagship** | `notebooks/cpi_forecast_V1.ipynb` |
-| SARIMAX / LSTM comparison + RBA benchmark | planned | **DS flagship** | future `src/models/`, `src/interpretability/` |
+| SARIMA | implemented | **DS flagship** | `notebooks/cpi_forecast_V1.ipynb`, `src/models/sarima.py` |
+| SARIMAX / LSTM comparison + RBA benchmark | implemented | **DS flagship** | `src/models/`, `reports/model_comparison_sarimax.csv`, `reports/model_comparison_lstm.csv`, `reports/lstm_permutation_importance.csv` |
 | MLflow | dependency/config scaffolded, real runs planned | **MLE flagship** | `requirements.txt`, `.env.example` |
 | FastAPI | baseline service implemented, deployment planned | **MLE flagship** | `api/main.py` |
 | Docker / Render | container scaffolded, live deployment planned | **MLE flagship** | `Dockerfile` |
@@ -227,14 +231,13 @@ everything into one modelling table, validates the curated output (custom
 checks + Pandera when installed), attempts a DuckDB analytical load, and
 writes a data-quality report.
 
-**Rate-change features (newly implemented):** `src/features.py` now adds
-`cash_rate_change` and `unemployment_rate_change` (percentage-point
-differences, via `add_growth_rates`) alongside their lagged versions
-(`cash_rate_change_lag1`, `unemployment_rate_change_lag1/lag2`) and a new
-`household_spending_growth_lag1`, covered by `tests/test_features.py`. The
-curated dataset needs to be regenerated (`python -m src.build_curated_dataset`)
-before these feed into modelling, since they were added after the last
-curated build.
+**Rate-change features:** `src/features.py` adds `cash_rate_change` and
+`unemployment_rate_change` (percentage-point differences, via
+`add_growth_rates`) alongside their lagged versions (`cash_rate_change_lag1`,
+`unemployment_rate_change_lag1/lag2`) and `household_spending_growth_lag1`,
+covered by `tests/test_features.py`. The curated dataset has been regenerated
+and these features are already consumed by SARIMAX Group D and the LSTM
+baseline (see [Models In Detail](#models-in-detail)).
 
 ```bash
 python -m src.build_curated_dataset
@@ -297,11 +300,9 @@ The notebook now has **14 sections**, all implemented:
 
 **Remaining follow-ups documented in the notebook:**
 
-- Historical RBA forecast errors are summarised, but the actual
-  model-vs-RBA comparison still needs rolling-origin SARIMA/SARIMAX/LSTM
-  forecasts aligned to the same forecast dates and horizons.
-- The curated dataset should be regenerated so SARIMAX/LSTM code consumes the
-  same rate-change and lag features the notebook now screens.
+- The rolling-origin SARIMA/SARIMAX/LSTM-vs-RBA comparison the notebook's
+  RBA forecast-error summary was preparing for is now implemented (see
+  [Models In Detail](#models-in-detail)).
 - `data/metadata/series_availability.csv` is an assumption-backed
   forecast-origin lag table, not official release-calendar metadata, since
   the project currently uses revised historical data rather than real-time
@@ -356,7 +357,7 @@ flowchart TD
     SARIMAX --> EVAL
     LSTM --> EVAL
 
-    EVAL --> INTERP["Interpretability (SARIMAX coefficients + LSTM SHAP)"]
+    EVAL --> INTERP["Interpretability (SARIMAX coefficients + LSTM permutation importance)"]
 
     SARIMA --> MLFLOW["MLflow Tracking Server"]
     SARIMAX --> MLFLOW
@@ -365,7 +366,7 @@ flowchart TD
     INTERP --> MLFLOW
 
     MLFLOW --> POSTGRES["Supabase PostgreSQL (optional MLflow backend store)"]
-    MLFLOW --> ARTIFACTS["Artifact storage (models + plots + SHAP)"]
+    MLFLOW --> ARTIFACTS["Artifact storage (models + plots + permutation importance)"]
     MLFLOW --> REGISTRY["MLflow Model Registry"]
 
     REGISTRY --> CHAMPION["MLflow @champion alias"]
@@ -403,7 +404,7 @@ POST /forecast
 Implemented Streamlit pages: Overview, Data Explorer, EDA Dashboard. Planned
 Streamlit pages: Forecasting Interface (model/horizon/feature selection with
 confidence intervals), and Model Evaluation (RMSE/MAE/MSE, benchmark
-comparisons, residual diagnostics, SHAP/coefficient interpretability).
+comparisons, residual diagnostics, permutation-importance/coefficient interpretability).
 
 Deployment path: FastAPI -> Docker -> Render (planned, to be linked here once
 verified live). Streamlit -> Streamlit Community Cloud. DuckDB stays local;
@@ -464,18 +465,15 @@ streamlit run app/streamlit_app.py
 
 ## Roadmap
 
-The next stage extends `cpi_forecast_V1.ipynb` into a three-model comparison,
-then builds outward into the other two flagship pillars. Ordered by portfolio
-impact -- Data Science first because it's what the project is about, then the
-other two flagships, with dashboard polish last.
+The Data Science flagship (item 1) is done; the project now moves into the
+other two flagship pillars, with dashboard polish last.
 
-1. **Data Science flagship:** choose a common long-sample predictor set;
-   refactor SARIMA into the modelling pipeline; build SARIMAX with
-   feature-group ablations and coefficient interpretation; build a compact
-   TensorFlow/Keras LSTM with leakage-safe scaling/sequencing and SHAP; run
-   both against seasonal naive **and** the RBA benchmark using the same
-   walk-forward validation framework, reported overall and by horizon.
-2. **ML Engineering flagship:** log every run (params, features, horizon,
+1. **Data Science flagship (done):** SARIMA, SARIMAX (feature-group
+   ablations, coefficient interpretation), and a compact leakage-safe LSTM
+   (permutation importance) are all walk-forward validated against seasonal
+   naive **and** the RBA benchmark, reported overall and by horizon --
+   `src/models/`, `reports/model_comparison_*.csv`.
+2. **ML Engineering flagship (next):** log every run (params, features, horizon,
    metrics, and LSTM-specific settings) in MLflow; serve the selected model
    through FastAPI (`/health`, `/models`, `/metrics`, `/forecast`);
    containerise with Docker; deploy to Render.

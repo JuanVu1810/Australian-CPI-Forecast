@@ -39,6 +39,10 @@ ExogForecastFunction = Callable[
     [pd.Series, pd.DataFrame, pd.DataFrame, int],
     Sequence[float] | pd.Series | np.ndarray,
 ]
+DirectMultihorizonForecastFunction = Callable[
+    [pd.DataFrame, int],
+    Sequence[float] | pd.Series | np.ndarray,
+]
 
 LAG_COLUMN_PATTERN = re.compile(r"_lag(\d+)$")
 
@@ -273,6 +277,87 @@ def walk_forward_backtest_with_exog(
                     "horizon_cap": cap,
                 }
             )
+
+    return pd.DataFrame(rows)
+
+
+def walk_forward_backtest_direct_multihorizon(
+    series: pd.Series,
+    exog: pd.DataFrame,
+    forecast_func: DirectMultihorizonForecastFunction,
+    initial_train_size: int = 40,
+    horizons: Iterable[int] = DEFAULT_HORIZONS,
+    model_name: str = "model",
+    target_column: str = TARGET_COLUMN,
+    max_origins: int | None = None,
+) -> pd.DataFrame:
+    """Run an expanding-window backtest for direct multi-horizon sequence models.
+
+    The forecaster receives only the target and feature history available at
+    each forecast origin. Unlike ``walk_forward_backtest_with_exog``, this
+    harness never constructs or passes a post-origin exogenous frame.
+    """
+    requested_horizons = tuple(int(horizon) for horizon in horizons)
+    if not requested_horizons or min(requested_horizons) < 1:
+        raise ValueError("horizons must contain positive integers.")
+    if initial_train_size < 1:
+        raise ValueError("initial_train_size must be at least 1.")
+    if max_origins is not None and max_origins < 1:
+        raise ValueError("max_origins must be at least 1 when supplied.")
+
+    y = pd.Series(series).dropna().astype(float).sort_index()
+    x = _coerce_quarter_index(pd.DataFrame(exog))
+    if x.empty:
+        raise ValueError("exog must contain at least one column.")
+    if y.index.has_duplicates:
+        raise ValueError("series index must not contain duplicate quarters.")
+    if x.index.has_duplicates:
+        raise ValueError("exog index must not contain duplicate quarters.")
+
+    max_horizon = max(requested_horizons)
+    if len(y) < initial_train_size + max_horizon:
+        raise ValueError("series is too short for the requested initial window and horizons.")
+
+    rows: list[dict[str, object]] = []
+    completed_origins = 0
+    for origin_pos in range(initial_train_size - 1, len(y) - max_horizon):
+        train_y_raw = y.iloc[: origin_pos + 1]
+        train_exog_raw = x.reindex(train_y_raw.index)
+        train_frame = pd.concat(
+            [train_y_raw.rename(target_column), train_exog_raw],
+            axis=1,
+        ).dropna()
+        if len(train_frame) < initial_train_size:
+            continue
+
+        raw_forecast = forecast_func(train_frame, max_horizon)
+        forecast_values = np.asarray(pd.Series(raw_forecast), dtype=float)
+        if len(forecast_values) < max_horizon:
+            raise ValueError("forecast_func returned fewer values than the maximum horizon.")
+        if not np.isfinite(forecast_values[:max_horizon]).all():
+            raise ValueError("forecast_func returned non-finite forecast values.")
+
+        forecast_origin = y.index[origin_pos]
+        for horizon in requested_horizons:
+            target_pos = origin_pos + horizon
+            target_quarter = y.index[target_pos]
+            actual = float(y.iloc[target_pos])
+            forecast = float(forecast_values[horizon - 1])
+            rows.append(
+                {
+                    "model": model_name,
+                    "forecast_origin": forecast_origin,
+                    "target_quarter": target_quarter,
+                    "horizon": horizon,
+                    "actual": actual,
+                    "forecast": forecast,
+                    "error": actual - forecast,
+                }
+            )
+
+        completed_origins += 1
+        if max_origins is not None and completed_origins >= max_origins:
+            break
 
     return pd.DataFrame(rows)
 
