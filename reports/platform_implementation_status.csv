@@ -6,10 +6,10 @@ pytest,implemented,tests/,Install requirements and run python -m pytest tests.
 DuckDB/SQL analytics,implemented,src/platform_loads.py; sql/queries/,DuckDB database is created by the ETL run.
 BigQuery,configuration_required,src/platform_loads.py; .env.example BIGQUERY_* variables; sql/queries/,Run python -m src.build_curated_dataset --load-bigquery after GCP config.
 Supabase PostgreSQL,configuration_required,src/platform_loads.py; .env.example DATABASE_URL; sql/schema_app_metadata.sql,"Run schema SQL, then python -m src.build_curated_dataset --load-postgres."
-MLflow,dependency_missing,requirements.txt; .env.example MLFLOW_* variables,Add experiment logging after SARIMAX modelling exists.
+MLflow,implemented,src/models/tracking.py; src/models/registry.py; mlruns/ (local),Wire MLflow-served forecasts into the planned Streamlit Forecasting Interface.
 FastAPI,implemented,api/main.py,Run uvicorn api.main:app --reload after installing requirements.
 Streamlit,implemented,app/streamlit_app.py,Run streamlit run app/streamlit_app.py after installing requirements.
 Docker,scaffolded,Dockerfile,Build image after API dependencies are installed.
-Render,deployment_required,Dockerfile; api/main.py,Connect repo to Render and deploy the API service.
+Google Cloud Run,deployment_required,Dockerfile; api/main.py,"Push the local Docker image to Artifact Registry, then run gcloud run deploy cpi-forecast-api with that image."
 GitHub Actions CI,implemented,.github/workflows/tests.yml,Push to GitHub and confirm workflow passes.
 GitHub Actions scheduled ETL,implemented,.github/workflows/scheduled_etl.yml,Push to GitHub and enable scheduled workflow.

@@ -479,7 +479,13 @@ def run_sarima_comparison(
     horizons: Iterable[int] = DEFAULT_HORIZONS,
 ) -> pd.DataFrame:
     """Run SARIMA, seasonal naive, and RBA comparison and save the metric table."""
-    from src.models.sarima import forecast_sarima
+    from src.models import tracking
+    from src.models.sarima import (
+        DEFAULT_ORDER,
+        DEFAULT_SEASONAL_ORDER,
+        fit_sarima,
+        forecast_sarima,
+    )
 
     horizons = tuple(horizons)
     target = load_target_series(curated_path)
@@ -501,6 +507,30 @@ def run_sarima_comparison(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     metrics.round({"rmse": 6, "mae": 6}).to_csv(output_path, index=False)
+    final_fit = fit_sarima(
+        target,
+        order=DEFAULT_ORDER,
+        seasonal_order=DEFAULT_SEASONAL_ORDER,
+    )
+    tracking.log_model_run(
+        run_name="sarima_comparison",
+        model_name="sarima",
+        metrics=metrics,
+        params={
+            "order": DEFAULT_ORDER,
+            "seasonal_order": DEFAULT_SEASONAL_ORDER,
+            "features": (),
+            "selection_criterion": "fixed_cpi_yoy_default",
+            "initial_train_size": initial_train_size,
+            "horizons": horizons,
+        },
+        tags={
+            "model_family": "sarima",
+            "run_role": "comparison_with_full_sample_model",
+        },
+        artifact_paths=[output_path],
+        model_logger=lambda: tracking.log_statsmodels_model(final_fit),
+    )
     return metrics
 
 

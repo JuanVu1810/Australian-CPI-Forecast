@@ -1,4 +1,5 @@
 import ast
+import inspect
 from pathlib import Path
 
 import numpy as np
@@ -105,6 +106,15 @@ def test_sarimax_order_search_is_aic_bic_only_for_small_grid():
     assert len(result) == 2
     assert result["aic"].notna().all()
     assert result["bic"].notna().all()
+
+
+def test_sarimax_comparison_defaults_to_conservative_arma_grid():
+    signature = inspect.signature(order_search.run_sarimax_comparison)
+
+    assert signature.parameters["max_p"].default == 1
+    assert signature.parameters["max_q"].default == 1
+    assert signature.parameters["max_p_seasonal"].default == 1
+    assert signature.parameters["max_q_seasonal"].default == 1
 
 
 def test_level_change_resolution_compares_one_representative_lag_per_side(monkeypatch):

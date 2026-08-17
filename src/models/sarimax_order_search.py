@@ -42,6 +42,7 @@ NESTED_GROUP_IDS = {"A", "B", "C", "D", "E"}
 SHARP_SAMPLE_DROP_RATIO = 0.75
 LEVEL_CHANGE_AIC_MATERIALITY_THRESHOLD = 2.0
 NONSTATIONARY_LEVEL_FAMILIES = {"cash_rate", "unemployment_rate"}
+DEFAULT_COMPARISON_MAX_ARMA_ORDER = 1
 
 COEFFICIENT_CAVEAT = (
     "Model-conditional correlation only; not a causal estimate. Interpret with "
@@ -456,16 +457,18 @@ def run_sarimax_comparison(
     initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
     horizons: Iterable[int] = DEFAULT_HORIZONS,
     criterion: str = "aic",
-    max_p: int = 2,
-    max_q: int = 2,
-    max_p_seasonal: int = 2,
-    max_q_seasonal: int = 2,
+    max_p: int = DEFAULT_COMPARISON_MAX_ARMA_ORDER,
+    max_q: int = DEFAULT_COMPARISON_MAX_ARMA_ORDER,
+    max_p_seasonal: int = DEFAULT_COMPARISON_MAX_ARMA_ORDER,
+    max_q_seasonal: int = DEFAULT_COMPARISON_MAX_ARMA_ORDER,
     d_values: Iterable[int] = (0,),
     seasonal_d_values: Iterable[int] = (0,),
     maxiter: int = 100,
     verbose: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, LevelChangeChoice]]:
     """Run screened SARIMAX ablations and save metric/coefficient reports."""
+    from src.models import tracking
+
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     series = load_target_series(curated_path)
     exog = load_exog_frame(curated_path)
@@ -477,6 +480,7 @@ def run_sarimax_comparison(
 
     metric_tables: list[pd.DataFrame] = []
     coefficient_tables: list[pd.DataFrame] = []
+    tracking_payloads: list[dict[str, object]] = []
     previous_nested_origin_n: int | None = None
     for group in groups:
         if verbose:
@@ -594,6 +598,19 @@ def run_sarimax_comparison(
         if group.group_id in NESTED_GROUP_IDS:
             previous_nested_origin_n = origin_n
         metric_tables.append(metrics)
+        tracking_payloads.append(
+            {
+                "group": group,
+                "metrics": metrics.copy(),
+                "fitted": fitted,
+                "order": order,
+                "seasonal_order": seasonal_order,
+                "horizon_cap": horizon_cap,
+                "actual_horizons": actual_horizons,
+                "selection_aic": float(best["aic"]),
+                "selection_bic": float(best["bic"]),
+            }
+        )
         if verbose:
             print(f"  completed group {group.group_id}", flush=True)
 
@@ -609,6 +626,57 @@ def run_sarimax_comparison(
         coefficient_output_path,
         index=False,
     )
+    artifact_paths = [comparison_output_path, coefficient_output_path]
+    with tracking.start_parent_run(
+        run_name="sarimax_comparison",
+        params={
+            "selection_criterion": criterion,
+            "initial_train_size": initial_train_size,
+            "horizons": requested_horizons,
+            "max_p": max_p,
+            "max_q": max_q,
+            "max_p_seasonal": max_p_seasonal,
+            "max_q_seasonal": max_q_seasonal,
+            "d_values": tuple(int(value) for value in d_values),
+            "seasonal_d_values": tuple(int(value) for value in seasonal_d_values),
+        },
+        tags={
+            "model_family": "sarimax",
+            "run_role": "comparison_parent",
+        },
+    ):
+        tracking.log_existing_artifacts(artifact_paths)
+        for payload in tracking_payloads:
+            group = payload["group"]
+            assert isinstance(group, FeatureGroup)
+            tracking.log_model_run(
+                run_name=f"sarimax_group_{group.group_id}",
+                model_name="sarimax",
+                metrics=payload["metrics"],
+                params={
+                    "order": payload["order"],
+                    "seasonal_order": payload["seasonal_order"],
+                    "features": group.features,
+                    "selection_criterion": criterion,
+                    "initial_train_size": initial_train_size,
+                    "horizons": requested_horizons,
+                    "actual_horizons": payload["actual_horizons"],
+                    "horizon_cap": payload["horizon_cap"],
+                    "selection_aic": payload["selection_aic"],
+                    "selection_bic": payload["selection_bic"],
+                },
+                tags={
+                    "model_family": "sarimax",
+                    "sarimax_feature_group_id": group.group_id,
+                    "sarimax_feature_group_name": group.group_name,
+                    "run_role": "comparison_with_full_sample_model",
+                },
+                artifact_paths=artifact_paths,
+                model_logger=lambda fitted=payload["fitted"]: tracking.log_statsmodels_model(
+                    fitted
+                ),
+                nested=True,
+            )
     return comparison, coefficients, choices
 
 
@@ -621,10 +689,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--criterion", choices=("aic", "bic"), default="aic")
     parser.add_argument("--d-values", default="0")
     parser.add_argument("--seasonal-d-values", default="0")
-    parser.add_argument("--max-p", type=int, default=2)
-    parser.add_argument("--max-q", type=int, default=2)
-    parser.add_argument("--max-p-seasonal", type=int, default=2)
-    parser.add_argument("--max-q-seasonal", type=int, default=2)
+    parser.add_argument("--max-p", type=int, default=DEFAULT_COMPARISON_MAX_ARMA_ORDER)
+    parser.add_argument("--max-q", type=int, default=DEFAULT_COMPARISON_MAX_ARMA_ORDER)
+    parser.add_argument("--max-p-seasonal", type=int, default=DEFAULT_COMPARISON_MAX_ARMA_ORDER)
+    parser.add_argument("--max-q-seasonal", type=int, default=DEFAULT_COMPARISON_MAX_ARMA_ORDER)
     parser.add_argument("--maxiter", type=int, default=100)
     args = parser.parse_args(argv)
 

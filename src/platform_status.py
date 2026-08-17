@@ -85,9 +85,16 @@ def main() -> int:
         },
         {
             "platform": "MLflow",
-            "status": "dependency_declared" if package_available("mlflow") else "dependency_missing",
-            "evidence": "requirements.txt; .env.example MLFLOW_* variables",
-            "next_step": "Add experiment logging after SARIMAX modelling exists.",
+            "status": (
+                "implemented"
+                if exists("src/models/tracking.py")
+                and exists("src/models/registry.py")
+                else "dependency_declared"
+                if package_available("mlflow")
+                else "dependency_missing"
+            ),
+            "evidence": "src/models/tracking.py; src/models/registry.py; mlruns/ (local)",
+            "next_step": "Wire MLflow-served forecasts into the planned Streamlit Forecasting Interface.",
         },
         {
             "platform": "FastAPI",
@@ -108,10 +115,13 @@ def main() -> int:
             "next_step": "Build image after API dependencies are installed.",
         },
         {
-            "platform": "Render",
+            "platform": "Google Cloud Run",
             "status": "deployment_required",
             "evidence": "Dockerfile; api/main.py",
-            "next_step": "Connect repo to Render and deploy the API service.",
+            "next_step": (
+                "Push the local Docker image to Artifact Registry, then run "
+                "gcloud run deploy cpi-forecast-api with that image."
+            ),
         },
         {
             "platform": "GitHub Actions CI",

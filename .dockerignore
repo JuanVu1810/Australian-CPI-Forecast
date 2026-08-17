@@ -1,0 +1,13 @@
+.git
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+
+dataset
+notebooks
+tests
+
+data/analytics
+data/processed
+reports

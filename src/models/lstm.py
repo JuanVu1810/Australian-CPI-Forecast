@@ -507,6 +507,8 @@ def run_lstm_comparison(
     verbose: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, float]:
     """Run the fixed LSTM baseline, comparison metrics, and permutation report."""
+    from src.models import tracking
+
     started = time.perf_counter()
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     series = load_target_series(curated_path)
@@ -635,6 +637,49 @@ def run_lstm_comparison(
     comparison.round({"rmse": 6, "mae": 6, "selection_aic": 6, "selection_bic": 6}).to_csv(
         comparison_output_path,
         index=False,
+    )
+    if verbose:
+        print("Training final full-sample LSTM for MLflow model logging...", flush=True)
+    final_fit = fit_lstm_direct(
+        full_frame,
+        lookback=LOOKBACK_QUARTERS,
+        horizon=FORECAST_HORIZON,
+        epochs=MAX_EPOCHS,
+        patience=EARLY_STOPPING_PATIENCE,
+        batch_size=BATCH_SIZE,
+        seed=seed,
+    )
+    permutation_metrics = {
+        f"permutation_importance_{row['feature']}": float(row["rmse_increase"])
+        for _, row in importance.iterrows()
+    }
+    tracking.log_model_run(
+        run_name="lstm_comparison",
+        model_name="lstm",
+        metrics=comparison,
+        params={
+            "order": "fixed_lstm",
+            "seasonal_order": "",
+            "features": LSTM_FEATURE_COLUMNS,
+            "selection_criterion": "fixed_architecture",
+            "initial_train_size": initial_train_size,
+            "horizons": requested_horizons,
+            "lookback": LOOKBACK_QUARTERS,
+            "units": LSTM_UNITS,
+            "dropout": DROPOUT,
+            "epochs": MAX_EPOCHS,
+            "patience": EARLY_STOPPING_PATIENCE,
+            "batch_size": BATCH_SIZE,
+            "seed": seed,
+        },
+        tags={
+            "model_family": "lstm",
+            "reused_feature_group_id": "D",
+            "run_role": "comparison_with_full_sample_model",
+        },
+        artifact_paths=[comparison_output_path, permutation_output_path],
+        extra_metrics=permutation_metrics,
+        model_logger=lambda: tracking.log_lstm_keras_model(final_fit, full_frame),
     )
     runtime_seconds = time.perf_counter() - started
     return comparison, importance, runtime_seconds
