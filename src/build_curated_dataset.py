@@ -22,7 +22,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.features import add_growth_rates, add_lag_features, order_feature_columns
+from src.features import (
+    add_growth_rates,
+    add_intervention_dummies,
+    add_lag_features,
+    order_feature_columns,
+)
 from src.platform_loads import load_bigquery, load_postgres_quality_report, write_duckdb
 from src.platform_validation import validate_curated_with_pandera
 from src.transform import merge_quarterly_frames, read_csv, save_processed_frame, to_quarterly
@@ -240,6 +245,7 @@ def main() -> int:
     curated = merge_quarterly_frames(frames)
     curated = add_growth_rates(curated)
     curated = add_lag_features(curated)
+    curated = add_intervention_dummies(curated)
     curated = order_feature_columns(curated)
 
     quality_records.extend(validate_curated_dataset(curated))

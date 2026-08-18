@@ -13,6 +13,7 @@ from mlflow.tracking import MlflowClient
 from pydantic import BaseModel, Field
 
 from src.models import tracking
+from src.models.elastic_net import load_elastic_net_feature_frame
 from src.models.evaluation import TARGET_COLUMN, load_target_series
 from src.models.lstm import (
     LSTMDirectFit,
@@ -137,6 +138,26 @@ def _current_lstm_frame() -> pd.DataFrame:
     return pd.concat([series.rename(TARGET_COLUMN), exog], axis=1)
 
 
+def _current_elastic_net_frame() -> pd.DataFrame:
+    series = load_target_series(CURATED_DATA_PATH)
+    exog = load_elastic_net_feature_frame(CURATED_DATA_PATH)
+    return pd.concat([series.rename(TARGET_COLUMN), exog], axis=1)
+
+
+def _load_elastic_net_fit(model_uri: str):
+    """Load the logged ElasticNetDirectFit via the sklearn flavor.
+
+    This project's serving code always uses MLflow's flavor-specific loaders
+    (``mlflow.statsmodels``, ``mlflow.keras``, and here ``mlflow.sklearn``)
+    rather than the generic pyfunc flavor, so it gets back the real
+    ``ElasticNetDirectFit`` object -- including its ``predict_next`` method --
+    the same way the SARIMA/LSTM branches get back their real fitted objects.
+    """
+    import mlflow.sklearn
+
+    return mlflow.sklearn.load_model(model_uri)
+
+
 def _load_lstm_fit(client: MlflowClient, version, model_uri: str) -> LSTMDirectFit:
     import mlflow.keras
 
@@ -211,6 +232,26 @@ def _forecast_values(
         forecast_origin = str(clean_frame.index[-1])
         return ModelForecast(
             values=np.asarray(values, dtype=float).tolist(),
+            forecast_origin=forecast_origin,
+            quarters=next_quarters(forecast_origin, horizon),
+        )
+    if family == "elastic_net":
+        fitted = _load_elastic_net_fit(model_uri)
+        current_frame = _current_elastic_net_frame()
+        horizon_to_value = dict(zip(fitted.horizons, fitted.predict_next(current_frame)))
+        missing = [h for h in range(1, horizon + 1) if h not in horizon_to_value]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Elastic Net champion does not have fitted horizons {missing}.",
+            )
+        values = [float(horizon_to_value[h]) for h in range(1, horizon + 1)]
+        clean_frame = (
+            current_frame.loc[:, list(fitted.feature_columns)].dropna().astype(float).sort_index()
+        )
+        forecast_origin = str(clean_frame.index[-1])
+        return ModelForecast(
+            values=values,
             forecast_origin=forecast_origin,
             quarters=next_quarters(forecast_origin, horizon),
         )

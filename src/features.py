@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
+
+
+DEFAULT_INTERVENTION_TABLE_PATH = Path("data/metadata/intervention_quarters.csv")
 
 
 def add_growth_rates(df: pd.DataFrame) -> pd.DataFrame:
@@ -66,6 +71,51 @@ def add_lag_features(
             continue
         for lag in lags:
             result[f"{column}_lag{lag}"] = result[column].shift(lag)
+
+    return result
+
+
+def add_intervention_dummies(
+    df: pd.DataFrame,
+    table_path: Path = DEFAULT_INTERVENTION_TABLE_PATH,
+) -> pd.DataFrame:
+    """Add 0/1 pulse dummies for hand-curated, externally documented shock quarters.
+
+    Column names carry a ``_lag{N}`` suffix where ``N`` is the table's
+    ``lead_quarters`` value: how many quarters *before* the shock quarter the
+    underlying real-world event (a policy announcement, not the CPI print
+    itself) was genuinely public knowledge. The shared walk-forward harness's
+    ``infer_min_lag_from_columns`` (``src/models/evaluation.py``) then caps
+    each dummy's usable forecast horizon at ``N``, so a forecast origin that
+    predates the event's real announcement never sees it encoded in its
+    future exogenous inputs. This matters because the shock quarters
+    themselves were selected by inspecting the historical CPI series for its
+    largest swings -- that selection is legitimate for *explaining* those
+    quarters in-sample, but only genuinely forecast-safe for origins on or
+    after the real announcement date, which ``lead_quarters`` records
+    per-dummy in ``table_path``.
+    """
+    result = df.copy()
+    if "quarter" not in result:
+        raise ValueError("add_intervention_dummies requires a 'quarter' column.")
+
+    table = pd.read_csv(table_path)
+    required = {"quarter", "dummy_name", "lead_quarters"}
+    missing = required.difference(table.columns)
+    if missing:
+        raise ValueError(f"{table_path} missing required columns: {sorted(missing)}")
+
+    quarter_strings = result["quarter"].astype(str)
+    for dummy_name, rows in table.groupby("dummy_name"):
+        shock_quarters = set(rows["quarter"].astype(str))
+        lead_values = rows["lead_quarters"].unique()
+        if len(lead_values) != 1:
+            raise ValueError(
+                f"{dummy_name!r} rows in {table_path} must share one consistent "
+                "lead_quarters value."
+            )
+        lag = int(lead_values[0])
+        result[f"{dummy_name}_lag{lag}"] = quarter_strings.isin(shock_quarters).astype(int)
 
     return result
 

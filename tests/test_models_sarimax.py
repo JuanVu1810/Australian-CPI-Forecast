@@ -205,6 +205,63 @@ def test_level_change_resolution_defaults_to_stationary_change_when_level_aic_ed
     )
 
 
+def test_build_feature_groups_includes_covid_intervention_variants(monkeypatch):
+    class FakeChoice:
+        def __init__(self, winner_features):
+            self.winner_features = winner_features
+
+    choices = {
+        "cash_rate": FakeChoice(("cash_rate_change_lag1",)),
+        "unemployment_rate": FakeChoice(("unemployment_rate_change_lag1",)),
+    }
+
+    groups = order_search.build_feature_groups(choices)
+    by_id = {group.group_id: group for group in groups}
+
+    assert by_id["I"].features == (
+        "covid_shock_down_lag0",
+        "covid_shock_rebound_lag1",
+    )
+    assert by_id["J"].features == (
+        *by_id["D"].features,
+        "covid_shock_down_lag0",
+        "covid_shock_rebound_lag1",
+    )
+    assert "I" not in order_search.NESTED_GROUP_IDS
+    assert "J" not in order_search.NESTED_GROUP_IDS
+
+
+def test_expected_sign_for_covid_intervention_features():
+    assert order_search.expected_sign_for_feature("covid_shock_down_lag0") == "-"
+    assert order_search.expected_sign_for_feature("covid_shock_rebound_lag1") == "+"
+
+
+def test_intervention_groups_have_zero_horizon_cap_and_skip_walk_forward():
+    horizon_cap = order_search.infer_min_lag_from_columns(order_search.INTERVENTION_FEATURES)
+    assert horizon_cap == 0
+
+
+def test_not_forecast_viable_metrics_has_no_crash_shape():
+    group = order_search.FeatureGroup("I", "COVID intervention dummies only", order_search.INTERVENTION_FEATURES)
+
+    metrics = order_search._not_forecast_viable_metrics(
+        group=group,
+        order=(1, 0, 0),
+        seasonal_order=(0, 0, 0, 4),
+        criterion="aic",
+        selection_aic=100.0,
+        selection_bic=110.0,
+        level_change_note="",
+        horizon_cap=0,
+    )
+
+    assert metrics["model"].tolist() == ["sarimax"]
+    assert metrics["horizon"].tolist() == ["overall"]
+    assert metrics["n"].iloc[0] == 0
+    assert pd.isna(metrics["rmse"].iloc[0])
+    assert metrics["group_id"].iloc[0] == "I"
+
+
 def test_sarimax_selection_functions_do_not_reference_walk_forward_helpers():
     path = Path("src/models/sarimax_order_search.py")
     tree = ast.parse(path.read_text())

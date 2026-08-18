@@ -146,6 +146,72 @@ def log_lstm_keras_model(
     _tag_logged_model(model_info)
 
 
+def log_elastic_net_model(
+    fitted: Any,
+    train_frame: pd.DataFrame,
+    artifact_path: str = "model",
+) -> None:
+    """Log a full-sample Elastic Net (one scaler+model pipeline per horizon).
+
+    ``fitted.models[horizon]`` is a ``scaler -> ElasticNet`` sklearn
+    ``Pipeline`` selected by per-fold cross-validated ``GridSearchCV``
+    (``src/models/elastic_net.py``), so alpha/l1_ratio/intercept come from
+    its ``"model"`` step, and the logged signature uses raw (unscaled)
+    inputs -- the pipeline scales internally, unlike the plain
+    ``TrainWindowScaler``-based LSTM model this mirrors.
+    """
+    mlflow = configure_mlflow()
+    import mlflow.sklearn
+    from mlflow.models import infer_signature
+
+    columns = list(fitted.feature_columns)
+    mean = {column: float(fitted.scaler.mean_.loc[column]) for column in columns}
+    scale = {column: float(fitted.scaler.scale_.loc[column]) for column in columns}
+    per_horizon = {
+        str(horizon): {
+            "alpha": float(pipeline.named_steps["model"].alpha),
+            "l1_ratio": float(pipeline.named_steps["model"].l1_ratio),
+            "intercept": float(pipeline.named_steps["model"].intercept_),
+        }
+        for horizon, pipeline in fitted.models.items()
+    }
+    mlflow.log_dict(
+        {
+            "feature_columns": columns,
+            "target_column": fitted.target_column,
+            "horizons": list(fitted.horizons),
+            "scaler_mean": mean,
+            "scaler_scale": scale,
+            "per_horizon_selection": per_horizon,
+        },
+        "model_preprocessing/elastic_net_scaler.json",
+    )
+
+    signature = None
+    clean = pd.DataFrame(train_frame).loc[:, columns].dropna().astype(float)
+    if not clean.empty:
+        latest = clean.iloc[[-1]]
+        prediction = fitted.predict_next(train_frame).reshape(1, -1)
+        signature = infer_signature(latest, prediction)
+
+    mlflow.set_tag("model_artifact_role", FULL_SAMPLE_MODEL_TAG)
+    # ElasticNetDirectFit is a project-defined dataclass wrapping one
+    # scaler+ElasticNet Pipeline per horizon, not a single scikit-learn
+    # estimator, so the default "skops" serializer (which only supports
+    # plain sklearn classes) cannot pickle it. cloudpickle can serialize
+    # arbitrary Python objects;
+    # the tradeoff is that loading the logged model later re-executes
+    # arbitrary code, same as loading any pickle -- acceptable here since
+    # these artifacts are produced and consumed by this project's own code.
+    model_info = mlflow.sklearn.log_model(
+        fitted,
+        artifact_path=artifact_path,
+        signature=signature,
+        serialization_format="cloudpickle",
+    )
+    _tag_logged_model(model_info)
+
+
 def _tag_logged_model(model_info: Any) -> None:
     """Persist MLflow's authoritative model URI/id on the active run."""
     mlflow = configure_mlflow()

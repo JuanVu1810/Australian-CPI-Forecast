@@ -14,16 +14,17 @@ from src.models import tracking
 
 REGISTERED_MODEL_NAME = "cpi_forecast_champion"
 CHAMPION_ALIAS = "champion"
-ELIGIBLE_FAMILIES = ("sarima", "lstm")
+ELIGIBLE_FAMILIES = ("sarima", "lstm", "elastic_net")
 REPORT_PATHS = {
     "sarima": Path("reports/model_comparison_sarima.csv"),
     "lstm": Path("reports/model_comparison_lstm.csv"),
+    "elastic_net": Path("reports/model_comparison_elastic_net.csv"),
 }
 
 
 @dataclass(frozen=True)
 class Candidate:
-    family: Literal["sarima", "lstm"]
+    family: Literal["sarima", "lstm", "elastic_net"]
     rmse_overall: float
     metric_source: Literal["mlflow", "report"]
     run_id: str | None
@@ -33,7 +34,7 @@ class Candidate:
 class PromotionResult:
     registered_model_name: str
     alias: str
-    family: Literal["sarima", "lstm"]
+    family: Literal["sarima", "lstm", "elastic_net"]
     version: str
     run_id: str
     rmse_overall: float

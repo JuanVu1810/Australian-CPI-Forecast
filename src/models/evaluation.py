@@ -15,6 +15,7 @@ four-quarter change, this benchmark is close to persistence, but keeping it on
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 import re
 
@@ -45,6 +46,51 @@ DirectMultihorizonForecastFunction = Callable[
 ]
 
 LAG_COLUMN_PATTERN = re.compile(r"_lag(\d+)$")
+
+
+@dataclass(frozen=True)
+class TrainWindowScaler:
+    """Small train-window standard scaler shared by models that need one.
+
+    Fitting must always happen on exactly the caller's training window (never
+    the full series) so that per-origin walk-forward scaling stays leakage
+    safe; see the direct-multihorizon LSTM and Elastic Net fits for the
+    intended usage pattern.
+    """
+
+    columns: tuple[str, ...]
+    mean_: pd.Series
+    scale_: pd.Series
+
+    def transform(self, frame: pd.DataFrame) -> np.ndarray:
+        values = pd.DataFrame(frame).loc[:, list(self.columns)].astype(float)
+        return ((values - self.mean_) / self.scale_).to_numpy(dtype=np.float32)
+
+    def inverse_transform_target(
+        self,
+        values: np.ndarray | pd.Series | list[float],
+        target_column: str,
+    ) -> np.ndarray:
+        raw = np.asarray(values, dtype=np.float32)
+        return raw * float(self.scale_.loc[target_column]) + float(self.mean_.loc[target_column])
+
+
+def fit_train_window_scaler(frame: pd.DataFrame) -> TrainWindowScaler:
+    """Fit a standard scaler on exactly the provided training window."""
+    clean = pd.DataFrame(frame).astype(float)
+    mean = clean.mean(axis=0)
+    scale = clean.std(axis=0, ddof=0).replace(0.0, 1.0)
+    return TrainWindowScaler(columns=tuple(clean.columns), mean_=mean, scale_=scale)
+
+
+def assert_consecutive_quarters(index: pd.Index, context: str) -> None:
+    """Raise if ``index`` is not a gap-free run of consecutive quarters."""
+    period_index = pd.PeriodIndex(index, freq="Q")
+    if period_index.empty:
+        return
+    expected = pd.period_range(period_index[0], periods=len(period_index), freq="Q")
+    if not period_index.equals(expected):
+        raise ValueError(f"{context} must contain consecutive quarterly observations.")
 
 
 def _as_quarter_period(value: object) -> pd.Period:

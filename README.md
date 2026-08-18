@@ -1,10 +1,13 @@
 # CPI Forecast
 
-An Australian Consumer Price Index (CPI) forecasting project, originally a
-university time-series assignment, now being extended into an end-to-end data
-science portfolio project. The original notebook,
-`notebooks/cpi_forecast_V1.ipynb`, builds and evaluates a quarterly SARIMA
-model using historical CPI observations from 1995 Q1 to 2022 Q4.
+An Australian inflation forecasting project, originally a university
+time-series assignment, now being extended into an end-to-end data science
+portfolio project. The modelling target throughout is `cpi_yoy` -- year-ended
+(4-quarter) percentage change in the CPI index, i.e. headline inflation on
+the same basis the ABS and RBA report it -- not the raw CPI index level. The
+original notebook, `notebooks/cpi_forecast_V1.ipynb`, builds and evaluates a
+quarterly SARIMA model using historical CPI observations from 1995 Q1 to
+2022 Q4.
 
 This document is the single source of truth for the project's story, status,
 architecture decisions, and setup instructions (it replaces the previous
@@ -12,14 +15,14 @@ split between `README.md` and `PROJECT_ARCHITECTURE.md`).
 
 ## Core Question
 
-> Can Australian CPI forecasts be improved by combining historical CPI values
-> with external macroeconomic indicators such as unemployment, wages, producer
-> prices, interest rates, exchange rates, inflation expectations, commodity
-> prices, and oil prices -- and how do those forecasts compare to the RBA's
-> own published inflation projections?
+> Can Australian inflation (year-ended CPI growth) forecasts be improved by
+> combining historical CPI values with external macroeconomic indicators such
+> as unemployment, wages, producer prices, interest rates, exchange rates,
+> inflation expectations, commodity prices, and oil prices -- and how do those
+> forecasts compare to the RBA's own published inflation projections?
 
-The portfolio version compares **three primary forecasting models** against
-**two benchmarks**. Neither benchmark counts as one of the three primary
+The portfolio version compares **four primary forecasting models** against
+**two benchmarks**. Neither benchmark counts as one of the four primary
 models.
 
 | Role | Model | Type | Main inputs |
@@ -29,14 +32,15 @@ models.
 | Primary 1 | SARIMA | univariate statistical | CPI history |
 | Primary 2 | SARIMAX | multivariate statistical | CPI + selected macro indicators |
 | Primary 3 | LSTM | multivariate deep learning | sequences of CPI + selected macro indicators |
+| Primary 4 | Elastic Net | regularized multivariate linear | CPI autoregressive lags + SARIMAX Group D's macro indicators |
 
 **Why two benchmarks:** beating seasonal naive is a low bar for an inflation
 model -- almost any reasonable model clears it. The RBA publishes its own
-inflation forecasts, so comparing SARIMA/SARIMAX/LSTM against those tests
-whether the project's models are competitive with a real professional
-forecaster who has access to policy intentions, business liaison data, and
-analyst judgment the statistical models don't see. The project reports
-honestly if that bar isn't cleared.
+inflation forecasts, so comparing SARIMA/SARIMAX/LSTM/Elastic Net against
+those tests whether the project's models are competitive with a real
+professional forecaster who has access to policy intentions, business
+liaison data, and analyst judgment the statistical models don't see. The
+project reports honestly if that bar isn't cleared.
 
 The project is organised around three "flagship" deliverables, one per data
 role, so each pillar is demonstrated deeply rather than every pillar being
@@ -44,7 +48,7 @@ demonstrated shallowly:
 
 | Pillar | Flagship deliverable | Supporting evidence |
 |---|---|---|
-| Data Science | SARIMA vs SARIMAX vs LSTM, walk-forward validated against seasonal naive **and** the RBA forecast, with SARIMAX coefficient and LSTM permutation-importance interpretability | EDA notebook, feature engineering |
+| Data Science | SARIMA vs SARIMAX vs LSTM vs Elastic Net, walk-forward validated against seasonal naive **and** the RBA forecast, with SARIMAX/Elastic Net coefficient and LSTM permutation-importance interpretability | EDA notebook, feature engineering |
 | Data Engineering | Ingestion -> validation -> curated Parquet -> DuckDB, fully local and credential-free | BigQuery documented as target, not deployed |
 | ML Engineering | MLflow runs, model registry with `@champion`, FastAPI selected-model serving, Docker, and planned Google Cloud Run deployment | Postgres as the optional MLflow backend and run metadata store |
 
@@ -72,10 +76,11 @@ normal residuals, and no obvious remaining trend.
 
 **Note on benchmarking:** these notebook results are only compared against
 seasonal naive, since `cpi_forecast_V1.ipynb` predates the platform's
-walk-forward evaluation harness. The project-wide SARIMA/SARIMAX/LSTM
-comparison against seasonal naive **and** the RBA forecast is now implemented
-(see [Models In Detail](#models-in-detail) and `reports/model_comparison_sarima.csv`,
-`reports/model_comparison_sarimax.csv`, `reports/model_comparison_lstm.csv`).
+walk-forward evaluation harness. The project-wide SARIMA/SARIMAX/LSTM/Elastic
+Net comparison against seasonal naive **and** the RBA forecast is now
+implemented (see [Models In Detail](#models-in-detail) and
+`reports/model_comparison_sarima.csv`, `reports/model_comparison_sarimax.csv`,
+`reports/model_comparison_lstm.csv`, `reports/model_comparison_elastic_net.csv`).
 
 ## Models In Detail
 
@@ -90,8 +95,13 @@ SARIMAX extends SARIMA with economically justified lagged predictors selected
 through the EDA and feature-availability audit (unemployment, PPI growth,
 cash rate, commodity/oil prices, inflation expectations). Fixed feature-group
 ablations are reported in `reports/model_comparison_sarimax.csv`; order and
-level-vs-change choices are made before walk-forward evaluation, not tuned
-against backtest RMSE/MAE.
+level-vs-change choices are selected by AIC on development-only data (the
+series' most recent 20 quarters excluded), not tuned against backtest
+RMSE/MAE and never touching the walk-forward test tail. Two additional
+groups (I, J) test COVID-era intervention dummies; both dummies have less
+than one genuine quarter of real-world forecast lead time, so
+`infer_min_lag_from_columns` caps their usable horizon at 0 and those two
+groups report in-sample coefficients only, not walk-forward metrics.
 
 **Interpretability:** fitted coefficients are reported in
 `reports/sarimax_coefficients.csv` alongside accuracy metrics, with a check
@@ -123,6 +133,30 @@ small-sample instability/no robust positive importance, not as strong evidence
 that a feature is beneficially harmful. Agreement with SARIMAX coefficients
 strengthens confidence in which predictors actually matter; disagreement is
 itself worth discussing.
+
+### Elastic Net (implemented)
+
+A regularized direct multi-horizon Elastic Net is included as a **challenger**
+that tests a specific diagnosis directly: SARIMAX loses to plain SARIMA on
+every screened feature group, and a leakage-fixed LSTM hyperparameter search
+found a bigger network wasn't better than baseline -- both point at
+small-sample overfitting on the exogenous macro block, not underfitting. If
+that's right, penalizing coefficient size (rather than adding model capacity)
+should help. This model uses the same SARIMAX Group D macro features as the
+LSTM, plus explicit `cpi_yoy` autoregressive lags (a linear model has no
+built-in AR structure the way SARIMA/SARIMAX/LSTM do), fitting one
+`StandardScaler -> ElasticNet` pipeline per horizon (1-8) with `alpha`/
+`l1_ratio` selected by `GridSearchCV` over chronological `TimeSeriesSplit`
+folds -- so the scaler is refit on each fold's training rows only, never once
+on the whole training window before cross-validation begins. On the shared
+8-horizon grid it beats both LSTM and plain SARIMA, though not the RBA
+benchmark -- evidence that regularizing the existing macro block helps more
+than adding architecture complexity does, on this sample size.
+
+**Interpretability:** per-horizon coefficients, intercept, and selected
+`alpha`/`l1_ratio` are reported in `reports/elastic_net_coefficients.csv`,
+directly comparable to the SARIMAX coefficient table since both use
+overlapping features.
 
 A useful research framing:
 
@@ -179,7 +213,7 @@ clear job is documented as a target rather than built.
 | BigQuery | documented target only, optional load hook, not deployed | | `src/platform_loads.py`, `.env.example` |
 | Supabase PostgreSQL | schema scaffolded, scoped to MLflow backend + run metadata | supporting for MLE flagship | `sql/schema_app_metadata.sql`, `.env.example` |
 | SARIMA | implemented | **DS flagship** | `notebooks/cpi_forecast_V1.ipynb`, `src/models/sarima.py` |
-| SARIMAX / LSTM comparison + RBA benchmark | implemented | **DS flagship** | `src/models/`, `reports/model_comparison_sarimax.csv`, `reports/model_comparison_lstm.csv`, `reports/lstm_permutation_importance.csv` |
+| SARIMAX / LSTM / Elastic Net comparison + RBA benchmark | implemented; SARIMAX also includes two COVID intervention-dummy feature groups (I, J) | **DS flagship** | `src/models/`, `reports/model_comparison_sarimax.csv`, `reports/model_comparison_lstm.csv`, `reports/model_comparison_elastic_net.csv`, `reports/elastic_net_coefficients.csv`, `reports/lstm_permutation_importance.csv` |
 | MLflow | implemented locally: comparison runs log params, metrics, report artifacts, and full-sample model artifacts | **MLE flagship** | `src/models/tracking.py`, `mlruns/` (local, gitignored) |
 | FastAPI | implemented locally: MLflow `@champion` `/models`, `/metrics`, and `/forecast` serving; deployment planned | **MLE flagship** | `api/main.py`, `src/models/registry.py`, local `uvicorn` check |
 | Docker / Google Cloud Run | containerized; SARIMA champion path verified locally, LSTM unverified; live Cloud Run deployment pending | **MLE flagship** | `Dockerfile`, `.dockerignore`, local container `/forecast` check |
@@ -300,9 +334,9 @@ The notebook now has **14 sections**, all implemented:
 
 **Remaining follow-ups documented in the notebook:**
 
-- The rolling-origin SARIMA/SARIMAX/LSTM-vs-RBA comparison the notebook's
-  RBA forecast-error summary was preparing for is now implemented (see
-  [Models In Detail](#models-in-detail)).
+- The rolling-origin SARIMA/SARIMAX/LSTM/Elastic-Net-vs-RBA comparison the
+  notebook's RBA forecast-error summary was preparing for is now implemented
+  (see [Models In Detail](#models-in-detail)).
 - `data/metadata/series_availability.csv` is an assumption-backed
   forecast-origin lag table, not official release-calendar metadata, since
   the project currently uses revised historical data rather than real-time
@@ -516,10 +550,13 @@ The Data Science flagship (item 1) is done; the project now moves into the
 other two flagship pillars, with dashboard polish last.
 
 1. **Data Science flagship (done):** SARIMA, SARIMAX (feature-group
-   ablations, coefficient interpretation), and a compact leakage-safe LSTM
-   (permutation importance) are all walk-forward validated against seasonal
-   naive **and** the RBA benchmark, reported overall and by horizon --
-   `src/models/`, `reports/model_comparison_*.csv`.
+   ablations A-H, plus two COVID intervention-dummy groups reported as
+   in-sample coefficients only -- see [Models In Detail](#models-in-detail)),
+   a compact leakage-safe LSTM (permutation importance), and a regularized
+   direct multi-horizon Elastic Net (per-horizon coefficients) are all
+   walk-forward validated against seasonal naive **and** the RBA benchmark,
+   reported overall and by horizon -- `src/models/`,
+   `reports/model_comparison_*.csv`.
 2. **ML Engineering flagship (next):** log every run (params, features, horizon,
    metrics, and LSTM-specific settings) in MLflow; serve the selected model
    through FastAPI (`/health`, `/models`, `/metrics`, `/forecast`);
@@ -532,8 +569,9 @@ other two flagship pillars, with dashboard polish last.
 
 The result should read as a coherent, intentionally-scoped platform: a
 university SARIMA assignment extended into reproducible ingestion (including
-a real forecaster's own predictions), leakage-aware ETL, a SARIMA/SARIMAX/LSTM
-comparison against both seasonal naive and the RBA, real MLflow tracking,
+a real forecaster's own predictions), leakage-aware ETL, a
+SARIMA/SARIMAX/LSTM/Elastic Net comparison against both seasonal naive and
+the RBA, real MLflow tracking,
 FastAPI serving, a Streamlit dashboard, Docker/Cloud Run deployment, and CI --
 with explicit, written reasoning for every tool included and excluded, rather
 than a checklist of every tool in a data science job posting.

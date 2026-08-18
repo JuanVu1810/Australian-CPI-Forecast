@@ -21,7 +21,7 @@ raw:household_spending,PASS,162,2,2012-07-01,2025-12-01,0,0,ok
 processed:household_spending,PASS,54,2,2012-07-01,2025-10-01,0,0,ok
 raw:inflation_expectations_business,PASS,124,8,1995-01-01,2025-10-01,0,0,ok
 processed:inflation_expectations_business,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-curated_quarterly_macro_features,PASS,124,44,1995Q1,2025Q4,771,0,ok
+curated_quarterly_macro_features,PASS,124,46,1995Q1,2025Q4,771,0,ok
 curated_column:cpi_index,PASS,124,1,1995Q1,2025Q4,0,0,ok
 curated_column:cpi_qoq,PASS,123,1,1995Q1,2025Q4,1,0,ok
 curated_column:cpi_yoy,PASS,120,1,1995Q1,2025Q4,4,0,ok
@@ -65,5 +65,7 @@ curated_column:unemployment_rate_change_lag1,PASS,122,1,1995Q1,2025Q4,2,0,ok
 curated_column:unemployment_rate_change_lag2,PASS,121,1,1995Q1,2025Q4,3,0,ok
 curated_column:household_spending_growth_lag1,WARNING,52,1,1995Q1,2025Q4,72,0,58.1% missing after quarterly merge
 curated_column:inflation_expectations_business_lag1,PASS,123,1,1995Q1,2025Q4,1,0,ok
-pandera:curated_quarterly_macro_features,PASS,124,44,1995Q1,2025Q4,771,0,Pandera schema validation passed.
-platform:duckdb,PASS,124,44,1995Q1,2025Q4,771,0,Loaded curated data and quality report to data/analytics/cpi_forecast.duckdb.
+curated_column:covid_shock_down_lag0,PASS,124,1,1995Q1,2025Q4,0,0,ok
+curated_column:covid_shock_rebound_lag1,PASS,124,1,1995Q1,2025Q4,0,0,ok
+pandera:curated_quarterly_macro_features,PASS,124,46,1995Q1,2025Q4,771,0,Pandera schema validation passed.
+platform:duckdb,PASS,124,46,1995Q1,2025Q4,771,0,Loaded curated data and quality report to data/analytics/cpi_forecast.duckdb.

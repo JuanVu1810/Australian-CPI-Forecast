@@ -1,6 +1,7 @@
 import pandas as pd
+import pytest
 
-from src.features import add_growth_rates, add_lag_features
+from src.features import add_growth_rates, add_intervention_dummies, add_lag_features
 
 
 def test_growth_rates_create_cpi_qoq_and_yoy_without_backfill():
@@ -72,3 +73,53 @@ def test_default_lag_features_include_rate_changes_and_household_spending_growth
     assert result.loc[2, "cash_rate_change_lag1"] == 0.25
     assert result.loc[2, "unemployment_rate_change_lag1"] == 0.30
     assert result.loc[2, "household_spending_growth_lag1"] == 1.0
+
+
+def test_intervention_dummies_flag_only_documented_quarters(tmp_path):
+    table_path = tmp_path / "intervention_quarters.csv"
+    table_path.write_text(
+        "quarter,dummy_name,lead_quarters,reason,source_url\n"
+        "2020Q2,covid_shock_down,0,test reason,http://example.com\n"
+        "2020Q3,covid_shock_rebound,1,test reason,http://example.com\n"
+    )
+    source = pd.DataFrame(
+        {
+            "quarter": ["2020Q1", "2020Q2", "2020Q3", "2020Q4"],
+            "cpi_yoy": [1.0, -0.3, 0.6, 0.9],
+        }
+    )
+
+    result = add_intervention_dummies(source, table_path=table_path)
+
+    assert "covid_shock_down_lag0" in result
+    assert "covid_shock_rebound_lag1" in result
+    assert result["covid_shock_down_lag0"].tolist() == [0, 1, 0, 0]
+    assert result["covid_shock_rebound_lag1"].tolist() == [0, 0, 1, 0]
+    assert not result[["covid_shock_down_lag0", "covid_shock_rebound_lag1"]].isna().any().any()
+
+
+def test_intervention_dummies_support_multiple_quarters_per_dummy(tmp_path):
+    table_path = tmp_path / "intervention_quarters.csv"
+    table_path.write_text(
+        "quarter,dummy_name,lead_quarters,reason,source_url\n"
+        "2020Q2,covid_shock,0,test reason,http://example.com\n"
+        "2020Q3,covid_shock,0,test reason,http://example.com\n"
+    )
+    source = pd.DataFrame({"quarter": ["2020Q1", "2020Q2", "2020Q3", "2020Q4"]})
+
+    result = add_intervention_dummies(source, table_path=table_path)
+
+    assert result["covid_shock_lag0"].tolist() == [0, 1, 1, 0]
+
+
+def test_intervention_dummies_reject_inconsistent_lead_quarters(tmp_path):
+    table_path = tmp_path / "intervention_quarters.csv"
+    table_path.write_text(
+        "quarter,dummy_name,lead_quarters,reason,source_url\n"
+        "2020Q2,covid_shock,0,test reason,http://example.com\n"
+        "2020Q3,covid_shock,1,test reason,http://example.com\n"
+    )
+    source = pd.DataFrame({"quarter": ["2020Q1", "2020Q2", "2020Q3", "2020Q4"]})
+
+    with pytest.raises(ValueError, match="consistent lead_quarters"):
+        add_intervention_dummies(source, table_path=table_path)

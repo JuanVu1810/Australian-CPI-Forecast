@@ -17,8 +17,11 @@ from src.models.evaluation import (
     DEFAULT_INITIAL_TRAIN_SIZE as STATISTICAL_INITIAL_TRAIN_SIZE,
     PROJECT_ROOT,
     RBA_FORECAST_PATH,
+    TrainWindowScaler,
     align_rba_forecasts_to_grid,
+    assert_consecutive_quarters,
     compute_metric_table,
+    fit_train_window_scaler,
     load_target_series,
     restrict_to_common_grid,
     seasonal_naive_backtest,
@@ -72,27 +75,6 @@ PERMUTATION_IMPORTANCE_CAVEAT = (
     "single permutation run improved RMSE and should be read as no robust "
     "positive importance, not as evidence of a beneficially harmful feature."
 )
-
-
-@dataclass(frozen=True)
-class TrainWindowScaler:
-    """Small train-window standard scaler to avoid an sklearn dependency."""
-
-    columns: tuple[str, ...]
-    mean_: pd.Series
-    scale_: pd.Series
-
-    def transform(self, frame: pd.DataFrame) -> np.ndarray:
-        values = pd.DataFrame(frame).loc[:, list(self.columns)].astype(float)
-        return ((values - self.mean_) / self.scale_).to_numpy(dtype=np.float32)
-
-    def inverse_transform_target(
-        self,
-        values: np.ndarray | pd.Series | list[float],
-        target_column: str = TARGET_COLUMN,
-    ) -> np.ndarray:
-        raw = np.asarray(values, dtype=np.float32)
-        return raw * float(self.scale_.loc[target_column]) + float(self.mean_.loc[target_column])
 
 
 @dataclass
@@ -160,15 +142,6 @@ def load_lstm_feature_frame(path: Path = CURATED_DATA_PATH) -> pd.DataFrame:
     return df.sort_index().astype(float)
 
 
-def _assert_consecutive_quarters(index: pd.Index, context: str) -> None:
-    period_index = pd.PeriodIndex(index, freq="Q")
-    if period_index.empty:
-        return
-    expected = pd.period_range(period_index[0], periods=len(period_index), freq="Q")
-    if not period_index.equals(expected):
-        raise ValueError(f"{context} must contain consecutive quarterly observations.")
-
-
 def clean_lstm_frame(
     frame: pd.DataFrame,
     target_column: str = TARGET_COLUMN,
@@ -181,16 +154,8 @@ def clean_lstm_frame(
     clean = pd.DataFrame(frame).loc[:, list(columns)].dropna().astype(float).sort_index()
     if clean.index.has_duplicates:
         raise ValueError("LSTM frame index must not contain duplicate quarters.")
-    _assert_consecutive_quarters(clean.index, "LSTM frame")
+    assert_consecutive_quarters(clean.index, "LSTM frame")
     return clean
-
-
-def fit_train_window_scaler(frame: pd.DataFrame) -> TrainWindowScaler:
-    """Fit a standard scaler on exactly the provided training window."""
-    clean = pd.DataFrame(frame).astype(float)
-    mean = clean.mean(axis=0)
-    scale = clean.std(axis=0, ddof=0).replace(0.0, 1.0)
-    return TrainWindowScaler(columns=tuple(clean.columns), mean_=mean, scale_=scale)
 
 
 def make_direct_multihorizon_sequences(
@@ -207,7 +172,7 @@ def make_direct_multihorizon_sequences(
         raise ValueError("horizon must be at least 1.")
 
     clean = pd.DataFrame(frame).loc[:, list(scaler.columns)].dropna().astype(float)
-    _assert_consecutive_quarters(clean.index, "LSTM sequence frame")
+    assert_consecutive_quarters(clean.index, "LSTM sequence frame")
     if len(clean) < lookback + horizon:
         raise ValueError("training frame is too short for lookback plus forecast horizon.")
 
@@ -345,7 +310,7 @@ def fit_lstm_direct(
 
 def forecast_from_fit(fitted: LSTMDirectFit, train_frame: pd.DataFrame) -> np.ndarray:
     clean = pd.DataFrame(train_frame).loc[:, list(fitted.feature_columns)].dropna().astype(float)
-    _assert_consecutive_quarters(clean.index, "LSTM forecast frame")
+    assert_consecutive_quarters(clean.index, "LSTM forecast frame")
     if len(clean) < fitted.lookback:
         raise ValueError("forecast window is shorter than the fitted lookback.")
     latest_window = fitted.scaler.transform(clean.iloc[-fitted.lookback :])

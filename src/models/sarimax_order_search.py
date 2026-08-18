@@ -38,11 +38,34 @@ CASH_RATE_CHANGE_FEATURES = ("cash_rate_change_lag1",)
 UNEMPLOYMENT_LEVEL_FEATURES = ("unemployment_rate_lag2",)
 UNEMPLOYMENT_CHANGE_FEATURES = ("unemployment_rate_change_lag1",)
 EXTENDED_FEATURES = ("wpi_growth_lag1", "aud_usd_change_lag1", "brent_growth_lag1")
+# Lag suffixes reflect each dummy's real-world announcement lead time (see
+# data/metadata/intervention_quarters.csv's lead_quarters column), not a
+# blanket horizon. covid_shock_down had zero genuine lead (the childcare/fuel
+# shock was unknowable as of the prior origin), so it caps any group that
+# contains it at horizon 0 -- i.e. not forecast-viable, only in-sample
+# explanatory. See _not_forecast_viable_metrics.
+INTERVENTION_FEATURES = ("covid_shock_down_lag0", "covid_shock_rebound_lag1")
 NESTED_GROUP_IDS = {"A", "B", "C", "D", "E", "H"}
 SHARP_SAMPLE_DROP_RATIO = 0.75
 LEVEL_CHANGE_AIC_MATERIALITY_THRESHOLD = 2.0
 NONSTATIONARY_LEVEL_FAMILIES = {"cash_rate", "unemployment_rate"}
 DEFAULT_COMPARISON_MAX_ARMA_ORDER = 1
+# Order/level-vs-change selection uses only data up to this many quarters
+# before the end of the sample, so the walk-forward test tail is never used
+# to pick the ARIMA order or the level-vs-change feature choice (previously
+# both were selected on the full sample, including every backtest origin's
+# own future).
+ORDER_SELECTION_HOLDOUT_QUARTERS = 20
+ORDER_SELECTION_NOTE = (
+    f"ARIMA order and level-vs-change feature choice were selected by AIC on "
+    f"development-only data (excludes the most recent {ORDER_SELECTION_HOLDOUT_QUARTERS} "
+    "quarters), never the full sample, so the walk-forward test tail was not used to pick them."
+)
+NOT_FORECAST_VIABLE_NOTE = (
+    "This group's minimum feature lag is below 1 quarter (zero genuine forecast "
+    "lead time), so no walk-forward horizon is leakage-safe; only in-sample "
+    "coefficients are reported for this group."
+)
 
 COEFFICIENT_CAVEAT = (
     "Model-conditional correlation only; not a causal estimate. Interpret with "
@@ -236,6 +259,8 @@ def build_feature_groups(choices: dict[str, LevelChangeChoice]) -> tuple[Feature
     group_f = ("cash_rate_lag4", "unemployment_rate_lag4")
     group_g = (*group_b, "ppi_growth_lag1", "commodity_growth_lag1")
     group_h = (*group_e, "household_spending_growth_lag1")
+    group_i = INTERVENTION_FEATURES
+    group_j = (*group_d, *INTERVENTION_FEATURES)
     return (
         FeatureGroup("A", "policy rates", group_a),
         FeatureGroup("B", "A + inflation expectations", group_b),
@@ -245,6 +270,8 @@ def build_feature_groups(choices: dict[str, LevelChangeChoice]) -> tuple[Feature
         FeatureGroup("F", "long-horizon rates only", group_f),
         FeatureGroup("G", "C variant: fresher PPI lag (ppi_growth_lag1)", group_g),
         FeatureGroup("H", "E + household spending", group_h),
+        FeatureGroup("I", "COVID intervention dummies only", group_i),
+        FeatureGroup("J", "D + COVID intervention dummies", group_j),
     )
 
 
@@ -269,6 +296,10 @@ def expected_sign_for_feature(feature: str) -> str:
     if feature.startswith("brent_growth"):
         return "+"
     if feature.startswith("household_spending_growth"):
+        return "+"
+    if feature.startswith("covid_shock_down"):
+        return "-"
+    if feature.startswith("covid_shock_rebound"):
         return "+"
     return "?"
 
@@ -455,6 +486,64 @@ def _baseline_predictions(
     return frames
 
 
+def _development_split(
+    series: pd.Series,
+    exog: pd.DataFrame,
+    holdout_quarters: int,
+) -> tuple[pd.Series, pd.DataFrame]:
+    """Return the leading development-only slice used for order/feature selection.
+
+    Excludes the most recent ``holdout_quarters`` quarters of ``series`` so
+    that ARIMA order and level-vs-change choices are never picked using data
+    from the tail of the walk-forward evaluation grid.
+    """
+    if holdout_quarters <= 0 or len(series) <= holdout_quarters:
+        return series, exog.reindex(series.index)
+    cutoff = series.index[-holdout_quarters]
+    development_series = series.loc[series.index < cutoff]
+    development_exog = exog.reindex(development_series.index)
+    return development_series, development_exog
+
+
+def _not_forecast_viable_metrics(
+    group: FeatureGroup,
+    order: tuple[int, int, int],
+    seasonal_order: tuple[int, int, int, int],
+    criterion: str,
+    selection_aic: float,
+    selection_bic: float,
+    level_change_note: str,
+    horizon_cap: int,
+) -> pd.DataFrame:
+    """Build a metrics stub for a group whose minimum feature lag is below 1.
+
+    Such a group has no leakage-safe walk-forward horizon (see
+    ``NOT_FORECAST_VIABLE_NOTE``), so this returns one ``overall`` row with
+    ``n=0`` and ``rmse``/``mae`` left as NaN rather than calling the
+    walk-forward harness, which would otherwise raise on an empty horizon set.
+    """
+    metrics = pd.DataFrame(
+        [{"model": "sarimax", "horizon": "overall", "n": 0, "rmse": float("nan"), "mae": float("nan")}]
+    )
+    metrics.insert(0, "group_id", group.group_id)
+    metrics.insert(1, "group_name", group.group_name)
+    metrics.insert(2, "horizon_range", "none")
+    metrics.insert(3, "horizon_cap", horizon_cap)
+    metrics.insert(4, "features", ";".join(group.features))
+    metrics.insert(5, "level_change_selection_note", level_change_note)
+    metrics.insert(6, "selected_order", str(order))
+    metrics.insert(7, "selected_seasonal_order", str(seasonal_order))
+    metrics.insert(8, "selected_by", criterion)
+    metrics.insert(9, "selection_aic", selection_aic)
+    metrics.insert(10, "selection_bic", selection_bic)
+    metrics.insert(11, "group_origin_n", 0)
+    metrics.insert(12, "group_overall_metric_n", 0)
+    metrics.insert(13, "previous_nested_origin_n", None)
+    metrics.insert(14, "origin_drop_from_previous_nested_group", None)
+    metrics.insert(15, "sample_size_note", NOT_FORECAST_VIABLE_NOTE)
+    return metrics
+
+
 def run_sarimax_comparison(
     curated_path: Path = CURATED_DATA_PATH,
     rba_path: Path = RBA_FORECAST_PATH,
@@ -470,6 +559,7 @@ def run_sarimax_comparison(
     d_values: Iterable[int] = (0,),
     seasonal_d_values: Iterable[int] = (0,),
     maxiter: int = 100,
+    order_selection_holdout_quarters: int = ORDER_SELECTION_HOLDOUT_QUARTERS,
     verbose: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, LevelChangeChoice]]:
     """Run screened SARIMAX ablations and save metric/coefficient reports."""
@@ -478,9 +568,17 @@ def run_sarimax_comparison(
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     series = load_target_series(curated_path)
     exog = load_exog_frame(curated_path)
+    development_series, development_exog = _development_split(
+        series, exog, holdout_quarters=order_selection_holdout_quarters
+    )
     if verbose:
-        print("Resolving level-vs-change rate families by same-order AIC...", flush=True)
-    choices = resolve_level_change_features(series, exog, maxiter=maxiter)
+        print(
+            "Resolving level-vs-change rate families by same-order AIC on "
+            f"development-only data (excludes the last {order_selection_holdout_quarters} "
+            "quarters)...",
+            flush=True,
+        )
+    choices = resolve_level_change_features(development_series, development_exog, maxiter=maxiter)
     groups = build_feature_groups(choices)
     selection_notes_by_feature = _selection_notes_by_feature(choices)
 
@@ -497,9 +595,10 @@ def run_sarimax_comparison(
             )
         group_exog = exog.loc[:, list(group.features)]
         horizon_cap = infer_min_lag_from_columns(group.features)
+        development_group_exog = development_exog.loc[:, list(group.features)]
         search_results = run_sarimax_order_search(
-            series=series,
-            exog=group_exog,
+            series=development_series,
+            exog=development_group_exog,
             max_p=max_p,
             max_q=max_q,
             max_p_seasonal=max_p_seasonal,
@@ -514,8 +613,8 @@ def run_sarimax_comparison(
         seasonal_order = best["seasonal_order"]
         if verbose:
             print(
-                f"  selected order={order}, seasonal_order={seasonal_order} "
-                f"by {criterion.upper()}={float(best[criterion]):.3f}; "
+                f"  selected order={order}, seasonal_order={seasonal_order} by "
+                f"development-only {criterion.upper()}={float(best[criterion]):.3f}; "
                 f"running capped backtest to horizon {horizon_cap}",
                 flush=True,
             )
@@ -538,71 +637,95 @@ def run_sarimax_comparison(
             )
         )
 
-        sarimax_predictions = _group_predictions(
-            group=group,
-            series=series,
-            exog=exog,
-            order=order,
-            seasonal_order=seasonal_order,
-            initial_train_size=initial_train_size,
-            horizons=requested_horizons,
-            maxiter=maxiter,
-        )
-        actual_horizons = tuple(sorted(sarimax_predictions["horizon"].unique()))
-        baseline_frames = _baseline_predictions(
-            series=series,
-            sarimax_predictions=sarimax_predictions,
-            rba_path=rba_path,
-            initial_train_size=initial_train_size,
-            horizons=actual_horizons,
-            maxiter=maxiter,
-        )
-        common_predictions = restrict_to_common_grid(baseline_frames)
-        metrics = compute_metric_table(common_predictions)
-        sarimax_common = common_predictions.loc[common_predictions["model"] == "sarimax"]
-        origin_n = int(sarimax_common["forecast_origin"].nunique())
-        overall_metric_n = int(
-            metrics.loc[
-                (metrics["model"] == "sarimax") & (metrics["horizon"] == "overall"),
-                "n",
-            ].iloc[0]
-        )
-        metrics.insert(0, "group_id", group.group_id)
-        metrics.insert(1, "group_name", group.group_name)
-        metrics.insert(2, "horizon_range", _horizon_range_label(actual_horizons))
-        metrics.insert(3, "horizon_cap", horizon_cap)
-        metrics.insert(4, "features", ";".join(group.features))
-        metrics.insert(5, "level_change_selection_note", _group_level_change_summary(group, choices))
-        metrics.insert(6, "selected_order", str(order))
-        metrics.insert(7, "selected_seasonal_order", str(seasonal_order))
-        metrics.insert(8, "selected_by", criterion)
-        metrics.insert(9, "selection_aic", float(best["aic"]))
-        metrics.insert(10, "selection_bic", float(best["bic"]))
-        drop_from_previous = (
-            None if previous_nested_origin_n is None else previous_nested_origin_n - origin_n
-        )
-        sample_note = ""
-        if group.group_id in NESTED_GROUP_IDS and previous_nested_origin_n is not None:
-            if origin_n < previous_nested_origin_n * SHARP_SAMPLE_DROP_RATIO:
-                sample_note = (
-                    f"Sharp nested origin sample drop from n={previous_nested_origin_n} "
-                    f"to n={origin_n}; compare this group over its own window."
+        if horizon_cap < 1:
+            if verbose:
+                print(
+                    f"  group {group.group_id} has horizon_cap={horizon_cap} (zero "
+                    "genuine forecast lead time); skipping walk-forward backtest, "
+                    "keeping in-sample coefficients only",
+                    flush=True,
                 )
-        elif group.group_id not in NESTED_GROUP_IDS:
-            sample_note = "Independent variant group; not a nested feature add-on on the A-E chain."
-        previous_origin_for_output = (
-            previous_nested_origin_n if group.group_id in NESTED_GROUP_IDS else None
-        )
-        origin_drop_for_output = (
-            drop_from_previous if group.group_id in NESTED_GROUP_IDS else None
-        )
-        metrics.insert(11, "group_origin_n", origin_n)
-        metrics.insert(12, "group_overall_metric_n", overall_metric_n)
-        metrics.insert(13, "previous_nested_origin_n", previous_origin_for_output)
-        metrics.insert(14, "origin_drop_from_previous_nested_group", origin_drop_for_output)
-        metrics.insert(15, "sample_size_note", sample_note)
-        if group.group_id in NESTED_GROUP_IDS:
-            previous_nested_origin_n = origin_n
+            metrics = _not_forecast_viable_metrics(
+                group=group,
+                order=order,
+                seasonal_order=seasonal_order,
+                criterion=criterion,
+                selection_aic=float(best["aic"]),
+                selection_bic=float(best["bic"]),
+                level_change_note=_group_level_change_summary(group, choices),
+                horizon_cap=horizon_cap,
+            )
+            actual_horizons: tuple[int, ...] = ()
+        else:
+            sarimax_predictions = _group_predictions(
+                group=group,
+                series=series,
+                exog=exog,
+                order=order,
+                seasonal_order=seasonal_order,
+                initial_train_size=initial_train_size,
+                horizons=requested_horizons,
+                maxiter=maxiter,
+            )
+            actual_horizons = tuple(sorted(sarimax_predictions["horizon"].unique()))
+            baseline_frames = _baseline_predictions(
+                series=series,
+                sarimax_predictions=sarimax_predictions,
+                rba_path=rba_path,
+                initial_train_size=initial_train_size,
+                horizons=actual_horizons,
+                maxiter=maxiter,
+            )
+            common_predictions = restrict_to_common_grid(baseline_frames)
+            metrics = compute_metric_table(common_predictions)
+            sarimax_common = common_predictions.loc[common_predictions["model"] == "sarimax"]
+            origin_n = int(sarimax_common["forecast_origin"].nunique())
+            overall_metric_n = int(
+                metrics.loc[
+                    (metrics["model"] == "sarimax") & (metrics["horizon"] == "overall"),
+                    "n",
+                ].iloc[0]
+            )
+            metrics.insert(0, "group_id", group.group_id)
+            metrics.insert(1, "group_name", group.group_name)
+            metrics.insert(2, "horizon_range", _horizon_range_label(actual_horizons))
+            metrics.insert(3, "horizon_cap", horizon_cap)
+            metrics.insert(4, "features", ";".join(group.features))
+            metrics.insert(5, "level_change_selection_note", _group_level_change_summary(group, choices))
+            metrics.insert(6, "selected_order", str(order))
+            metrics.insert(7, "selected_seasonal_order", str(seasonal_order))
+            metrics.insert(8, "selected_by", criterion)
+            metrics.insert(9, "selection_aic", float(best["aic"]))
+            metrics.insert(10, "selection_bic", float(best["bic"]))
+            drop_from_previous = (
+                None if previous_nested_origin_n is None else previous_nested_origin_n - origin_n
+            )
+            sample_note = ORDER_SELECTION_NOTE
+            if group.group_id in NESTED_GROUP_IDS and previous_nested_origin_n is not None:
+                if origin_n < previous_nested_origin_n * SHARP_SAMPLE_DROP_RATIO:
+                    sample_note = (
+                        f"Sharp nested origin sample drop from n={previous_nested_origin_n} "
+                        f"to n={origin_n}; compare this group over its own window. {ORDER_SELECTION_NOTE}"
+                    )
+            elif group.group_id not in NESTED_GROUP_IDS:
+                sample_note = (
+                    "Independent variant group; not a nested feature add-on on the A-E "
+                    f"chain. {ORDER_SELECTION_NOTE}"
+                )
+            previous_origin_for_output = (
+                previous_nested_origin_n if group.group_id in NESTED_GROUP_IDS else None
+            )
+            origin_drop_for_output = (
+                drop_from_previous if group.group_id in NESTED_GROUP_IDS else None
+            )
+            metrics.insert(11, "group_origin_n", origin_n)
+            metrics.insert(12, "group_overall_metric_n", overall_metric_n)
+            metrics.insert(13, "previous_nested_origin_n", previous_origin_for_output)
+            metrics.insert(14, "origin_drop_from_previous_nested_group", origin_drop_for_output)
+            metrics.insert(15, "sample_size_note", sample_note)
+            if group.group_id in NESTED_GROUP_IDS:
+                previous_nested_origin_n = origin_n
+
         metric_tables.append(metrics)
         tracking_payloads.append(
             {
@@ -700,6 +823,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--max-p-seasonal", type=int, default=DEFAULT_COMPARISON_MAX_ARMA_ORDER)
     parser.add_argument("--max-q-seasonal", type=int, default=DEFAULT_COMPARISON_MAX_ARMA_ORDER)
     parser.add_argument("--maxiter", type=int, default=100)
+    parser.add_argument(
+        "--order-selection-holdout-quarters",
+        type=int,
+        default=ORDER_SELECTION_HOLDOUT_QUARTERS,
+        help="Quarters excluded from the tail of the series before ARIMA order "
+        "and level-vs-change selection, so the walk-forward test tail never "
+        "informs those choices.",
+    )
     args = parser.parse_args(argv)
 
     comparison, coefficients, choices = run_sarimax_comparison(
@@ -715,6 +846,7 @@ def main(argv: list[str] | None = None) -> None:
         d_values=_parse_int_values(args.d_values),
         seasonal_d_values=_parse_int_values(args.seasonal_d_values),
         maxiter=args.maxiter,
+        order_selection_holdout_quarters=args.order_selection_holdout_quarters,
         verbose=True,
     )
 

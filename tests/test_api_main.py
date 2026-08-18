@@ -1,9 +1,11 @@
 from types import SimpleNamespace
 
+from fastapi import HTTPException
 import mlflow
 from mlflow.tracking import MlflowClient
 import numpy as np
 import pandas as pd
+import pytest
 import statsmodels.api as sm
 
 from api import main as api_main
@@ -174,3 +176,63 @@ def test_lstm_forecast_branch_reuses_forecast_from_fit(monkeypatch):
     assert forecast.values == [12.0, 14.0, 16.0]
     assert forecast.forecast_origin == "2022Q4"
     assert forecast.quarters == ["2023Q1", "2023Q2", "2023Q3"]
+
+
+def test_elastic_net_forecast_branch_uses_predict_next(monkeypatch):
+    class FakeElasticNetFit:
+        feature_columns = ("cpi_yoy_lag1",)
+        horizons = (1, 2, 3, 4)
+
+        def predict_next(self, train_frame):
+            return [10.0, 20.0, 30.0, 40.0]
+
+    monkeypatch.setattr(api_main, "_load_elastic_net_fit", lambda model_uri: FakeElasticNetFit())
+    monkeypatch.setattr(
+        api_main,
+        "_current_elastic_net_frame",
+        lambda: pd.DataFrame(
+            {"cpi_yoy_lag1": [1.0, 2.0]},
+            index=pd.period_range("2022Q3", periods=2, freq="Q"),
+        ),
+    )
+
+    forecast = api_main._forecast_values(
+        client=SimpleNamespace(),
+        version=SimpleNamespace(run_id="run-id"),
+        family="elastic_net",
+        horizon=3,
+    )
+
+    assert forecast.values == [10.0, 20.0, 30.0]
+    assert forecast.forecast_origin == "2022Q4"
+    assert forecast.quarters == ["2023Q1", "2023Q2", "2023Q3"]
+
+
+def test_elastic_net_forecast_branch_rejects_horizon_beyond_fitted_horizons(monkeypatch):
+    class FakeElasticNetFit:
+        feature_columns = ("cpi_yoy_lag1",)
+        horizons = (1, 2)
+
+        def predict_next(self, train_frame):
+            return [10.0, 20.0]
+
+    monkeypatch.setattr(api_main, "_load_elastic_net_fit", lambda model_uri: FakeElasticNetFit())
+    monkeypatch.setattr(
+        api_main,
+        "_current_elastic_net_frame",
+        lambda: pd.DataFrame(
+            {"cpi_yoy_lag1": [1.0, 2.0]},
+            index=pd.period_range("2022Q3", periods=2, freq="Q"),
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        api_main._forecast_values(
+            client=SimpleNamespace(),
+            version=SimpleNamespace(run_id="run-id"),
+            family="elastic_net",
+            horizon=3,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "does not have fitted horizons" in exc_info.value.detail

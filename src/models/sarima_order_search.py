@@ -109,9 +109,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--d-values", default="0")
     parser.add_argument("--seasonal-d-values", default="0")
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--holdout-quarters",
+        type=int,
+        default=0,
+        help="Exclude this many quarters from the tail of the series before "
+        "searching, so DEFAULT_ORDER can be re-derived on development-only "
+        "data rather than the full sample (mirrors sarimax_order_search.py's "
+        "ORDER_SELECTION_HOLDOUT_QUARTERS).",
+    )
     args = parser.parse_args(argv)
 
     series = load_target_series(args.data)
+    if args.holdout_quarters > 0:
+        series = series.iloc[: -args.holdout_quarters]
     results = run_order_search(
         series=series,
         d_values=_parse_int_values(args.d_values),
