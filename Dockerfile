@@ -13,6 +13,21 @@ COPY api api
 COPY src src
 COPY data/curated data/curated
 COPY mlruns mlruns
+RUN python - <<'PY'
+from pathlib import Path
+import re
+
+for path in Path("mlruns").rglob("*"):
+    if not path.is_file():
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        continue
+    updated = re.sub(r"/home/[^\n\r]*?/mlruns", "/app/mlruns", text)
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
+PY
 
 ENV PORT=8000
 EXPOSE 8000

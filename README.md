@@ -182,7 +182,7 @@ clear job is documented as a target rather than built.
 | SARIMAX / LSTM comparison + RBA benchmark | implemented | **DS flagship** | `src/models/`, `reports/model_comparison_sarimax.csv`, `reports/model_comparison_lstm.csv`, `reports/lstm_permutation_importance.csv` |
 | MLflow | implemented locally: comparison runs log params, metrics, report artifacts, and full-sample model artifacts | **MLE flagship** | `src/models/tracking.py`, `mlruns/` (local, gitignored) |
 | FastAPI | implemented locally: MLflow `@champion` `/models`, `/metrics`, and `/forecast` serving; deployment planned | **MLE flagship** | `api/main.py`, `src/models/registry.py`, local `uvicorn` check |
-| Docker / Google Cloud Run | containerized; local Docker verification and live Cloud Run deployment pending | **MLE flagship** | `Dockerfile`, `.dockerignore` |
+| Docker / Google Cloud Run | containerized and verified locally; live Cloud Run deployment pending | **MLE flagship** | `Dockerfile`, `.dockerignore`, local container `/forecast` check |
 | Streamlit | multipage dashboard implemented for overview, data exploration, and static EDA summaries | supporting | `app/streamlit_app.py`, `app/pages/` |
 | GitHub Actions | CI + scheduled ETL scaffolded | supporting | `.github/workflows/` |
 
@@ -446,8 +446,10 @@ Do not use a git-triggered build for this version: a fresh `git clone` will
 not include `mlruns/` (it's gitignored), so the champion alias and model
 artifacts would be missing. Deploying the pre-built image intentionally bakes
 the current local MLflow run history into the image, not only the champion;
-that is an accepted tradeoff at this project's scale. Cloud Run injects a
-`PORT` environment variable and expects the container to listen on it, which
+that is an accepted tradeoff at this project's scale. The Dockerfile rewrites
+absolute local `mlruns/` artifact paths to `/app/mlruns` during image build so
+the baked MLflow file store resolves inside the container. Cloud Run injects
+a `PORT` environment variable and expects the container to listen on it, which
 the Dockerfile's `CMD` respects.
 
 Streamlit -> Streamlit Community Cloud. DuckDB stays local; Supabase
