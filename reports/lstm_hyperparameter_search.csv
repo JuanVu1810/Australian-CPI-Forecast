@@ -1,0 +1,11 @@
+phase,stage,units,dropout,lookback,origin_n,rmse
+screen,baseline,16,0.2,8,20,1.094878
+screen,units,8,0.2,8,20,1.137977
+screen,units,32,0.2,8,20,1.051235
+screen,dropout,32,0.1,8,20,1.050074
+screen,dropout,32,0.2,8,20,1.051235
+screen,dropout,32,0.3,8,20,1.046248
+screen,lookback,32,0.3,4,20,1.080151
+screen,lookback,32,0.3,12,20,1.047091
+full_validation,baseline,16,0.2,8,53,1.818151
+full_validation,best_screened,32,0.3,8,53,1.861246
