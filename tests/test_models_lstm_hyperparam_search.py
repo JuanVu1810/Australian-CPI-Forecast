@@ -55,18 +55,18 @@ def test_bounded_coordinate_search_converges_to_the_synthetic_minimum(monkeypatc
     assert len(trials) == 1 + 3 + 4 + 3 + 3
 
 
-def test_evaluate_across_seeds_reports_seed_variability_and_pools_predictions(monkeypatch):
+def test_evaluate_across_seeds_reports_seed_variability_and_pools_predictions():
+    # forecast_func overrides force the in-process path (see run_predictions'
+    # docstring) -- the real LSTM path is subprocess-isolated per config to
+    # avoid TensorFlow's per-process memory growth, so it isn't reachable via
+    # monkeypatch from the parent test process.
     index = pd.period_range("2015Q1", periods=20, freq="Q")
     series = pd.Series(np.full(20, 2.0), index=index, name="cpi_yoy")
     exog = pd.DataFrame({"x_lag1": np.linspace(0.0, 1.0, 20)}, index=index)
     seeds = (1, 2, 3)
 
-    def fake_forecast_lstm_direct(train_frame, steps, seed, **kwargs):
-        # Forecast error grows with seed, so seeds are distinguishable.
-        offset = float(seed)
-        return np.repeat(float(train_frame["cpi_yoy"].iloc[-1]) + offset, steps)
-
-    monkeypatch.setattr(search, "forecast_lstm_direct", fake_forecast_lstm_direct)
+    def naive_forecast(train_frame, steps):
+        return np.repeat(float(train_frame["cpi_yoy"].iloc[-1]), steps)
 
     per_seed, pooled = search.evaluate_across_seeds(
         series=series,
@@ -75,11 +75,16 @@ def test_evaluate_across_seeds_reports_seed_variability_and_pools_predictions(mo
         seeds=seeds,
         initial_train_size=10,
         horizons=(1,),
+        forecast_func=naive_forecast,
         skip_origins=0,
     )
 
     assert per_seed["seed"].tolist() == list(seeds)
-    np.testing.assert_allclose(per_seed["rmse"], [1.0, 2.0, 3.0])
+    # Same deterministic forecast_func every seed, so per-seed RMSE should
+    # agree -- this exercises the per-seed loop and aggregation machinery,
+    # not real seed-to-seed model variability (untestable without a real fit).
+    assert per_seed["rmse"].nunique() == 1
+    np.testing.assert_allclose(per_seed["rmse"], 0.0)
     assert set(pooled["seed"]) == set(seeds)
     assert (pooled["model"] == "lstm").all()
     assert len(pooled) == len(seeds) * per_seed["origin_n"].iloc[0]

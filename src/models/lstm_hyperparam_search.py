@@ -19,12 +19,24 @@ Search protocol (see README/PROJECT_BRIEF for the fuller writeup):
    origins), across multiple seeds each, reporting mean/std RMSE and MAE
    and a per-horizon breakdown pooled across seeds. A screening-stage win
    is not itself a reportable result -- only this step's outcome is.
+
+Each configuration's full walk-forward run (all its origins, one seed) runs
+in its own subprocess. TensorFlow/Keras accumulates memory across hundreds
+of sequential model builds within one long-lived process even with
+``tf.keras.backend.clear_session()`` -- confirmed directly: peak RSS grew
+~12MB per fit over 80 fits in one process regardless of ``clear_session()``
+and ``gc.collect()``. A full run here needs ~600 fits total, which OOM-killed
+the process before this fix. Isolating each configuration in a fresh
+subprocess bounds growth to that configuration's own ~20-90 fits before the
+process exits and the OS reclaims everything.
 """
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
 from dataclasses import dataclass
+import multiprocessing as mp
 from pathlib import Path
 
 import numpy as np
@@ -67,15 +79,15 @@ class LSTMConfig:
     learning_rate: float = LEARNING_RATE
 
 
-def run_predictions(
+def _run_predictions_in_process(
     series: pd.Series,
     exog: pd.DataFrame,
     config: LSTMConfig,
     initial_train_size: int,
     horizons: tuple[int, ...],
     seed: int,
-    max_origins: int | None = None,
-    skip_origins: int = 0,
+    max_origins: int | None,
+    skip_origins: int,
     forecast_func=None,
 ) -> pd.DataFrame:
     build_forecast_func = forecast_func or (
@@ -99,6 +111,40 @@ def run_predictions(
         max_origins=max_origins,
         skip_origins=skip_origins,
     )
+
+
+def run_predictions(
+    series: pd.Series,
+    exog: pd.DataFrame,
+    config: LSTMConfig,
+    initial_train_size: int,
+    horizons: tuple[int, ...],
+    seed: int,
+    max_origins: int | None = None,
+    skip_origins: int = 0,
+    forecast_func=None,
+) -> pd.DataFrame:
+    """Run one config's full walk-forward pass.
+
+    With the real LSTM forecaster (``forecast_func=None``), this runs in a
+    fresh subprocess so TensorFlow's per-process memory growth resets after
+    every configuration -- see the module docstring. Custom ``forecast_func``
+    callables (used by tests) are generally not picklable and don't hit the
+    real memory cost anyway, so those run in-process.
+    """
+    if forecast_func is not None:
+        return _run_predictions_in_process(
+            series, exog, config, initial_train_size, horizons, seed,
+            max_origins, skip_origins, forecast_func,
+        )
+    context = mp.get_context("spawn")
+    with cf.ProcessPoolExecutor(max_workers=1, mp_context=context) as executor:
+        future = executor.submit(
+            _run_predictions_in_process,
+            series, exog, config, initial_train_size, horizons, seed,
+            max_origins, skip_origins, None,
+        )
+        return future.result()
 
 
 def evaluate_configuration(
@@ -210,19 +256,24 @@ def evaluate_across_seeds(
     initial_train_size: int,
     horizons: tuple[int, ...],
     skip_origins: int,
+    forecast_func=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run one config across several seeds on held-out origins.
 
     Returns (per_seed_summary, pooled_predictions). Pooling predictions
     across seeds before computing per-horizon metrics reflects both
     origin-to-origin and seed-to-seed variability in one table.
+
+    ``forecast_func`` overrides the real LSTM forecaster and forces the
+    in-process path (see ``run_predictions``) -- used by tests to inject a
+    fast fake instead of a real, subprocess-isolated fit.
     """
     per_seed_rows: list[dict[str, object]] = []
     pooled_frames: list[pd.DataFrame] = []
     for seed in seeds:
         predictions = run_predictions(
             series, exog, config, initial_train_size, horizons, seed,
-            max_origins=None, skip_origins=skip_origins,
+            max_origins=None, skip_origins=skip_origins, forecast_func=forecast_func,
         )
         errors = predictions["error"].astype(float)
         per_seed_rows.append(

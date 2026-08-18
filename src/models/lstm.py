@@ -134,8 +134,13 @@ def build_model(
     seed: int = DEFAULT_SEED,
 ):
     """Build the compact LSTM architecture (defaults match the fixed baseline)."""
-    set_lstm_seeds(seed)
     tf = _tensorflow()
+    # Walk-forward and search runs build hundreds of models in one process;
+    # without clearing the backend state between them, Keras/TF's graph and
+    # tf.function retracing caches grow unbounded and can OOM-kill the
+    # process well before any individual fit is large enough to explain it.
+    tf.keras.backend.clear_session()
+    set_lstm_seeds(seed)
     model = tf.keras.Sequential(
         [
             tf.keras.layers.Input(shape=(lookback, n_features)),
