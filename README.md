@@ -441,16 +441,17 @@ Streamlit pages: Forecasting Interface (model/horizon/feature selection with
 confidence intervals), and Model Evaluation (RMSE/MAE/MSE, benchmark
 comparisons, residual diagnostics, permutation-importance/coefficient interpretability).
 
-Container deployment path: FastAPI -> Docker image -> Google Cloud Run
-(planned, to be linked here once verified live). The MLflow champion currently
-lives in the local gitignored `mlruns/` file store, so the Docker image must be
-built from a local checkout that already contains a promoted champion
-snapshot:
+Container deployment path: FastAPI -> Docker image -> Google Cloud Run --
+deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs.
+The MLflow champion currently lives in the local gitignored `mlruns/` file
+store, so the Docker image must be built from a local checkout that already
+contains a promoted champion snapshot:
 
 ```bash
 python -m src.models.evaluation
 python -m src.models.sarimax_order_search
 python -m src.models.lstm
+python -m src.models.elastic_net
 python -m src.models.registry
 
 docker build -t cpi-forecast-api:latest .
