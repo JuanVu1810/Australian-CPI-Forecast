@@ -13,6 +13,7 @@ COPY api api
 COPY src src
 COPY data/curated data/curated
 COPY mlruns mlruns
+# Rewrites POSIX-style host paths from Linux/WSL/macOS builds; Windows-native paths are not handled.
 RUN python - <<'PY'
 from pathlib import Path
 import re
@@ -24,7 +25,7 @@ for path in Path("mlruns").rglob("*"):
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         continue
-    updated = re.sub(r"/home/[^\n\r]*?/mlruns", "/app/mlruns", text)
+    updated = re.sub(r"/(?:home|Users)/[^\n\r]*?/mlruns", "/app/mlruns", text)
     if updated != text:
         path.write_text(updated, encoding="utf-8")
 PY

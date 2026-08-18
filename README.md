@@ -448,9 +448,11 @@ artifacts would be missing. Deploying the pre-built image intentionally bakes
 the current local MLflow run history into the image, not only the champion;
 that is an accepted tradeoff at this project's scale. The Dockerfile rewrites
 absolute local `mlruns/` artifact paths to `/app/mlruns` during image build so
-the baked MLflow file store resolves inside the container. Cloud Run injects
-a `PORT` environment variable and expects the container to listen on it, which
-the Dockerfile's `CMD` respects.
+the baked MLflow file store resolves inside the container. Only the SARIMA
+serving path has been verified in-container so far; the LSTM path should get a
+real docker build/run/`/forecast` check the next time LSTM is promoted to
+`@champion`. Cloud Run injects a `PORT` environment variable and expects the
+container to listen on it, which the Dockerfile's `CMD` respects.
 
 Streamlit -> Streamlit Community Cloud. DuckDB stays local; Supabase
 PostgreSQL is optional and scoped to run/metrics metadata only. GitHub Actions
