@@ -38,7 +38,7 @@ CASH_RATE_CHANGE_FEATURES = ("cash_rate_change_lag1",)
 UNEMPLOYMENT_LEVEL_FEATURES = ("unemployment_rate_lag2",)
 UNEMPLOYMENT_CHANGE_FEATURES = ("unemployment_rate_change_lag1",)
 EXTENDED_FEATURES = ("wpi_growth_lag1", "aud_usd_change_lag1", "brent_growth_lag1")
-NESTED_GROUP_IDS = {"A", "B", "C", "D", "E"}
+NESTED_GROUP_IDS = {"A", "B", "C", "D", "E", "H"}
 SHARP_SAMPLE_DROP_RATIO = 0.75
 LEVEL_CHANGE_AIC_MATERIALITY_THRESHOLD = 2.0
 NONSTATIONARY_LEVEL_FAMILIES = {"cash_rate", "unemployment_rate"}
@@ -234,6 +234,8 @@ def build_feature_groups(choices: dict[str, LevelChangeChoice]) -> tuple[Feature
     group_d = (*group_c, "wti_growth_lag1")
     group_e = (*group_d, *EXTENDED_FEATURES)
     group_f = ("cash_rate_lag4", "unemployment_rate_lag4")
+    group_g = (*group_b, "ppi_growth_lag1", "commodity_growth_lag1")
+    group_h = (*group_e, "household_spending_growth_lag1")
     return (
         FeatureGroup("A", "policy rates", group_a),
         FeatureGroup("B", "A + inflation expectations", group_b),
@@ -241,6 +243,8 @@ def build_feature_groups(choices: dict[str, LevelChangeChoice]) -> tuple[Feature
         FeatureGroup("D", "full core", group_d),
         FeatureGroup("E", "full core + extended", group_e),
         FeatureGroup("F", "long-horizon rates only", group_f),
+        FeatureGroup("G", "C variant: fresher PPI lag (ppi_growth_lag1)", group_g),
+        FeatureGroup("H", "E + household spending", group_h),
     )
 
 
@@ -263,6 +267,8 @@ def expected_sign_for_feature(feature: str) -> str:
     if feature.startswith("aud_usd_change"):
         return "-"
     if feature.startswith("brent_growth"):
+        return "+"
+    if feature.startswith("household_spending_growth"):
         return "+"
     return "?"
 
@@ -583,7 +589,7 @@ def run_sarimax_comparison(
                     f"to n={origin_n}; compare this group over its own window."
                 )
         elif group.group_id not in NESTED_GROUP_IDS:
-            sample_note = "Separate long-horizon group; not a nested feature add-on."
+            sample_note = "Independent variant group; not a nested feature add-on on the A-E chain."
         previous_origin_for_output = (
             previous_nested_origin_n if group.group_id in NESTED_GROUP_IDS else None
         )

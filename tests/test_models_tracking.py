@@ -141,6 +141,8 @@ def test_sarimax_orchestrator_logs_parent_and_group_child_runs(monkeypatch, tmp_
         "brent_growth_lag1",
         "cash_rate_lag4",
         "unemployment_rate_lag4",
+        "ppi_growth_lag1",
+        "household_spending_growth_lag1",
     }
     curated_path = tmp_path / "curated.csv"
     frame = pd.DataFrame({"quarter": quarters.astype(str), "cpi_yoy": np.linspace(2, 3, 16)})
@@ -243,7 +245,7 @@ def test_sarimax_orchestrator_logs_parent_and_group_child_runs(monkeypatch, tmp_
     )
 
     runs = _runs_for_experiment(experiment_name)
-    assert len(runs) == 7
+    assert len(runs) == 9
     parent = [run for run in runs if run.data.tags["run_role"] == "comparison_parent"]
     children = [
         run
@@ -251,8 +253,8 @@ def test_sarimax_orchestrator_logs_parent_and_group_child_runs(monkeypatch, tmp_
         if run.data.tags["run_role"] == "comparison_with_full_sample_model"
     ]
     assert len(parent) == 1
-    assert len(children) == 6
-    assert {run.data.tags["sarimax_feature_group_id"] for run in children} == set("ABCDEF")
+    assert len(children) == 8
+    assert {run.data.tags["sarimax_feature_group_id"] for run in children} == set("ABCDEFGH")
     group_a = next(run for run in children if run.data.tags["sarimax_feature_group_id"] == "A")
     assert json.loads(group_a.data.params["features"]) == [
         "cash_rate_change_lag1",
