@@ -21,6 +21,7 @@ logs/
 
 # Local AI/agent context files
 .ai/
+.claude/
 AGENTS.md
 CLAUDE.md
 
