@@ -182,7 +182,7 @@ clear job is documented as a target rather than built.
 | SARIMAX / LSTM comparison + RBA benchmark | implemented | **DS flagship** | `src/models/`, `reports/model_comparison_sarimax.csv`, `reports/model_comparison_lstm.csv`, `reports/lstm_permutation_importance.csv` |
 | MLflow | implemented locally: comparison runs log params, metrics, report artifacts, and full-sample model artifacts | **MLE flagship** | `src/models/tracking.py`, `mlruns/` (local, gitignored) |
 | FastAPI | implemented locally: MLflow `@champion` `/models`, `/metrics`, and `/forecast` serving; deployment planned | **MLE flagship** | `api/main.py`, `src/models/registry.py`, local `uvicorn` check |
-| Docker / Google Cloud Run | containerized and verified locally; live Cloud Run deployment pending | **MLE flagship** | `Dockerfile`, `.dockerignore`, local container `/forecast` check |
+| Docker / Google Cloud Run | containerized; SARIMA champion path verified locally, LSTM unverified; live Cloud Run deployment pending | **MLE flagship** | `Dockerfile`, `.dockerignore`, local container `/forecast` check |
 | Streamlit | multipage dashboard implemented for overview, data exploration, and static EDA summaries | supporting | `app/streamlit_app.py`, `app/pages/` |
 | GitHub Actions | CI + scheduled ETL scaffolded | supporting | `.github/workflows/` |
 
