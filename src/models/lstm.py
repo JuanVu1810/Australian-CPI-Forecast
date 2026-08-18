@@ -127,15 +127,17 @@ def build_model(
     n_features: int,
     lookback: int = LOOKBACK_QUARTERS,
     horizon: int = FORECAST_HORIZON,
+    units: int = LSTM_UNITS,
+    dropout: float = DROPOUT,
     seed: int = DEFAULT_SEED,
 ):
-    """Build the fixed compact LSTM architecture."""
+    """Build the compact LSTM architecture (units/dropout default to the fixed baseline)."""
     set_lstm_seeds(seed)
     tf = _tensorflow()
     model = tf.keras.Sequential(
         [
             tf.keras.layers.Input(shape=(lookback, n_features)),
-            tf.keras.layers.LSTM(LSTM_UNITS, dropout=DROPOUT),
+            tf.keras.layers.LSTM(units, dropout=dropout),
             tf.keras.layers.Dense(horizon),
         ]
     )
@@ -220,6 +222,8 @@ def fit_lstm_direct(
     train_frame: pd.DataFrame,
     lookback: int = LOOKBACK_QUARTERS,
     horizon: int = FORECAST_HORIZON,
+    units: int = LSTM_UNITS,
+    dropout: float = DROPOUT,
     validation_fraction: float = VALIDATION_FRACTION,
     epochs: int = MAX_EPOCHS,
     patience: int = EARLY_STOPPING_PATIENCE,
@@ -227,7 +231,7 @@ def fit_lstm_direct(
     seed: int = DEFAULT_SEED,
     verbose: int = 0,
 ) -> LSTMDirectFit:
-    """Fit one fixed direct-output LSTM on a chronological train window."""
+    """Fit one direct-output LSTM on a chronological train window."""
     clean = clean_lstm_frame(train_frame)
     scaler = fit_train_window_scaler(clean)
     x_all, y_all = make_direct_multihorizon_sequences(
@@ -250,6 +254,8 @@ def fit_lstm_direct(
         n_features=x_all.shape[-1],
         lookback=lookback,
         horizon=horizon,
+        units=units,
+        dropout=dropout,
         seed=seed,
     )
     tf = _tensorflow()
@@ -299,13 +305,23 @@ def forecast_from_fit(fitted: LSTMDirectFit, train_frame: pd.DataFrame) -> np.nd
 def forecast_lstm_direct(
     train_frame: pd.DataFrame,
     steps: int = FORECAST_HORIZON,
+    lookback: int = LOOKBACK_QUARTERS,
+    units: int = LSTM_UNITS,
+    dropout: float = DROPOUT,
     seed: int = DEFAULT_SEED,
     verbose: int = 0,
 ) -> np.ndarray:
-    """Fit the fixed LSTM and return a direct 8-quarter forecast vector."""
+    """Fit the LSTM and return a direct 8-quarter forecast vector."""
     if steps > FORECAST_HORIZON:
-        raise ValueError("the fixed LSTM baseline emits at most 8 horizons.")
-    fitted = fit_lstm_direct(train_frame, seed=seed, verbose=verbose)
+        raise ValueError("the LSTM baseline emits at most 8 horizons.")
+    fitted = fit_lstm_direct(
+        train_frame,
+        lookback=lookback,
+        units=units,
+        dropout=dropout,
+        seed=seed,
+        verbose=verbose,
+    )
     return forecast_from_fit(fitted, train_frame)[:steps]
 
 

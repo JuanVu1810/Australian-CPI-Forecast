@@ -117,7 +117,7 @@ def test_forecast_lstm_direct_returns_exactly_8_non_nan_values(monkeypatch):
         def predict(self, values, verbose=0):
             return np.arange(8, dtype=np.float32).reshape(1, 8)
 
-    def fake_fit_lstm_direct(train_frame, seed=42, verbose=0):
+    def fake_fit_lstm_direct(train_frame, lookback=8, units=16, dropout=0.2, seed=42, verbose=0):
         return SimpleNamespace(
             model=FakeModel(),
             scaler=FakeScaler(),
