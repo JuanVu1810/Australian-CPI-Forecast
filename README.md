@@ -50,7 +50,7 @@ demonstrated shallowly:
 |---|---|---|
 | Data Science | SARIMA vs SARIMAX vs LSTM vs Elastic Net, walk-forward validated against seasonal naive **and** the RBA forecast, with SARIMAX/Elastic Net coefficient and LSTM permutation-importance interpretability | EDA notebook, feature engineering |
 | Data Engineering | Ingestion -> validation -> curated Parquet -> DuckDB, fully local and credential-free | BigQuery documented as target, not deployed |
-| ML Engineering | MLflow runs, model registry with `@champion`, FastAPI selected-model serving, Docker, and planned Google Cloud Run deployment | Postgres as the optional MLflow backend and run metadata store |
+| ML Engineering | MLflow runs, model registry with `@champion`, FastAPI selected-model serving, Docker, deployed and live on Google Cloud Run (currently serving an earlier snapshot -- see Implementation Status) | Postgres as the optional MLflow backend and run metadata store |
 
 ## What `cpi_forecast_V1.ipynb` Found
 
@@ -175,7 +175,7 @@ clear job is documented as a target rather than built.
 |---|---|
 | DuckDB is the built SQL/analytics layer; BigQuery is a documented target, not deployed | The curated dataset is ~125 quarterly rows read from a local Parquet file. A managed cloud warehouse adds real value at higher data volume or concurrency, neither of which applies yet. |
 | Supabase PostgreSQL holds MLflow backend and application run metadata, not a second copy of the curated dataset | Two databases holding the same data demonstrates nothing new. Postgres gets a distinct job: storing experiment/run metadata queryable from the dashboard, while artifacts stay in MLflow artifact storage. |
-| MLflow + FastAPI + Docker + Google Cloud Run is the flagship deployment path | This combination produces something clickable once deployed -- a tracked, served model -- rather than partially-configured infrastructure. Cloud Run's usage-based free tier (scale-to-zero, configurable container memory) gives more headroom for the TensorFlow/statsmodels image than a fixed 512MB always-on free tier does. |
+| MLflow + FastAPI + Docker + Google Cloud Run is the flagship deployment path | This combination produces something clickable, not just partially-configured infrastructure -- a tracked, served model live at a public URL (see Implementation Status). Cloud Run's usage-based free tier (scale-to-zero, configurable container memory) gives more headroom for the TensorFlow/statsmodels image than a fixed 512MB always-on free tier does. |
 | Kubernetes, Terraform, Spark, Kafka, Airflow are excluded | None solve a problem this project actually has: one small model, a handful of requests, no elastic-scaling requirement. |
 | A second benchmark (RBA's own published forecast) was added alongside seasonal naive | Beating seasonal naive is a low bar for an inflation model. Comparing against a real institutional forecaster is the bar that actually matters, and the project reports honestly if it isn't cleared. |
 
@@ -215,16 +215,17 @@ clear job is documented as a target rather than built.
 | SARIMA | implemented | **DS flagship** | `notebooks/cpi_forecast_V1.ipynb`, `src/models/sarima.py` |
 | SARIMAX / LSTM / Elastic Net comparison + RBA benchmark | implemented; SARIMAX also includes two COVID intervention-dummy feature groups (I, J) | **DS flagship** | `src/models/`, `reports/model_comparison_sarimax.csv`, `reports/model_comparison_lstm.csv`, `reports/model_comparison_elastic_net.csv`, `reports/elastic_net_coefficients.csv`, `reports/lstm_permutation_importance.csv` |
 | MLflow | implemented locally: comparison runs log params, metrics, report artifacts, and full-sample model artifacts | **MLE flagship** | `src/models/tracking.py`, `mlruns/` (local, gitignored) |
-| FastAPI | implemented locally: MLflow `@champion` `/models`, `/metrics`, and `/forecast` serving; deployment planned | **MLE flagship** | `api/main.py`, `src/models/registry.py`, local `uvicorn` check |
-| Docker / Google Cloud Run | containerized; SARIMA champion path verified locally, LSTM unverified; live Cloud Run deployment pending | **MLE flagship** | `Dockerfile`, `.dockerignore`, local container `/forecast` check |
+| FastAPI | deployed: MLflow `@champion` `/health`, `/features`, `/models`, `/metrics`, and `/forecast` serving | **MLE flagship** | `api/main.py`, `src/models/registry.py`, live at the URL below |
+| Docker / Google Cloud Run | deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs -- currently serving an earlier snapshot (SARIMA-only `@champion`, RMSE 1.665, predates the Elastic Net challenger and the leakage/order-selection fixes); needs a rebuild + redeploy from current code to catch up | **MLE flagship** | `Dockerfile`, `.dockerignore` |
 | Streamlit | multipage dashboard implemented for overview, data exploration, and static EDA summaries | supporting | `app/streamlit_app.py`, `app/pages/` |
-| GitHub Actions | CI + scheduled ETL scaffolded | supporting | `.github/workflows/` |
+| GitHub Actions | CI + scheduled ETL scaffolded; no deploy-to-Cloud-Run step, so the live service above does not auto-update on push | supporting | `.github/workflows/` |
 
-Cloud services such as Supabase and Google Cloud Run still require account setup,
-credentials, and deployment configuration. BigQuery is intentionally not on
-that path yet (see Architecture Decisions above). The repository contains the
-code/configuration entry points, but nothing should be described as deployed
-until public URLs and credentials are configured and verified.
+FastAPI and Google Cloud Run are deployed and live (see the row above);
+redeploying after code changes is currently a manual step, not automated.
+Supabase and BigQuery still require account setup, credentials, and
+deployment configuration and remain undeployed (see Architecture Decisions
+above). Nothing else in the repository should be described as deployed until
+its own public URL and credentials are configured and verified the same way.
 
 ## Data Retrieval
 
@@ -409,7 +410,7 @@ flowchart TD
     STREAMLIT["Streamlit dashboard"] --> API
 
     API --> DOCKER["Docker image"]
-    DOCKER --> CLOUDRUN["Google Cloud Run API hosting (planned deployment)"]
+    DOCKER --> CLOUDRUN["Google Cloud Run API hosting (deployed, live)"]
 
     GITHUB["GitHub"] --> ACTIONS["GitHub Actions"]
     ACTIONS --> TESTS["pytest"]
@@ -557,10 +558,16 @@ other two flagship pillars, with dashboard polish last.
    walk-forward validated against seasonal naive **and** the RBA benchmark,
    reported overall and by horizon -- `src/models/`,
    `reports/model_comparison_*.csv`.
-2. **ML Engineering flagship (next):** log every run (params, features, horizon,
-   metrics, and LSTM-specific settings) in MLflow; serve the selected model
-   through FastAPI (`/health`, `/models`, `/metrics`, `/forecast`);
-   containerise with Docker; deploy to Google Cloud Run.
+2. **ML Engineering flagship (deployed, needs a redeploy to catch up):** every
+   run (params, features, horizon, metrics, and LSTM-specific settings) logs
+   to MLflow; the selected model serves through FastAPI (`/health`,
+   `/features`, `/models`, `/metrics`, `/forecast`); containerised with Docker
+   and live on Google Cloud Run (see Implementation Status for the URL) --
+   but that live container was built before the Elastic Net challenger and
+   this session's leakage fixes, so it's still serving an old SARIMA-only
+   `@champion`. Rebuilding and redeploying from current code (and rerunning
+   `registry.py`'s `promote_champion()` first) is the remaining step, not a
+   from-scratch build.
 3. **Data Engineering flagship:** confirm DuckDB SQL examples against the
    regenerated curated dataset; add the Postgres run/metrics metadata store;
    confirm GitHub Actions CI and scheduled ETL after pushing.
