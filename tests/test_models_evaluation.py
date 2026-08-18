@@ -6,6 +6,7 @@ from src.models.evaluation import (
     compute_metric_table,
     seasonal_naive_forecast,
     walk_forward_backtest,
+    walk_forward_backtest_direct_multihorizon,
 )
 
 
@@ -110,3 +111,38 @@ def test_compute_metric_table_returns_overall_and_horizon_rows():
     assert round(a_overall["rmse"], 6) == round(np.sqrt(5), 6)
     assert a_overall["mae"] == 2.0
     assert set(table["horizon"]) == {"overall", 1, 2}
+
+
+def test_skip_origins_produces_a_chronologically_disjoint_origin_set():
+    series = pd.Series(
+        np.arange(1, 26, dtype=float),
+        index=pd.period_range("2015Q1", periods=25, freq="Q"),
+        name="cpi_yoy",
+    )
+    exog = pd.DataFrame({"x_lag1": np.arange(25, dtype=float)}, index=series.index)
+
+    def recorder(train_frame, steps):
+        return np.repeat(float(train_frame["cpi_yoy"].iloc[-1]), steps)
+
+    screen = walk_forward_backtest_direct_multihorizon(
+        series=series,
+        exog=exog,
+        forecast_func=recorder,
+        initial_train_size=10,
+        horizons=(1,),
+        max_origins=5,
+    )
+    held_out = walk_forward_backtest_direct_multihorizon(
+        series=series,
+        exog=exog,
+        forecast_func=recorder,
+        initial_train_size=10,
+        horizons=(1,),
+        skip_origins=5,
+    )
+
+    screen_origins = set(screen["forecast_origin"])
+    held_out_origins = set(held_out["forecast_origin"])
+    assert len(screen_origins) == 5
+    assert screen_origins.isdisjoint(held_out_origins)
+    assert max(screen_origins) < min(held_out_origins)

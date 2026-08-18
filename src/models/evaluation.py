@@ -290,12 +290,21 @@ def walk_forward_backtest_direct_multihorizon(
     model_name: str = "model",
     target_column: str = TARGET_COLUMN,
     max_origins: int | None = None,
+    skip_origins: int = 0,
 ) -> pd.DataFrame:
     """Run an expanding-window backtest for direct multi-horizon sequence models.
 
     The forecaster receives only the target and feature history available at
     each forecast origin. Unlike ``walk_forward_backtest_with_exog``, this
     harness never constructs or passes a post-origin exogenous frame.
+
+    ``skip_origins`` skips that many valid origins (without calling
+    ``forecast_func`` on them) before evaluation starts. Combined with
+    ``max_origins``, this lets a caller carve out chronologically disjoint
+    origin sets -- e.g. ``skip_origins=0, max_origins=20`` for a screening
+    subset and ``skip_origins=20`` for a held-out final-validation subset --
+    so hyperparameters are never selected using the same origins they are
+    ultimately reported against.
     """
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     if not requested_horizons or min(requested_horizons) < 1:
@@ -304,6 +313,8 @@ def walk_forward_backtest_direct_multihorizon(
         raise ValueError("initial_train_size must be at least 1.")
     if max_origins is not None and max_origins < 1:
         raise ValueError("max_origins must be at least 1 when supplied.")
+    if skip_origins < 0:
+        raise ValueError("skip_origins must be at least 0.")
 
     y = pd.Series(series).dropna().astype(float).sort_index()
     x = _coerce_quarter_index(pd.DataFrame(exog))
@@ -320,6 +331,7 @@ def walk_forward_backtest_direct_multihorizon(
 
     rows: list[dict[str, object]] = []
     completed_origins = 0
+    skipped_origins = 0
     for origin_pos in range(initial_train_size - 1, len(y) - max_horizon):
         train_y_raw = y.iloc[: origin_pos + 1]
         train_exog_raw = x.reindex(train_y_raw.index)
@@ -328,6 +340,9 @@ def walk_forward_backtest_direct_multihorizon(
             axis=1,
         ).dropna()
         if len(train_frame) < initial_train_size:
+            continue
+        if skipped_origins < skip_origins:
+            skipped_origins += 1
             continue
 
         raw_forecast = forecast_func(train_frame, max_horizon)

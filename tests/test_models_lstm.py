@@ -117,7 +117,9 @@ def test_forecast_lstm_direct_returns_exactly_8_non_nan_values(monkeypatch):
         def predict(self, values, verbose=0):
             return np.arange(8, dtype=np.float32).reshape(1, 8)
 
-    def fake_fit_lstm_direct(train_frame, lookback=8, units=16, dropout=0.2, seed=42, verbose=0):
+    def fake_fit_lstm_direct(
+        train_frame, lookback=8, units=16, dropout=0.2, learning_rate=1e-3, seed=42, verbose=0
+    ):
         return SimpleNamespace(
             model=FakeModel(),
             scaler=FakeScaler(),
@@ -229,3 +231,51 @@ def test_existing_sarimax_d_metrics_loader_uses_canonical_group_d_rows(tmp_path)
     assert rows["n"].tolist() == [66]
     assert rows["rmse"].tolist() == [0.860526]
     assert rows["sample_size_note"].str.contains("not intersected").all()
+
+
+def test_purged_split_leaves_an_embargo_gap_between_train_and_validation():
+    index = pd.period_range("2000Q1", periods=60, freq="Q")
+    clean = pd.DataFrame({"cpi_yoy": np.arange(60, dtype=float)}, index=index)
+
+    inner_train, inner_val = lstm._purged_train_val_split(
+        clean, lookback=8, horizon=8, validation_fraction=0.2
+    )
+
+    assert not inner_train.empty
+    assert not inner_val.empty
+    last_train_pos = clean.index.get_loc(inner_train.index[-1])
+    first_val_pos = clean.index.get_loc(inner_val.index[0])
+    # A training window ending at last_train_pos has targets reaching
+    # last_train_pos + horizon; the validation split must start strictly
+    # after that so no validation window's lookback touches it.
+    assert first_val_pos > last_train_pos + 8
+
+
+def test_purged_split_falls_back_to_full_frame_when_too_short():
+    index = pd.period_range("2000Q1", periods=16, freq="Q")
+    clean = pd.DataFrame({"cpi_yoy": np.arange(16, dtype=float)}, index=index)
+
+    inner_train, inner_val = lstm._purged_train_val_split(
+        clean, lookback=8, horizon=8, validation_fraction=0.2
+    )
+
+    assert inner_val.empty
+    pd.testing.assert_frame_equal(inner_train, clean)
+
+
+def test_scaler_fit_on_purged_split_ignores_validation_region_values():
+    index = pd.period_range("2000Q1", periods=60, freq="Q")
+    # A huge value shift confined to the tail: if the scaler were fit on the
+    # full frame (the pre-fix behaviour), its mean would be pulled far from
+    # zero by these validation-region values.
+    values = np.concatenate([np.zeros(45), np.full(15, 1000.0)])
+    clean = pd.DataFrame({"cpi_yoy": values}, index=index)
+
+    inner_train, inner_val = lstm._purged_train_val_split(
+        clean, lookback=8, horizon=8, validation_fraction=0.2
+    )
+    assert not inner_val.empty
+    assert (inner_train["cpi_yoy"] == 0.0).all()
+
+    scaler = lstm.fit_train_window_scaler(inner_train)
+    assert scaler.mean_["cpi_yoy"] == pytest.approx(0.0)

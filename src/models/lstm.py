@@ -45,6 +45,7 @@ LOOKBACK_QUARTERS = 8
 FORECAST_HORIZON = 8
 LSTM_UNITS = 16
 DROPOUT = 0.2
+LEARNING_RATE = 1e-3
 MAX_EPOCHS = 100
 EARLY_STOPPING_PATIENCE = 10
 BATCH_SIZE = 8
@@ -129,9 +130,10 @@ def build_model(
     horizon: int = FORECAST_HORIZON,
     units: int = LSTM_UNITS,
     dropout: float = DROPOUT,
+    learning_rate: float = LEARNING_RATE,
     seed: int = DEFAULT_SEED,
 ):
-    """Build the compact LSTM architecture (units/dropout default to the fixed baseline)."""
+    """Build the compact LSTM architecture (defaults match the fixed baseline)."""
     set_lstm_seeds(seed)
     tf = _tensorflow()
     model = tf.keras.Sequential(
@@ -141,7 +143,7 @@ def build_model(
             tf.keras.layers.Dense(horizon),
         ]
     )
-    model.compile(optimizer=tf.keras.optimizers.Adam(), loss="mse")
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), loss="mse")
     return model
 
 
@@ -218,12 +220,46 @@ def make_direct_multihorizon_sequences(
     return np.asarray(x_windows, dtype=np.float32), np.asarray(y_vectors, dtype=np.float32)
 
 
+def _purged_train_val_split(
+    clean: pd.DataFrame,
+    lookback: int,
+    horizon: int,
+    validation_fraction: float,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split a chronological frame into inner-train/inner-validation with an
+    embargo gap of ``horizon`` quarters between them.
+
+    Direct multi-horizon windows slide one quarter at a time, so adjacent
+    windows overlap heavily. Without a gap, the validation split used for
+    early stopping would include windows whose lookback input (or target)
+    overlaps a training window's target period -- inflating the validation
+    signal used to decide when to stop training. This does not affect the
+    walk-forward forecast itself, which never sees data past the true
+    forecast origin regardless of this split.
+
+    Returns an empty validation frame when there is not enough history for a
+    purged split with at least one window on each side; callers should fall
+    back to training on the full frame without an early-stopping validation
+    set in that case.
+    """
+    n = len(clean)
+    embargo = horizon
+    min_side = lookback + horizon
+    val_size = max(min_side, int(np.ceil(n * validation_fraction)))
+    train_end = n - val_size - embargo
+    if train_end < min_side:
+        return clean, clean.iloc[0:0]
+    val_start = train_end + embargo
+    return clean.iloc[:train_end], clean.iloc[val_start:]
+
+
 def fit_lstm_direct(
     train_frame: pd.DataFrame,
     lookback: int = LOOKBACK_QUARTERS,
     horizon: int = FORECAST_HORIZON,
     units: int = LSTM_UNITS,
     dropout: float = DROPOUT,
+    learning_rate: float = LEARNING_RATE,
     validation_fraction: float = VALIDATION_FRACTION,
     epochs: int = MAX_EPOCHS,
     patience: int = EARLY_STOPPING_PATIENCE,
@@ -231,43 +267,60 @@ def fit_lstm_direct(
     seed: int = DEFAULT_SEED,
     verbose: int = 0,
 ) -> LSTMDirectFit:
-    """Fit one direct-output LSTM on a chronological train window."""
+    """Fit one direct-output LSTM on a chronological train window.
+
+    Uses a purged (embargoed) inner train/validation split for early
+    stopping, with the scaler fit on the inner-train portion only. When the
+    window is too short for a purged split with at least one window on each
+    side, falls back to training on the full window and monitoring training
+    loss for early stopping instead of a validation signal.
+    """
     clean = clean_lstm_frame(train_frame)
-    scaler = fit_train_window_scaler(clean)
-    x_all, y_all = make_direct_multihorizon_sequences(
-        clean,
+    inner_train, inner_val = _purged_train_val_split(
+        clean, lookback=lookback, horizon=horizon, validation_fraction=validation_fraction
+    )
+    scaler = fit_train_window_scaler(inner_train)
+    x_train, y_train = make_direct_multihorizon_sequences(
+        inner_train,
         scaler=scaler,
         lookback=lookback,
         horizon=horizon,
     )
-    if len(x_all) < 2:
-        raise ValueError("LSTM requires at least two supervised windows for validation.")
 
-    val_size = max(1, int(np.ceil(len(x_all) * validation_fraction)))
-    if val_size >= len(x_all):
-        val_size = 1
-    train_end = len(x_all) - val_size
-    x_train, y_train = x_all[:train_end], y_all[:train_end]
-    x_val, y_val = x_all[train_end:], y_all[train_end:]
+    tf = _tensorflow()
+    if len(inner_val) >= lookback + horizon:
+        x_val, y_val = make_direct_multihorizon_sequences(
+            inner_val,
+            scaler=scaler,
+            lookback=lookback,
+            horizon=horizon,
+        )
+        validation_data = (x_val, y_val)
+        monitor = "val_loss"
+    else:
+        # Not enough history left after purging for a validation window;
+        # train on everything and monitor training loss instead.
+        validation_data = None
+        monitor = "loss"
 
     model = build_model(
-        n_features=x_all.shape[-1],
+        n_features=x_train.shape[-1],
         lookback=lookback,
         horizon=horizon,
         units=units,
         dropout=dropout,
+        learning_rate=learning_rate,
         seed=seed,
     )
-    tf = _tensorflow()
     early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor="val_loss",
+        monitor=monitor,
         patience=patience,
         restore_best_weights=True,
     )
     history = model.fit(
         x_train,
         y_train,
-        validation_data=(x_val, y_val),
+        validation_data=validation_data,
         epochs=epochs,
         batch_size=batch_size,
         shuffle=False,
@@ -308,6 +361,7 @@ def forecast_lstm_direct(
     lookback: int = LOOKBACK_QUARTERS,
     units: int = LSTM_UNITS,
     dropout: float = DROPOUT,
+    learning_rate: float = LEARNING_RATE,
     seed: int = DEFAULT_SEED,
     verbose: int = 0,
 ) -> np.ndarray:
@@ -319,6 +373,7 @@ def forecast_lstm_direct(
         lookback=lookback,
         units=units,
         dropout=dropout,
+        learning_rate=learning_rate,
         seed=seed,
         verbose=verbose,
     )
