@@ -54,8 +54,8 @@ class TrainWindowScaler:
 
     Fitting must always happen on exactly the caller's training window (never
     the full series) so that per-origin walk-forward scaling stays leakage
-    safe; see the direct-multihorizon LSTM and Elastic Net fits for the
-    intended usage pattern.
+    safe; see the direct-multihorizon Elastic Net fit for the intended usage
+    pattern.
     """
 
     columns: tuple[str, ...]

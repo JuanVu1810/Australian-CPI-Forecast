@@ -10,7 +10,6 @@ import statsmodels.api as sm
 
 from api import main as api_main
 from src.models import registry, tracking
-from src.models.lstm import LSTMDirectFit, TrainWindowScaler
 
 
 def _configure_tmp_mlflow(monkeypatch, tmp_path, experiment_name="pytest-api-registry"):
@@ -75,7 +74,7 @@ def _write_curated_frame(path, end_quarter="2021Q4"):
 def test_promote_champion_registers_lowest_eligible_mlflow_run(monkeypatch, tmp_path):
     _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-promote-champion")
     sarima_run_id = _log_run_with_model("sarima", 1.2)
-    _log_run_with_model("lstm", 1.8)
+    _log_run_with_model("elastic_net", 1.8)
 
     result = registry.promote_champion()
 
@@ -135,47 +134,6 @@ def test_sarima_forecast_labels_come_from_model_when_curated_data_is_ahead(
 
     assert forecast_payload["forecast_origin"] == "2021Q4"
     assert forecast_payload["quarters"] == ["2022Q1", "2022Q2"]
-
-
-def test_lstm_forecast_branch_reuses_forecast_from_fit(monkeypatch):
-    class FakeModel:
-        def predict(self, values, verbose=0):
-            assert values.shape == (1, 2, 1)
-            return np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32)
-
-    scaler = TrainWindowScaler(
-        columns=("cpi_yoy",),
-        mean_=pd.Series({"cpi_yoy": 10.0}),
-        scale_=pd.Series({"cpi_yoy": 2.0}),
-    )
-    fitted = LSTMDirectFit(
-        model=FakeModel(),
-        scaler=scaler,
-        feature_columns=("cpi_yoy",),
-        target_column="cpi_yoy",
-        lookback=2,
-        horizon=4,
-    )
-    monkeypatch.setattr(api_main, "_load_lstm_fit", lambda *args, **kwargs: fitted)
-    monkeypatch.setattr(
-        api_main,
-        "_current_lstm_frame",
-        lambda: pd.DataFrame(
-            {"cpi_yoy": [11.0, 12.0]},
-            index=pd.period_range("2022Q3", periods=2, freq="Q"),
-        ),
-    )
-
-    forecast = api_main._forecast_values(
-        client=SimpleNamespace(),
-        version=SimpleNamespace(run_id="run-id"),
-        family="lstm",
-        horizon=3,
-    )
-
-    assert forecast.values == [12.0, 14.0, 16.0]
-    assert forecast.forecast_origin == "2022Q4"
-    assert forecast.quarters == ["2023Q1", "2023Q2", "2023Q3"]
 
 
 def test_elastic_net_forecast_branch_uses_predict_next(monkeypatch):

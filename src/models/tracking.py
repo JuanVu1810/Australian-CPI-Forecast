@@ -104,48 +104,6 @@ def log_statsmodels_model(model: Any, artifact_path: str = "model") -> None:
     _tag_logged_model(model_info)
 
 
-def log_lstm_keras_model(
-    fitted: Any,
-    train_frame: pd.DataFrame,
-    artifact_path: str = "model",
-) -> None:
-    """Log a full-sample Keras LSTM and its preprocessing metadata."""
-    mlflow = configure_mlflow()
-    import mlflow.keras
-    from mlflow.models import infer_signature
-
-    columns = list(fitted.feature_columns)
-    mean = {column: float(fitted.scaler.mean_.loc[column]) for column in columns}
-    scale = {column: float(fitted.scaler.scale_.loc[column]) for column in columns}
-    mlflow.log_dict(
-        {
-            "feature_columns": columns,
-            "target_column": fitted.target_column,
-            "lookback": int(fitted.lookback),
-            "horizon": int(fitted.horizon),
-            "scaler_mean": mean,
-            "scaler_scale": scale,
-        },
-        "model_preprocessing/lstm_scaler.json",
-    )
-
-    signature = None
-    clean = pd.DataFrame(train_frame).loc[:, columns].dropna().astype(float)
-    if len(clean) >= int(fitted.lookback):
-        latest_window = fitted.scaler.transform(clean.iloc[-int(fitted.lookback) :])
-        latest_window = latest_window.reshape(1, int(fitted.lookback), len(columns))
-        prediction = fitted.model.predict(latest_window, verbose=0)
-        signature = infer_signature(latest_window, prediction)
-
-    mlflow.set_tag("model_artifact_role", FULL_SAMPLE_MODEL_TAG)
-    model_info = mlflow.keras.log_model(
-        fitted.model,
-        artifact_path=artifact_path,
-        signature=signature,
-    )
-    _tag_logged_model(model_info)
-
-
 def log_elastic_net_model(
     fitted: Any,
     train_frame: pd.DataFrame,
@@ -157,8 +115,7 @@ def log_elastic_net_model(
     ``Pipeline`` selected by per-fold cross-validated ``GridSearchCV``
     (``src/models/elastic_net.py``), so alpha/l1_ratio/intercept come from
     its ``"model"`` step, and the logged signature uses raw (unscaled)
-    inputs -- the pipeline scales internally, unlike the plain
-    ``TrainWindowScaler``-based LSTM model this mirrors.
+    inputs -- the pipeline scales internally.
     """
     mlflow = configure_mlflow()
     import mlflow.sklearn

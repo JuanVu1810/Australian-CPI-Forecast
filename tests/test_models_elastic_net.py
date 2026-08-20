@@ -41,6 +41,21 @@ def test_forecast_elastic_net_direct_rejects_more_than_8_steps():
         elastic_net.forecast_elastic_net_direct(frame, steps=9)
 
 
+def test_simulate_elastic_net_paths_shape_seed_forecast_mean_and_no_nans():
+    frame = _synthetic_frame(n=40)
+
+    paths = elastic_net.simulate_elastic_net_paths(frame, steps=2, n_sims=80, seed=123)
+    repeat = elastic_net.simulate_elastic_net_paths(frame, steps=2, n_sims=80, seed=123)
+    different = elastic_net.simulate_elastic_net_paths(frame, steps=2, n_sims=80, seed=456)
+    forecast = elastic_net.forecast_elastic_net_direct(frame, steps=2, seed=123)
+
+    assert paths.shape == (80, 2)
+    assert np.isfinite(paths).all()
+    np.testing.assert_array_equal(paths, repeat)
+    assert not np.array_equal(paths, different)
+    assert np.allclose(paths.mean(axis=0), forecast, atol=0.5)
+
+
 def test_walk_forward_direct_multihorizon_smoke():
     frame = _synthetic_frame(n=50)
     series = frame["cpi_yoy"]

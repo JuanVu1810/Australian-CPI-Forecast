@@ -1,14 +1,11 @@
 """Regularized direct multi-horizon Elastic Net challenger for CPI year-ended inflation.
 
 SARIMAX loses to plain SARIMA on every screened feature group
-(``reports/model_comparison_sarimax.csv``) and a leakage-fixed LSTM
-hyperparameter search found a bigger network was not better than baseline
-(``reports/lstm_hyperparameter_search_final_summary.csv``). Both point at
-small-sample overfitting on the exogenous macro block, not underfitting. This
-model tests the direct fix -- L1/L2-penalized coefficients -- on the same
-lag-safe feature set SARIMAX Group D and the LSTM already use, plus explicit
-CPI autoregressive lags (a linear model has no built-in AR structure the way
-SARIMA/SARIMAX/LSTM do).
+(``reports/model_comparison_sarimax.csv``), pointing at small-sample
+overfitting on the exogenous macro block rather than underfitting. This model
+tests the direct fix -- L1/L2-penalized coefficients -- on SARIMAX Group D's
+lag-safe feature set, plus explicit CPI autoregressive lags (a linear model
+has no built-in AR structure the way SARIMA/SARIMAX do).
 """
 
 from __future__ import annotations
@@ -38,12 +35,23 @@ from src.models.evaluation import (
     walk_forward_backtest,
     walk_forward_backtest_direct_multihorizon,
 )
-from src.models.lstm import LSTM_FEATURE_COLUMNS
 from src.models.sarima import forecast_sarima
 
 
 TARGET_COLUMN = "cpi_yoy"
-ELASTIC_NET_FEATURE_COLUMNS = ("cpi_yoy_lag1", "cpi_yoy_lag4", *LSTM_FEATURE_COLUMNS)
+ELASTIC_NET_MACRO_FEATURE_COLUMNS = (
+    "cash_rate_change_lag1",
+    "unemployment_rate_change_lag1",
+    "inflation_expectations_business_lag1",
+    "ppi_growth_lag2",
+    "commodity_growth_lag1",
+    "wti_growth_lag1",
+)
+ELASTIC_NET_FEATURE_COLUMNS = (
+    "cpi_yoy_lag1",
+    "cpi_yoy_lag4",
+    *ELASTIC_NET_MACRO_FEATURE_COLUMNS,
+)
 
 FORECAST_HORIZON = 8
 DEFAULT_INITIAL_TRAIN_SIZE = 40
@@ -71,8 +79,7 @@ ELASTIC_NET_MODEL_NOTE = (
 )
 SARIMAX_D_NOTE = (
     "SARIMAX(D) remains lag-safety capped at horizon 1 because Group D includes "
-    "lag-1 regressors; Elastic Net horizons 1-8 use only the past origin row, "
-    "same as the LSTM comparison."
+    "lag-1 regressors; Elastic Net horizons 1-8 use only the past origin row."
 )
 
 
@@ -132,6 +139,17 @@ def _safe_cv_splits(n_examples: int, requested: int) -> int:
     return max(2, min(requested, n_examples - 1))
 
 
+def _elastic_net_horizon_training_xy(
+    clean: pd.DataFrame,
+    horizon: int,
+    feature_columns: tuple[str, ...],
+    target_column: str,
+) -> tuple[pd.DataFrame, pd.Series]:
+    x = clean.loc[:, list(feature_columns)].iloc[: len(clean) - horizon]
+    y = clean[target_column].iloc[horizon:]
+    return x, y
+
+
 def fit_elastic_net_direct(
     train_frame: pd.DataFrame,
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
@@ -171,8 +189,12 @@ def fit_elastic_net_direct(
     for horizon in horizons:
         if len(clean) <= horizon:
             raise ValueError(f"training frame is too short for horizon {horizon}.")
-        x = clean.loc[:, list(feature_columns)].iloc[: len(clean) - horizon]
-        y = clean[target_column].iloc[horizon:].to_numpy()
+        x, y = _elastic_net_horizon_training_xy(
+            clean=clean,
+            horizon=horizon,
+            feature_columns=feature_columns,
+            target_column=target_column,
+        )
         n_splits = _safe_cv_splits(len(x), cv_splits)
         pipeline = Pipeline(
             [
@@ -187,7 +209,7 @@ def fit_elastic_net_direct(
             scoring="neg_mean_squared_error",
             n_jobs=n_jobs,
         )
-        search.fit(x, y)
+        search.fit(x, y.to_numpy())
         models[horizon] = search.best_estimator_
 
     # Full-training-window scaler kept only for MLflow logging metadata
@@ -218,6 +240,56 @@ def forecast_elastic_net_direct(
         raise ValueError("the Elastic Net baseline emits at most 8 horizons.")
     fitted = fit_elastic_net_direct(train_frame, seed=seed)
     return forecast_from_fit(fitted, train_frame)[:steps]
+
+
+def _elastic_net_residual_matrix(fitted: ElasticNetDirectFit, clean: pd.DataFrame) -> pd.DataFrame:
+    residuals = []
+    for horizon in fitted.horizons:
+        x, y = _elastic_net_horizon_training_xy(
+            clean=clean,
+            horizon=horizon,
+            feature_columns=fitted.feature_columns,
+            target_column=fitted.target_column,
+        )
+        predicted = fitted.models[horizon].predict(x)
+        residuals.append(pd.Series(y.to_numpy() - predicted, index=x.index, name=horizon))
+
+    matrix = pd.concat(residuals, axis=1, join="inner").dropna()
+    if matrix.empty:
+        raise ValueError("Elastic Net residual bootstrap has no common training origins.")
+    return matrix
+
+
+def simulate_elastic_net_paths(
+    train_frame: pd.DataFrame,
+    steps: int = 8,
+    n_sims: int = 1000,
+    seed: int = DEFAULT_SEED,
+) -> np.ndarray:
+    """Fit Elastic Net once and draw residual-bootstrap future ``cpi_yoy`` paths."""
+    if steps < 1:
+        raise ValueError("steps must be at least 1.")
+    if steps > FORECAST_HORIZON:
+        raise ValueError("the Elastic Net baseline emits at most 8 horizons.")
+    if n_sims < 1:
+        raise ValueError("n_sims must be at least 1.")
+
+    horizons = tuple(range(1, steps + 1))
+    fitted = fit_elastic_net_direct(train_frame, horizons=horizons, seed=seed)
+    clean = clean_elastic_net_frame(
+        train_frame,
+        target_column=fitted.target_column,
+        feature_columns=fitted.feature_columns,
+    )
+    point_forecast = fitted.predict_next(train_frame)[:steps]
+    # In-sample residuals likely understate true forecast-error variance,
+    # especially at longer horizons; not a calibrated out-of-sample interval.
+    residual_matrix = _elastic_net_residual_matrix(fitted=fitted, clean=clean).loc[:, list(horizons)]
+
+    rng = np.random.default_rng(seed)
+    origin_indices = rng.integers(0, len(residual_matrix), size=n_sims)
+    paths = point_forecast + residual_matrix.to_numpy()[origin_indices, :]
+    return np.asarray(paths, dtype=float)
 
 
 def coefficient_table(fitted: ElasticNetDirectFit) -> pd.DataFrame:

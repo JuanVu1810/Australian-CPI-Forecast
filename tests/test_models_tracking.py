@@ -6,7 +6,7 @@ from mlflow.tracking import MlflowClient
 import numpy as np
 import pandas as pd
 
-from src.models import evaluation, lstm, sarimax_order_search, tracking
+from src.models import evaluation, sarimax_order_search, tracking
 from src.models.sarima import fit_sarima as real_fit_sarima
 
 
@@ -264,99 +264,3 @@ def test_sarimax_orchestrator_logs_parent_and_group_child_runs(monkeypatch, tmp_
     ]
     assert group_a.data.metrics["rmse_h1"] == 0.5
     assert "rmse_h2" not in group_a.data.metrics
-
-
-def test_lstm_orchestrator_logs_lstm_metrics_artifacts_and_permutation_metrics(
-    monkeypatch,
-    tmp_path,
-):
-    experiment_name = "pytest-lstm-tracking"
-    _configure_tmp_mlflow(monkeypatch, tmp_path, experiment_name)
-
-    quarters = pd.period_range("2015Q1", periods=30, freq="Q")
-    curated_path = tmp_path / "curated.csv"
-    frame = pd.DataFrame({"quarter": quarters.astype(str), "cpi_yoy": np.linspace(2, 3, 30)})
-    for column in lstm.LSTM_FEATURE_COLUMNS:
-        frame[column] = np.linspace(0.1, 1.0, 30)
-    frame.to_csv(curated_path, index=False)
-
-    monkeypatch.setattr(
-        lstm,
-        "walk_forward_backtest_direct_multihorizon",
-        lambda *args, **kwargs: _prediction_frame("lstm", {1: 0.25, 2: 0.75}),
-    )
-    monkeypatch.setattr(
-        lstm,
-        "walk_forward_backtest",
-        lambda *args, **kwargs: _prediction_frame("sarima", {1: 5.0, 2: 5.0}),
-    )
-    monkeypatch.setattr(
-        lstm,
-        "seasonal_naive_backtest",
-        lambda *args, **kwargs: _prediction_frame("seasonal_naive", {1: 6.0, 2: 6.0}),
-    )
-
-    def fake_permutation_importance(full_frame, seed, output_path):
-        importance = pd.DataFrame(
-            {
-                "feature": ["cpi_yoy", "cash_rate_change_lag1"],
-                "baseline_rmse": [1.0, 1.0],
-                "permuted_rmse": [1.2, 0.9],
-                "rmse_increase": [0.2, -0.1],
-                "n_windows": [2, 2],
-                "n_values": [16, 16],
-                "n_repeats": [10, 10],
-                "interpretation_note": ["test", "test"],
-            }
-        )
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        importance.to_csv(output_path, index=False)
-        return importance
-
-    class FakeScaler:
-        columns = lstm.LSTM_INPUT_COLUMNS
-        mean_ = pd.Series({column: 0.0 for column in columns})
-        scale_ = pd.Series({column: 1.0 for column in columns})
-
-        def transform(self, values):
-            return np.zeros((len(values), len(self.columns)), dtype=np.float32)
-
-    fake_fit = SimpleNamespace(
-        model=object(),
-        scaler=FakeScaler(),
-        feature_columns=lstm.LSTM_INPUT_COLUMNS,
-        target_column="cpi_yoy",
-        lookback=8,
-        horizon=8,
-    )
-
-    monkeypatch.setattr(lstm, "permutation_importance", fake_permutation_importance)
-    monkeypatch.setattr(lstm, "fit_lstm_direct", lambda *args, **kwargs: fake_fit)
-    monkeypatch.setattr(
-        tracking,
-        "log_lstm_keras_model",
-        lambda fitted, train_frame: mlflow.log_dict({"fake_model": True}, "model/fake.json"),
-    )
-
-    lstm.run_lstm_comparison(
-        curated_path=curated_path,
-        rba_path=tmp_path / "missing_rba.csv",
-        comparison_output_path=tmp_path / "reports/model_comparison_lstm.csv",
-        permutation_output_path=tmp_path / "reports/lstm_permutation_importance.csv",
-        initial_train_size=12,
-        horizons=(1, 2),
-        seed=123,
-        max_origins=1,
-    )
-
-    runs = _runs_for_experiment(experiment_name)
-    assert len(runs) == 1
-    run = runs[0]
-    assert run.data.tags["model_family"] == "lstm"
-    assert run.data.tags["reused_feature_group_id"] == "D"
-    assert run.data.params["lookback"] == "8"
-    assert run.data.params["seed"] == "123"
-    assert run.data.metrics["rmse_h1"] == 0.25
-    assert run.data.metrics["mae_h2"] == 0.75
-    assert run.data.metrics["permutation_importance_cpi_yoy"] == 0.2
-    assert run.data.metrics["permutation_importance_cash_rate_change_lag1"] == -0.1

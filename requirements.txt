@@ -7,7 +7,6 @@ pyarrow
 pandera
 statsmodels
 scikit-learn
-tensorflow
 nbconvert
 fastapi
 uvicorn

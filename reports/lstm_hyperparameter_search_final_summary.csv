@@ -1,3 +1,0 @@
-phase,stage,units,dropout,lookback,learning_rate,origin_n,n_seeds,rmse_mean,rmse_std,mae_mean,mae_std
-final_test,baseline,16,0.2,8,0.001,33,5,2.108577,0.036535,1.683843,0.023234
-final_test,best_screened,32,0.3,8,0.003,33,5,2.136871,0.012385,1.701124,0.013898

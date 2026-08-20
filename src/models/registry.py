@@ -14,17 +14,16 @@ from src.models import tracking
 
 REGISTERED_MODEL_NAME = "cpi_forecast_champion"
 CHAMPION_ALIAS = "champion"
-ELIGIBLE_FAMILIES = ("sarima", "lstm", "elastic_net")
+ELIGIBLE_FAMILIES = ("sarima", "elastic_net")
 REPORT_PATHS = {
     "sarima": Path("reports/model_comparison_sarima.csv"),
-    "lstm": Path("reports/model_comparison_lstm.csv"),
     "elastic_net": Path("reports/model_comparison_elastic_net.csv"),
 }
 
 
 @dataclass(frozen=True)
 class Candidate:
-    family: Literal["sarima", "lstm", "elastic_net"]
+    family: Literal["sarima", "elastic_net"]
     rmse_overall: float
     metric_source: Literal["mlflow", "report"]
     run_id: str | None
@@ -34,7 +33,7 @@ class Candidate:
 class PromotionResult:
     registered_model_name: str
     alias: str
-    family: Literal["sarima", "lstm", "elastic_net"]
+    family: Literal["sarima", "elastic_net"]
     version: str
     run_id: str
     rmse_overall: float
@@ -128,7 +127,7 @@ def promote_champion() -> PromotionResult:
         is not None
     ]
     if not candidates:
-        raise RuntimeError("No SARIMA or LSTM RMSE candidates found in MLflow or reports.")
+        raise RuntimeError("No SARIMA or Elastic Net RMSE candidates found in MLflow or reports.")
 
     winner = min(candidates, key=lambda candidate: candidate.rmse_overall)
     run_id = winner.run_id or _latest_model_run_id(

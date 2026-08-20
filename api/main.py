@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from pathlib import Path
 
 import numpy as np
@@ -15,12 +14,6 @@ from pydantic import BaseModel, Field
 from src.models import tracking
 from src.models.elastic_net import load_elastic_net_feature_frame
 from src.models.evaluation import TARGET_COLUMN, load_target_series
-from src.models.lstm import (
-    LSTMDirectFit,
-    TrainWindowScaler,
-    forecast_from_fit,
-    load_lstm_feature_frame,
-)
 from src.models.registry import CHAMPION_ALIAS, REGISTERED_MODEL_NAME
 
 
@@ -132,12 +125,6 @@ def _metric_payload(client: MlflowClient, version) -> dict[str, object]:
     }
 
 
-def _current_lstm_frame() -> pd.DataFrame:
-    series = load_target_series(CURATED_DATA_PATH)
-    exog = load_lstm_feature_frame(CURATED_DATA_PATH)
-    return pd.concat([series.rename(TARGET_COLUMN), exog], axis=1)
-
-
 def _current_elastic_net_frame() -> pd.DataFrame:
     series = load_target_series(CURATED_DATA_PATH)
     exog = load_elastic_net_feature_frame(CURATED_DATA_PATH)
@@ -148,36 +135,14 @@ def _load_elastic_net_fit(model_uri: str):
     """Load the logged ElasticNetDirectFit via the sklearn flavor.
 
     This project's serving code always uses MLflow's flavor-specific loaders
-    (``mlflow.statsmodels``, ``mlflow.keras``, and here ``mlflow.sklearn``)
+    (``mlflow.statsmodels`` and here ``mlflow.sklearn``)
     rather than the generic pyfunc flavor, so it gets back the real
     ``ElasticNetDirectFit`` object -- including its ``predict_next`` method --
-    the same way the SARIMA/LSTM branches get back their real fitted objects.
+    the same way the SARIMA branch gets back its real fitted object.
     """
     import mlflow.sklearn
 
     return mlflow.sklearn.load_model(model_uri)
-
-
-def _load_lstm_fit(client: MlflowClient, version, model_uri: str) -> LSTMDirectFit:
-    import mlflow.keras
-
-    model = mlflow.keras.load_model(model_uri)
-    scaler_path = client.download_artifacts(
-        version.run_id,
-        "model_preprocessing/lstm_scaler.json",
-    )
-    scaler_data = json.loads(Path(scaler_path).read_text(encoding="utf-8"))
-    columns = tuple(scaler_data["feature_columns"])
-    mean = pd.Series(scaler_data["scaler_mean"], dtype=float).loc[list(columns)]
-    scale = pd.Series(scaler_data["scaler_scale"], dtype=float).loc[list(columns)]
-    return LSTMDirectFit(
-        model=model,
-        scaler=TrainWindowScaler(columns=columns, mean_=mean, scale_=scale),
-        feature_columns=columns,
-        target_column=str(scaler_data.get("target_column", TARGET_COLUMN)),
-        lookback=int(scaler_data["lookback"]),
-        horizon=int(scaler_data["horizon"]),
-    )
 
 
 def _sarima_forecast_metadata(values) -> tuple[str, list[str]]:
@@ -216,24 +181,6 @@ def _forecast_values(
             values=np.asarray(values, dtype=float).tolist(),
             forecast_origin=forecast_origin,
             quarters=quarters,
-        )
-    if family == "lstm":
-        fitted = _load_lstm_fit(client, version, model_uri)
-        if horizon > fitted.horizon:
-            raise HTTPException(
-                status_code=400,
-                detail=f"LSTM champion only supports up to {fitted.horizon} horizons.",
-            )
-        current_frame = _current_lstm_frame()
-        values = forecast_from_fit(fitted, current_frame)[:horizon]
-        clean_frame = (
-            current_frame.loc[:, list(fitted.feature_columns)].dropna().astype(float).sort_index()
-        )
-        forecast_origin = str(clean_frame.index[-1])
-        return ModelForecast(
-            values=np.asarray(values, dtype=float).tolist(),
-            forecast_origin=forecast_origin,
-            quarters=next_quarters(forecast_origin, horizon),
         )
     if family == "elastic_net":
         fitted = _load_elastic_net_fit(model_uri)

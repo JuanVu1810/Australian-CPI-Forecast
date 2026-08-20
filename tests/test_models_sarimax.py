@@ -8,7 +8,7 @@ import pytest
 
 from src.models import sarimax_order_search as order_search
 from src.models.evaluation import walk_forward_backtest_with_exog
-from src.models.sarimax import forecast_sarimax
+from src.models.sarimax import forecast_sarimax, simulate_sarimax_paths
 from src.models.sarimax_order_search import run_sarimax_order_search
 
 
@@ -31,6 +31,42 @@ def test_forecast_sarimax_returns_requested_number_of_forecasts():
 
     assert len(forecast) == 2
     assert forecast.notna().all()
+
+
+def test_simulate_sarimax_paths_shape_seed_and_forecast_mean():
+    index = pd.period_range("2015Q1", periods=28, freq="Q")
+    trend = np.linspace(2.0, 4.0, len(index))
+    signal = np.linspace(0.0, 1.0, len(index))
+    series = pd.Series(trend + 0.2 * signal, index=index, name="cpi_yoy")
+    exog = pd.DataFrame({"signal_lag1": signal}, index=index)
+
+    train_y = series.iloc[:-3]
+    train_x = exog.iloc[:-3]
+    future_x = exog.iloc[-3:]
+    kwargs = {
+        "steps": 3,
+        "n_sims": 80,
+        "order": (1, 0, 0),
+        "seasonal_order": (0, 0, 0, 0),
+        "maxiter": 25,
+    }
+    paths = simulate_sarimax_paths(train_y, train_x, future_x, seed=123, **kwargs)
+    repeat = simulate_sarimax_paths(train_y, train_x, future_x, seed=123, **kwargs)
+    different = simulate_sarimax_paths(train_y, train_x, future_x, seed=456, **kwargs)
+    forecast = forecast_sarimax(
+        train_y,
+        train_x,
+        future_x,
+        steps=3,
+        order=(1, 0, 0),
+        seasonal_order=(0, 0, 0, 0),
+        maxiter=25,
+    )
+
+    assert paths.shape == (80, 3)
+    np.testing.assert_array_equal(paths, repeat)
+    assert not np.array_equal(paths, different)
+    assert np.allclose(paths.mean(axis=0), forecast.to_numpy(), atol=0.5)
 
 
 def test_walk_forward_with_exog_aligns_future_exog_and_caps_lag1_horizons():

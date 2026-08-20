@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import warnings
 
+import numpy as np
 import pandas as pd
 from statsmodels.tools.sm_exceptions import ConvergenceWarning
 from statsmodels.tsa.statespace.sarimax import SARIMAX
@@ -61,6 +62,19 @@ def fit_sarima(
         return model.fit(disp=False, maxiter=maxiter)
 
 
+def _simulation_result_to_paths(simulated, n_sims: int, steps: int) -> np.ndarray:
+    paths = np.asarray(simulated, dtype=float)
+    if paths.shape != (steps, n_sims):
+        raise ValueError(
+            "unexpected simulation result shape: "
+            f"got {paths.shape}, expected {(steps, n_sims)} from statsmodels."
+        )
+    paths = paths.T
+    if paths.shape != (n_sims, steps):
+        raise ValueError(f"simulation paths have shape {paths.shape}, expected {(n_sims, steps)}.")
+    return paths
+
+
 def forecast_sarima(
     series: pd.Series,
     steps: int = 8,
@@ -82,3 +96,36 @@ def forecast_sarima(
     )
     forecast = fitted.get_forecast(steps=steps).predicted_mean
     return pd.Series(forecast, name="forecast")
+
+
+def simulate_sarima_paths(
+    series: pd.Series,
+    steps: int = 8,
+    n_sims: int = 1000,
+    order: tuple[int, int, int] = DEFAULT_ORDER,
+    seasonal_order: tuple[int, int, int, int] = DEFAULT_SEASONAL_ORDER,
+    trend: str = "n",
+    maxiter: int = 100,
+    seed: int = 42,
+) -> np.ndarray:
+    """Fit SARIMA and simulate future ``cpi_yoy`` paths with statsmodels innovations."""
+    if steps < 1:
+        raise ValueError("steps must be at least 1.")
+    if n_sims < 1:
+        raise ValueError("n_sims must be at least 1.")
+
+    fitted = fit_sarima(
+        series=series,
+        order=order,
+        seasonal_order=seasonal_order,
+        trend=trend,
+        maxiter=maxiter,
+    )
+    # Innovation uncertainty only; this does not include parameter uncertainty.
+    simulated = fitted.simulate(
+        nsimulations=steps,
+        anchor="end",
+        repetitions=n_sims,
+        random_state=seed,
+    )
+    return _simulation_result_to_paths(simulated, n_sims=n_sims, steps=steps)

@@ -7,6 +7,7 @@ from src.models.sarima import (
     DEFAULT_ORDER,
     DEFAULT_SEASONAL_ORDER,
     forecast_sarima,
+    simulate_sarima_paths,
 )
 from src.models.sarima_order_search import iter_candidate_orders
 
@@ -49,3 +50,33 @@ def test_forecast_sarima_returns_requested_number_of_forecasts():
 
     assert len(forecast) == 3
     assert forecast.notna().all()
+
+
+def test_simulate_sarima_paths_shape_seed_and_forecast_mean():
+    index = pd.period_range("2015Q1", periods=24, freq="Q")
+    trend = np.linspace(2.0, 4.0, len(index))
+    seasonal = np.tile([0.1, -0.1, 0.2, -0.2], 6)
+    series = pd.Series(trend + seasonal, index=index, name="cpi_yoy")
+
+    kwargs = {
+        "steps": 3,
+        "n_sims": 80,
+        "order": (1, 0, 0),
+        "seasonal_order": (0, 0, 0, 0),
+        "maxiter": 25,
+    }
+    paths = simulate_sarima_paths(series, seed=123, **kwargs)
+    repeat = simulate_sarima_paths(series, seed=123, **kwargs)
+    different = simulate_sarima_paths(series, seed=456, **kwargs)
+    forecast = forecast_sarima(
+        series,
+        steps=3,
+        order=(1, 0, 0),
+        seasonal_order=(0, 0, 0, 0),
+        maxiter=25,
+    )
+
+    assert paths.shape == (80, 3)
+    np.testing.assert_array_equal(paths, repeat)
+    assert not np.array_equal(paths, different)
+    assert np.allclose(paths.mean(axis=0), forecast.to_numpy(), atol=0.5)
