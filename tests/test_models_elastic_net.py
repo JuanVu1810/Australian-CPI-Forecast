@@ -56,6 +56,43 @@ def test_simulate_elastic_net_paths_shape_seed_forecast_mean_and_no_nans():
     assert np.allclose(paths.mean(axis=0), forecast, atol=0.5)
 
 
+def test_simulate_elastic_net_paths_from_fit_reuses_fitted_model_without_state_leak():
+    frame = _synthetic_frame(n=40)
+    fitted = elastic_net.fit_elastic_net_direct(frame, horizons=(1, 2), seed=123)
+
+    paths = elastic_net.simulate_paths_from_fit(fitted, frame, steps=2, n_sims=80, seed=123)
+    different = elastic_net.simulate_paths_from_fit(fitted, frame, steps=2, n_sims=80, seed=456)
+    repeat = elastic_net.simulate_paths_from_fit(fitted, frame, steps=2, n_sims=80, seed=123)
+
+    assert np.isfinite(paths).all()
+    assert not np.array_equal(paths, different)
+    np.testing.assert_array_equal(paths, repeat)
+
+
+def test_simulate_elastic_net_paths_wrapper_matches_manual_fit_simulation():
+    frame = _synthetic_frame(n=40)
+
+    wrapper_paths = elastic_net.simulate_elastic_net_paths(frame, steps=2, n_sims=80, seed=123)
+    fitted = elastic_net.fit_elastic_net_direct(frame, horizons=(1, 2), seed=123)
+    manual_paths = elastic_net.simulate_paths_from_fit(
+        fitted,
+        frame,
+        steps=2,
+        n_sims=80,
+        seed=123,
+    )
+
+    np.testing.assert_array_equal(wrapper_paths, manual_paths)
+
+
+def test_simulate_elastic_net_paths_from_fit_rejects_unfitted_requested_horizons():
+    frame = _synthetic_frame(n=40)
+    fitted = elastic_net.fit_elastic_net_direct(frame, horizons=(1, 2), seed=123)
+
+    with pytest.raises(ValueError, match="does not include requested horizons"):
+        elastic_net.simulate_paths_from_fit(fitted, frame, steps=3, n_sims=80, seed=123)
+
+
 def test_walk_forward_direct_multihorizon_smoke():
     frame = _synthetic_frame(n=50)
     series = frame["cpi_yoy"]

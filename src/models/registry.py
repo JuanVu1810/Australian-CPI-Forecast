@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import os
 from pathlib import Path
 from typing import Literal
@@ -19,13 +20,15 @@ REPORT_PATHS = {
     "sarima": Path("reports/model_comparison_sarima.csv"),
     "elastic_net": Path("reports/model_comparison_elastic_net.csv"),
 }
+SHARED_GRID_REPORT_PATH = REPORT_PATHS["elastic_net"]
+MetricSource = Literal["mlflow", "report", "shared_grid_report"]
 
 
 @dataclass(frozen=True)
 class Candidate:
     family: Literal["sarima", "elastic_net"]
     rmse_overall: float
-    metric_source: Literal["mlflow", "report"]
+    metric_source: MetricSource
     run_id: str | None
 
 
@@ -37,7 +40,7 @@ class PromotionResult:
     version: str
     run_id: str
     rmse_overall: float
-    metric_source: Literal["mlflow", "report"]
+    metric_source: MetricSource
 
 
 def _client_and_experiment():
@@ -89,6 +92,85 @@ def _report_candidate(family: str) -> Candidate | None:
     )
 
 
+def _shared_grid_rmse(family: str, path: Path = SHARED_GRID_REPORT_PATH) -> float:
+    if not path.exists():
+        raise RuntimeError(
+            f"Shared-grid comparison report is missing at {path}; cannot rank champion "
+            "candidates without comparing them on identical forecast origins."
+        )
+
+    table = pd.read_csv(path)
+    required_columns = {"model", "horizon", "rmse"}
+    missing_columns = required_columns.difference(table.columns)
+    if missing_columns:
+        missing = ", ".join(sorted(missing_columns))
+        raise RuntimeError(
+            f"Shared-grid comparison report {path} is missing required columns: {missing}."
+        )
+
+    rows = table.loc[table["model"].eq(family) & table["horizon"].astype(str).eq("overall")]
+    if rows.empty:
+        raise RuntimeError(
+            f"Shared-grid RMSE for family {family!r} was not found in {path}; cannot "
+            "fall back to mismatched-grid metrics for champion promotion."
+        )
+
+    rmse = float(rows.iloc[0]["rmse"])
+    if math.isnan(rmse):
+        raise RuntimeError(f"Shared-grid RMSE for family {family!r} in {path} is NaN.")
+    return rmse
+
+
+def _rank_candidate_on_shared_grid(
+    candidate: Candidate,
+    path: Path = SHARED_GRID_REPORT_PATH,
+) -> Candidate:
+    return Candidate(
+        family=candidate.family,
+        rmse_overall=_shared_grid_rmse(candidate.family, path),
+        metric_source="shared_grid_report",
+        run_id=candidate.run_id,
+    )
+
+
+def _rank_candidates_on_shared_grid(
+    candidates: list[Candidate],
+    path: Path = SHARED_GRID_REPORT_PATH,
+) -> Candidate:
+    # Elastic Net's report is the true origin intersection for current SARIMA/Elastic Net promotion.
+    # If a third eligible family is added later, this shared-grid source must be revisited.
+    shared_grid_candidates = [
+        _rank_candidate_on_shared_grid(candidate, path) for candidate in candidates
+    ]
+    return min(shared_grid_candidates, key=lambda candidate: candidate.rmse_overall)
+
+
+def _ensure_shared_grid_report_fresh(
+    client,
+    candidates: list[Candidate],
+    path: Path = SHARED_GRID_REPORT_PATH,
+) -> None:
+    if not path.exists():
+        raise RuntimeError(
+            f"Shared-grid comparison report is missing at {path}; cannot check whether "
+            "champion metrics match the candidate model runs."
+        )
+
+    report_mtime_ms = path.stat().st_mtime * 1000
+    for candidate in candidates:
+        if candidate.family == "elastic_net":
+            continue
+        if candidate.run_id is None:
+            continue
+        run = client.get_run(candidate.run_id)
+        if run.info.start_time is not None and report_mtime_ms < run.info.start_time:
+            raise RuntimeError(
+                f"Shared-grid comparison report {path} predates the latest "
+                f"{candidate.family!r} MLflow candidate run {candidate.run_id}; rerun "
+                "python -m src.models.elastic_net before promoting a champion."
+            )
+
+
 def _candidate_for_family(client, experiment_id: str, family: str) -> Candidate | None:
     return _latest_run_candidate(client, experiment_id, family) or _report_candidate(family)
 
@@ -118,7 +200,11 @@ def _logged_model_uri(client, run_id: str) -> str:
 
 
 def promote_champion() -> PromotionResult:
-    """Promote the best eligible full-horizon family to MLflow ``@champion``."""
+    """Promote the best eligible full-horizon family to MLflow ``@champion``.
+
+    The shared-grid report comes from ``python -m src.models.elastic_net``; rerun
+    that comparison before promotion whenever SARIMA or Elastic Net specs change.
+    """
     mlflow, client, experiment = _client_and_experiment()
     candidates = [
         candidate
@@ -129,7 +215,8 @@ def promote_champion() -> PromotionResult:
     if not candidates:
         raise RuntimeError("No SARIMA or Elastic Net RMSE candidates found in MLflow or reports.")
 
-    winner = min(candidates, key=lambda candidate: candidate.rmse_overall)
+    _ensure_shared_grid_report_fresh(client, candidates)
+    winner = _rank_candidates_on_shared_grid(candidates)
     run_id = winner.run_id or _latest_model_run_id(
         client,
         experiment.experiment_id,
@@ -144,7 +231,7 @@ def promote_champion() -> PromotionResult:
             "source_run_id": run_id,
             "rmse_overall": winner.rmse_overall,
             "metric_source": winner.metric_source,
-            "promotion_note": "Full-sample model artifact selected by latest eligible RMSE.",
+            "promotion_note": "Full-sample model artifact selected by shared-grid RMSE.",
         },
     )
     client.set_registered_model_alias(

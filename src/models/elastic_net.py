@@ -260,6 +260,46 @@ def _elastic_net_residual_matrix(fitted: ElasticNetDirectFit, clean: pd.DataFram
     return matrix
 
 
+def simulate_paths_from_fit(
+    fitted: ElasticNetDirectFit,
+    train_frame: pd.DataFrame,
+    steps: int = 8,
+    n_sims: int = 1000,
+    seed: int = DEFAULT_SEED,
+) -> np.ndarray:
+    """Draw residual-bootstrap future ``cpi_yoy`` paths from an already-fitted model."""
+    if steps < 1:
+        raise ValueError("steps must be at least 1.")
+    if steps > FORECAST_HORIZON:
+        raise ValueError("the Elastic Net baseline emits at most 8 horizons.")
+    if n_sims < 1:
+        raise ValueError("n_sims must be at least 1.")
+
+    horizons = tuple(range(1, steps + 1))
+    missing_horizons = sorted(set(horizons).difference(fitted.horizons))
+    if missing_horizons:
+        available_horizons = sorted(fitted.horizons)
+        raise ValueError(
+            "already-fitted Elastic Net model does not include requested horizons: "
+            f"{missing_horizons}; available horizons: {available_horizons}."
+        )
+
+    clean = clean_elastic_net_frame(
+        train_frame,
+        target_column=fitted.target_column,
+        feature_columns=fitted.feature_columns,
+    )
+    point_forecast = fitted.predict_next(train_frame)[:steps]
+    # In-sample residuals likely understate true forecast-error variance,
+    # especially at longer horizons; not a calibrated out-of-sample interval.
+    residual_matrix = _elastic_net_residual_matrix(fitted=fitted, clean=clean).loc[:, list(horizons)]
+
+    rng = np.random.default_rng(seed)
+    origin_indices = rng.integers(0, len(residual_matrix), size=n_sims)
+    paths = point_forecast + residual_matrix.to_numpy()[origin_indices, :]
+    return np.asarray(paths, dtype=float)
+
+
 def simulate_elastic_net_paths(
     train_frame: pd.DataFrame,
     steps: int = 8,
@@ -276,20 +316,13 @@ def simulate_elastic_net_paths(
 
     horizons = tuple(range(1, steps + 1))
     fitted = fit_elastic_net_direct(train_frame, horizons=horizons, seed=seed)
-    clean = clean_elastic_net_frame(
-        train_frame,
-        target_column=fitted.target_column,
-        feature_columns=fitted.feature_columns,
+    return simulate_paths_from_fit(
+        fitted=fitted,
+        train_frame=train_frame,
+        steps=steps,
+        n_sims=n_sims,
+        seed=seed,
     )
-    point_forecast = fitted.predict_next(train_frame)[:steps]
-    # In-sample residuals likely understate true forecast-error variance,
-    # especially at longer horizons; not a calibrated out-of-sample interval.
-    residual_matrix = _elastic_net_residual_matrix(fitted=fitted, clean=clean).loc[:, list(horizons)]
-
-    rng = np.random.default_rng(seed)
-    origin_indices = rng.integers(0, len(residual_matrix), size=n_sims)
-    paths = point_forecast + residual_matrix.to_numpy()[origin_indices, :]
-    return np.asarray(paths, dtype=float)
 
 
 def coefficient_table(fitted: ElasticNetDirectFit) -> pd.DataFrame:

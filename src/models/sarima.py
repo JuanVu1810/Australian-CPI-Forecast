@@ -98,6 +98,28 @@ def forecast_sarima(
     return pd.Series(forecast, name="forecast")
 
 
+def simulate_paths_from_fit(
+    fitted,
+    steps: int = 8,
+    n_sims: int = 1000,
+    seed: int = 42,
+) -> np.ndarray:
+    """Simulate future ``cpi_yoy`` paths from an already-fitted SARIMA model."""
+    if steps < 1:
+        raise ValueError("steps must be at least 1.")
+    if n_sims < 1:
+        raise ValueError("n_sims must be at least 1.")
+
+    # Innovation uncertainty only; this does not include parameter uncertainty.
+    simulated = fitted.simulate(
+        nsimulations=steps,
+        anchor="end",
+        repetitions=n_sims,
+        random_state=seed,
+    )
+    return _simulation_result_to_paths(simulated, n_sims=n_sims, steps=steps)
+
+
 def simulate_sarima_paths(
     series: pd.Series,
     steps: int = 8,
@@ -121,11 +143,4 @@ def simulate_sarima_paths(
         trend=trend,
         maxiter=maxiter,
     )
-    # Innovation uncertainty only; this does not include parameter uncertainty.
-    simulated = fitted.simulate(
-        nsimulations=steps,
-        anchor="end",
-        repetitions=n_sims,
-        random_state=seed,
-    )
-    return _simulation_result_to_paths(simulated, n_sims=n_sims, steps=steps)
+    return simulate_paths_from_fit(fitted, steps=steps, n_sims=n_sims, seed=seed)

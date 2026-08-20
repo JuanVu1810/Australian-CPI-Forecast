@@ -8,8 +8,46 @@ import pytest
 
 from src.models import sarimax_order_search as order_search
 from src.models.evaluation import walk_forward_backtest_with_exog
-from src.models.sarimax import forecast_sarimax, simulate_sarimax_paths
+from src.models.sarimax import (
+    GROUP_D_HORIZON_CAP_ERROR,
+    SARIMAX_COMPARISON_REPORT_PATH,
+    fit_sarimax,
+    forecast_sarimax,
+    forecast_sarimax_group_d,
+    group_d_future_exog,
+    run_sarimax_group_d_registration,
+    simulate_paths_from_fit,
+    simulate_sarimax_group_d_paths,
+    simulate_sarimax_paths,
+)
 from src.models.sarimax_order_search import run_sarimax_order_search
+
+
+def _group_d_frame(n=36):
+    index = pd.period_range("2015Q1", periods=n, freq="Q")
+    t = np.arange(n, dtype=float)
+    frame = pd.DataFrame(
+        {
+            "cpi_yoy": 2.5 + 0.02 * t + 0.1 * np.sin(t / 3),
+            "cash_rate_change": 0.1 * np.cos(t / 4),
+            "unemployment_rate_change": 0.05 * np.sin(t / 5),
+            "inflation_expectations_business": 2.0 + 0.01 * t,
+            "ppi_growth": 0.3 + 0.02 * np.cos(t / 2),
+            "ppi_growth_lag1": 0.3 + 0.02 * np.cos((t - 1) / 2),
+            "ppi_growth_lag2": 0.3 + 0.02 * np.cos((t - 2) / 2),
+            "commodity_growth": 0.2 * np.sin(t / 3),
+            "wti_growth": 0.15 * np.cos(t / 3),
+        },
+        index=index,
+    )
+    frame["cash_rate_change_lag1"] = frame["cash_rate_change"].shift(1)
+    frame["unemployment_rate_change_lag1"] = frame["unemployment_rate_change"].shift(1)
+    frame["inflation_expectations_business_lag1"] = frame[
+        "inflation_expectations_business"
+    ].shift(1)
+    frame["commodity_growth_lag1"] = frame["commodity_growth"].shift(1)
+    frame["wti_growth_lag1"] = frame["wti_growth"].shift(1)
+    return frame
 
 
 def test_forecast_sarimax_returns_requested_number_of_forecasts():
@@ -67,6 +105,118 @@ def test_simulate_sarimax_paths_shape_seed_and_forecast_mean():
     np.testing.assert_array_equal(paths, repeat)
     assert not np.array_equal(paths, different)
     assert np.allclose(paths.mean(axis=0), forecast.to_numpy(), atol=0.5)
+
+
+def test_simulate_sarimax_paths_from_fit_reuses_fitted_model_without_state_leak():
+    index = pd.period_range("2015Q1", periods=28, freq="Q")
+    trend = np.linspace(2.0, 4.0, len(index))
+    signal = np.linspace(0.0, 1.0, len(index))
+    series = pd.Series(trend + 0.2 * signal, index=index, name="cpi_yoy")
+    exog = pd.DataFrame({"signal_lag1": signal}, index=index)
+    fitted = fit_sarimax(
+        series.iloc[:-3],
+        exog.iloc[:-3],
+        order=(1, 0, 0),
+        seasonal_order=(0, 0, 0, 0),
+        maxiter=25,
+    )
+    future_x = exog.iloc[-3:]
+
+    paths = simulate_paths_from_fit(fitted, future_x, steps=3, n_sims=80, seed=123)
+    different = simulate_paths_from_fit(fitted, future_x, steps=3, n_sims=80, seed=456)
+    repeat = simulate_paths_from_fit(fitted, future_x, steps=3, n_sims=80, seed=123)
+
+    assert not np.array_equal(paths, different)
+    np.testing.assert_array_equal(paths, repeat)
+
+
+def test_simulate_sarimax_paths_wrapper_matches_manual_fit_simulation():
+    index = pd.period_range("2015Q1", periods=28, freq="Q")
+    trend = np.linspace(2.0, 4.0, len(index))
+    signal = np.linspace(0.0, 1.0, len(index))
+    series = pd.Series(trend + 0.2 * signal, index=index, name="cpi_yoy")
+    exog = pd.DataFrame({"signal_lag1": signal}, index=index)
+    train_y = series.iloc[:-3]
+    train_x = exog.iloc[:-3]
+    future_x = exog.iloc[-3:]
+    kwargs = {
+        "steps": 3,
+        "n_sims": 80,
+        "order": (1, 0, 0),
+        "seasonal_order": (0, 0, 0, 0),
+        "maxiter": 25,
+    }
+
+    wrapper_paths = simulate_sarimax_paths(train_y, train_x, future_x, seed=123, **kwargs)
+    fitted = fit_sarimax(
+        train_y,
+        train_x,
+        order=kwargs["order"],
+        seasonal_order=kwargs["seasonal_order"],
+        maxiter=kwargs["maxiter"],
+    )
+    manual_paths = simulate_paths_from_fit(
+        fitted,
+        future_x,
+        steps=kwargs["steps"],
+        n_sims=kwargs["n_sims"],
+        seed=123,
+    )
+
+    np.testing.assert_array_equal(wrapper_paths, manual_paths)
+
+
+def test_group_d_future_exog_mechanically_shifts_latest_known_values():
+    frame = _group_d_frame(n=8)
+
+    future = group_d_future_exog(frame)
+    latest = frame.iloc[-1]
+
+    assert future.index.tolist() == [frame.index[-1] + 1]
+    assert future.iloc[0].to_dict() == {
+        "cash_rate_change_lag1": latest["cash_rate_change"],
+        "unemployment_rate_change_lag1": latest["unemployment_rate_change"],
+        "inflation_expectations_business_lag1": latest[
+            "inflation_expectations_business"
+        ],
+        "ppi_growth_lag2": latest["ppi_growth_lag1"],
+        "commodity_growth_lag1": latest["commodity_growth"],
+        "wti_growth_lag1": latest["wti_growth"],
+    }
+
+
+def test_sarimax_group_d_wrappers_enforce_horizon_cap_and_return_finite_values():
+    frame = _group_d_frame(n=40)
+    series = frame["cpi_yoy"]
+    exog = frame.drop(columns="cpi_yoy")
+
+    with pytest.raises(ValueError, match=GROUP_D_HORIZON_CAP_ERROR):
+        forecast_sarimax_group_d(series, exog, steps=2)
+    with pytest.raises(ValueError, match=GROUP_D_HORIZON_CAP_ERROR):
+        simulate_sarimax_group_d_paths(series, exog, steps=2, n_sims=10)
+
+    forecast = forecast_sarimax_group_d(series, exog, steps=1)
+    paths = simulate_sarimax_group_d_paths(series, exog, steps=1, n_sims=10, seed=123)
+
+    assert len(forecast) == 1
+    assert np.isfinite(forecast.to_numpy()).all()
+    assert paths.shape == (10, 1)
+    assert np.isfinite(paths).all()
+
+
+@pytest.mark.skipif(
+    not SARIMAX_COMPARISON_REPORT_PATH.exists(),
+    reason="requires the real SARIMAX comparison report",
+)
+def test_run_sarimax_group_d_registration_logs_against_real_report(tmp_path, monkeypatch):
+    pytest.importorskip("mlflow")
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", str(tmp_path / "mlruns"))
+    monkeypatch.setenv("MLFLOW_EXPERIMENT_NAME", "pytest-sarimax-group-d")
+
+    run_id = run_sarimax_group_d_registration(verbose=False)
+
+    assert isinstance(run_id, str)
+    assert run_id
 
 
 def test_walk_forward_with_exog_aligns_future_exog_and_caps_lag1_horizons():

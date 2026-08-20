@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 import mlflow
+import mlflow.statsmodels
 from mlflow.tracking import MlflowClient
 import numpy as np
 import pandas as pd
@@ -75,6 +76,19 @@ def test_promote_champion_registers_lowest_eligible_mlflow_run(monkeypatch, tmp_
     _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-promote-champion")
     sarima_run_id = _log_run_with_model("sarima", 1.2)
     _log_run_with_model("elastic_net", 1.8)
+    monkeypatch.setattr(
+        registry,
+        "_ensure_shared_grid_report_fresh",
+        lambda client, candidates, path=registry.SHARED_GRID_REPORT_PATH: None,
+    )
+    monkeypatch.setattr(
+        registry,
+        "_rank_candidates_on_shared_grid",
+        lambda candidates, path=registry.SHARED_GRID_REPORT_PATH: min(
+            candidates,
+            key=lambda candidate: candidate.rmse_overall,
+        ),
+    )
 
     result = registry.promote_champion()
 
@@ -194,3 +208,180 @@ def test_elastic_net_forecast_branch_rejects_horizon_beyond_fitted_horizons(monk
 
     assert exc_info.value.status_code == 400
     assert "does not have fitted horizons" in exc_info.value.detail
+
+
+def test_forecast_all_returns_registered_sarima_and_marks_missing_families(
+    monkeypatch,
+    tmp_path,
+):
+    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-sarima-only")
+    curated_path = tmp_path / "curated.csv"
+    _write_curated_frame(curated_path, end_quarter="2021Q4")
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+    _log_run_with_model("sarima", 1.25)
+
+    payload = api_main.forecast_all(
+        api_main.AllForecastsRequest(horizon=2, n_sims=100)
+    ).model_dump()
+
+    assert payload["requested_horizon"] == 2
+    assert [model["model_family"] for model in payload["models"]] == ["sarima"]
+    assert len(payload["models"][0]["forecast"]) == 2
+    unavailable = {item["model_family"]: item["reason"] for item in payload["unavailable"]}
+    assert set(unavailable) == {"elastic_net", "sarimax_group_d"}
+    assert "No finished MLflow run found" in unavailable["elastic_net"]
+    assert "No finished MLflow run found" in unavailable["sarimax_group_d"]
+
+
+def test_forecast_all_returns_sarima_and_elastic_net_with_draw_intervals(
+    monkeypatch,
+    tmp_path,
+):
+    class FakeElasticNetFit:
+        feature_columns = ("cpi_yoy_lag1",)
+        horizons = (1, 2, 3)
+
+        def predict_next(self, train_frame):
+            return [10.0, 20.0, 30.0]
+
+    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-sarima-elastic")
+    curated_path = tmp_path / "curated.csv"
+    _write_curated_frame(curated_path, end_quarter="2021Q4")
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+    _log_run_with_model("sarima", 1.25)
+    _log_run_with_model("elastic_net", 1.15)
+    monkeypatch.setattr(api_main, "_load_elastic_net_fit", lambda model_uri: FakeElasticNetFit())
+    monkeypatch.setattr(
+        api_main,
+        "_current_elastic_net_frame",
+        lambda: pd.DataFrame(
+            {"cpi_yoy_lag1": [1.0, 2.0]},
+            index=pd.period_range("2022Q3", periods=2, freq="Q"),
+        ),
+    )
+    monkeypatch.setattr(
+        api_main.elastic_net,
+        "simulate_paths_from_fit",
+        lambda fitted, train_frame, steps, n_sims, seed: np.tile(
+            np.arange(1, steps + 1, dtype=float),
+            (n_sims, 1),
+        ),
+    )
+
+    payload = api_main.forecast_all(
+        api_main.AllForecastsRequest(horizon=3, n_sims=100)
+    ).model_dump()
+
+    models = {model["model_family"]: model for model in payload["models"]}
+    assert set(models) == {"sarima", "elastic_net"}
+    for model in models.values():
+        assert len(model["interval_lower"]) == 3
+        assert len(model["interval_upper"]) == 3
+        assert len(model["forecast"]) == 3
+    assert models["elastic_net"]["forecast"] == [10.0, 20.0, 30.0]
+
+
+def test_forecast_all_marks_elastic_net_horizon_mismatch_unavailable(
+    monkeypatch,
+    tmp_path,
+):
+    class FakeElasticNetFit:
+        feature_columns = ("cpi_yoy_lag1",)
+        horizons = (1, 2)
+
+        def predict_next(self, train_frame):
+            return [10.0, 20.0]
+
+    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-elastic-missing")
+    curated_path = tmp_path / "curated.csv"
+    _write_curated_frame(curated_path, end_quarter="2021Q4")
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+    _log_run_with_model("sarima", 1.25)
+    _log_run_with_model("elastic_net", 1.15)
+    monkeypatch.setattr(api_main, "_load_elastic_net_fit", lambda model_uri: FakeElasticNetFit())
+    monkeypatch.setattr(
+        api_main,
+        "_current_elastic_net_frame",
+        lambda: pd.DataFrame(
+            {"cpi_yoy_lag1": [1.0, 2.0]},
+            index=pd.period_range("2022Q3", periods=2, freq="Q"),
+        ),
+    )
+
+    payload = api_main.forecast_all(
+        api_main.AllForecastsRequest(horizon=3, n_sims=100)
+    ).model_dump()
+
+    assert [model["model_family"] for model in payload["models"]] == ["sarima"]
+    unavailable = {item["model_family"]: item["reason"] for item in payload["unavailable"]}
+    assert "elastic_net" in unavailable
+    assert "does not have fitted horizons [3]" in unavailable["elastic_net"]
+
+
+def test_forecast_all_sarimax_group_d_caps_requested_horizon(
+    monkeypatch,
+    tmp_path,
+):
+    class FakeSarimaxFit:
+        def get_forecast(self, steps, exog):
+            assert steps == 1
+            return SimpleNamespace(
+                predicted_mean=pd.Series([5.5], index=pd.DataFrame(exog).index)
+            )
+
+    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-sarimax-group-d")
+    curated_path = tmp_path / "curated.csv"
+    _write_curated_frame(curated_path, end_quarter="2021Q4")
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+    run_id = _log_run_with_model("sarimax_group_d", 1.4)
+    curated_frame = pd.DataFrame(
+        {"cpi_yoy": [4.0]},
+        index=pd.period_range("2021Q4", periods=1, freq="Q"),
+    )
+    monkeypatch.setattr(api_main, "_load_curated_frame_for_group_d", lambda: curated_frame)
+    monkeypatch.setattr(mlflow.statsmodels, "load_model", lambda model_uri: FakeSarimaxFit())
+    monkeypatch.setattr(
+        api_main.sarimax,
+        "group_d_future_exog",
+        lambda frame: pd.DataFrame(
+            {"cash_rate_change_lag1": [1.0]},
+            index=[frame.index[-1] + 1],
+        ),
+    )
+    monkeypatch.setattr(
+        api_main.sarimax,
+        "simulate_paths_from_fit",
+        lambda fitted, future_exog, steps, n_sims, seed: np.full((n_sims, steps), 5.0),
+    )
+
+    payload = api_main.forecast_all(
+        api_main.AllForecastsRequest(horizon=8, n_sims=100)
+    ).model_dump()
+
+    assert len(payload["models"]) == 1
+    model = payload["models"][0]
+    assert model["model_family"] == "sarimax_group_d"
+    assert model["run_id"] == run_id
+    assert model["horizon"] == 1
+    assert model["horizon_cap"] == 1
+    assert model["forecast"] == [5.5]
+    assert len(model["interval_lower"]) == 1
+    assert len(model["interval_upper"]) == 1
+    assert model["quarters"] == ["2022Q1"]
+
+
+def test_interval_from_paths_matches_numpy_percentile():
+    draws = np.array(
+        [
+            [1.0, 10.0, 100.0],
+            [2.0, 20.0, 200.0],
+            [3.0, 30.0, 300.0],
+            [4.0, 40.0, 400.0],
+        ]
+    )
+
+    lower, upper = api_main._interval_from_paths(draws, lower=0.25, upper=0.75)
+
+    expected = np.percentile(draws, [25.0, 75.0], axis=0)
+    np.testing.assert_allclose(lower, expected[0])
+    np.testing.assert_allclose(upper, expected[1])
