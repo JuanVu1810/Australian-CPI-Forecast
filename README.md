@@ -49,7 +49,7 @@ demonstrated shallowly:
 |---|---|---|
 | Data Science | SARIMA vs SARIMAX vs Elastic Net, walk-forward validated against seasonal naive **and** the RBA forecast, with SARIMAX/Elastic Net coefficient interpretability | EDA notebook, feature engineering |
 | Data Engineering | Ingestion -> validation -> curated Parquet -> DuckDB, fully local and credential-free | BigQuery documented as target, not deployed |
-| ML Engineering | MLflow runs, model registry with `@champion`, FastAPI selected-model serving, Docker, deployed and live on Google Cloud Run (currently serving an earlier snapshot -- see Implementation Status) | Postgres as the optional MLflow backend and run metadata store |
+| ML Engineering | MLflow runs, model registry with `@champion`, FastAPI selected-model serving, Docker, deployed and live on Google Cloud Run | Postgres as the optional MLflow backend and run metadata store |
 
 ## What `cpi_forecast_V1.ipynb` Found
 
@@ -186,8 +186,8 @@ clear job is documented as a target rather than built.
 | SARIMA | implemented | **DS flagship** | `notebooks/cpi_forecast_V1.ipynb`, `src/models/sarima.py` |
 | SARIMAX / Elastic Net comparison + RBA benchmark | implemented; SARIMAX also includes two COVID intervention-dummy feature groups (I, J) | **DS flagship** | `src/models/`, `reports/model_comparison_sarimax.csv`, `reports/model_comparison_elastic_net.csv`, `reports/elastic_net_coefficients.csv` |
 | MLflow | implemented locally: comparison runs log params, metrics, report artifacts, and full-sample model artifacts | **MLE flagship** | `src/models/tracking.py`, `mlruns/` (local, gitignored) |
-| FastAPI | deployed: MLflow `@champion` `/health`, `/features`, `/models`, `/metrics`, and `/forecast` serving | **MLE flagship** | `api/main.py`, `src/models/registry.py`, live at the URL below |
-| Docker / Google Cloud Run | deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs -- currently serving an earlier snapshot (SARIMA-only `@champion`, RMSE 1.665, predates the Elastic Net challenger and the leakage/order-selection fixes); needs a rebuild + redeploy from current code to catch up | **MLE flagship** | `Dockerfile`, `.dockerignore` |
+| FastAPI | deployed: MLflow `@champion` `/health`, `/features`, `/models`, `/metrics`, `/forecast`, and `/forecast/all` serving | **MLE flagship** | `api/main.py`, `src/models/registry.py`, live at the URL below |
+| Docker / Google Cloud Run | deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs -- verified 2026-08-22 on image tag `redeploy-20260822-05bf9b9`, serving Elastic Net `@champion` version 9 (RMSE 1.703591 from `shared_grid_report`) | **MLE flagship** | `Dockerfile`, `.dockerignore` |
 | Streamlit | multipage dashboard implemented for overview, data exploration, and static EDA summaries | supporting | `app/streamlit_app.py`, `app/pages/` |
 | GitHub Actions | CI + scheduled ETL scaffolded; no deploy-to-Cloud-Run step, so the live service above does not auto-update on push | supporting | `.github/workflows/` |
 
@@ -418,6 +418,7 @@ contains a promoted champion snapshot:
 python -m src.models.evaluation
 python -m src.models.sarimax_order_search
 python -m src.models.elastic_net
+python -m src.models.model_comparison
 python -m src.models.registry
 
 docker build -t cpi-forecast-api:latest .
@@ -523,16 +524,12 @@ other two flagship pillars, with dashboard polish last.
    walk-forward validated against seasonal naive **and** the RBA benchmark,
    reported overall and by horizon -- `src/models/`,
    `reports/model_comparison_*.csv`.
-2. **ML Engineering flagship (deployed, needs a redeploy to catch up):** every
+2. **ML Engineering flagship (deployed and current as of 2026-08-22):** every
    run (params, features, horizon, metrics, and model settings) logs to
    MLflow; the selected model serves through FastAPI (`/health`,
-   `/features`, `/models`, `/metrics`, `/forecast`); containerised with Docker
-   and live on Google Cloud Run (see Implementation Status for the URL) --
-   but that live container was built before the Elastic Net challenger and
-   this session's leakage fixes, so it's still serving an old SARIMA-only
-   `@champion`. Rebuilding and redeploying from current code (and rerunning
-   `registry.py`'s `promote_champion()` first) is the remaining step, not a
-   from-scratch build.
+   `/features`, `/models`, `/metrics`, `/forecast`, `/forecast/all`);
+   containerised with Docker and live on Google Cloud Run (see Implementation
+   Status for the URL), serving Elastic Net as the MLflow `@champion`.
 3. **Data Engineering flagship:** confirm DuckDB SQL examples against the
    regenerated curated dataset; add the Postgres run/metrics metadata store;
    confirm GitHub Actions CI and scheduled ETL after pushing.
