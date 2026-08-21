@@ -6,6 +6,9 @@ from src.models import ensemble
 from src.models.elastic_net import ELASTIC_NET_FEATURE_COLUMNS
 
 
+ENSEMBLE_COMPARISON_SOURCE = ensemble.DYNAMIC_WEIGHTS_SOURCE_PATH
+
+
 def _synthetic_frame(n: int = 20) -> pd.DataFrame:
     index = pd.period_range("2018Q1", periods=n, freq="Q")
     signal = np.arange(n, dtype=float)
@@ -26,6 +29,68 @@ def _write_curated_csv(path, frame: pd.DataFrame) -> None:
     output.to_csv(path, index=False)
 
 
+def _write_dynamic_weight_report(path, rows=None) -> None:
+    if rows is None:
+        rows = [
+            {"group_id": "ELASTIC_NET", "model": "sarima", "horizon": 1, "rmse": 2.0},
+            {"group_id": "ELASTIC_NET", "model": "elastic_net", "horizon": 1, "rmse": 1.0},
+            {"group_id": "ELASTIC_NET", "model": "sarima", "horizon": 2, "rmse": 3.0},
+            {"group_id": "ELASTIC_NET", "model": "elastic_net", "horizon": 2, "rmse": 6.0},
+            {"group_id": "OTHER", "model": "sarima", "horizon": 1, "rmse": 99.0},
+        ]
+    pd.DataFrame(rows).to_csv(path, index=False)
+
+
+def test_horizon_rmse_weights_reads_synthetic_report(tmp_path):
+    report_path = tmp_path / "model_comparison_elastic_net.csv"
+    _write_dynamic_weight_report(report_path)
+
+    weights = ensemble.horizon_rmse_weights(horizons=(1, 2), path=report_path)
+
+    assert weights[1][0] == pytest.approx(1.0 / 3.0)
+    assert weights[1][1] == pytest.approx(2.0 / 3.0)
+    assert weights[2][0] == pytest.approx(6.0 / 9.0)
+    assert weights[2][1] == pytest.approx(3.0 / 9.0)
+    for pair in weights.values():
+        assert sum(pair) == pytest.approx(1.0)
+
+
+def test_horizon_rmse_weights_missing_file_raises_clear_error(tmp_path):
+    missing_report = tmp_path / "missing_model_comparison_elastic_net.csv"
+
+    with pytest.raises(RuntimeError, match="Dynamic ensemble weight source report is missing"):
+        ensemble.horizon_rmse_weights(horizons=(1,), path=missing_report)
+
+
+def test_horizon_rmse_weights_missing_horizon_row_raises_clear_error(tmp_path):
+    report_path = tmp_path / "model_comparison_elastic_net.csv"
+    _write_dynamic_weight_report(
+        report_path,
+        rows=[
+            {"group_id": "ELASTIC_NET", "model": "sarima", "horizon": 1, "rmse": 2.0},
+            {"group_id": "ELASTIC_NET", "model": "elastic_net", "horizon": 1, "rmse": 1.0},
+            {"group_id": "ELASTIC_NET", "model": "sarima", "horizon": 2, "rmse": 3.0},
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="model 'elastic_net' at horizon 2"):
+        ensemble.horizon_rmse_weights(horizons=(1, 2), path=report_path)
+
+
+@pytest.mark.skipif(
+    not ENSEMBLE_COMPARISON_SOURCE.exists(),
+    reason="real Elastic Net comparison report is not available",
+)
+def test_horizon_rmse_weights_real_report_sanity_check():
+    weights = ensemble.horizon_rmse_weights(
+        horizons=(1, 4),
+        path=ENSEMBLE_COMPARISON_SOURCE,
+    )
+
+    assert weights[1][0] == pytest.approx(0.62, rel=0.01)
+    assert weights[4][0] == pytest.approx(0.476, rel=0.01)
+
+
 def test_combine_point_forecasts_weighted_average_and_validation():
     sarima_forecast = np.array([1.0, 2.0, 3.0])
     elastic_net_forecast = np.array([5.0, 6.0, 7.0])
@@ -43,6 +108,25 @@ def test_combine_point_forecasts_weighted_average_and_validation():
         ensemble.combine_point_forecasts(sarima_forecast, elastic_net_forecast[:2])
 
 
+def test_combine_point_forecasts_accepts_dict_weights_with_explicit_horizons():
+    sarima_forecast = np.array([10.0, 20.0, 30.0])
+    elastic_net_forecast = np.array([0.0, 100.0, 200.0])
+    weights = {
+        2: (0.25, 0.75),
+        4: (0.75, 0.25),
+        8: (0.5, 0.5),
+    }
+
+    combined = ensemble.combine_point_forecasts(
+        sarima_forecast,
+        elastic_net_forecast,
+        weights=weights,
+        horizons=np.array([4, 2, 8]),
+    )
+
+    np.testing.assert_array_equal(combined, np.array([7.5, 80.0, 115.0]))
+
+
 def test_combine_paths_weighted_sum_and_validation():
     sarima_paths = np.array([[1.0, 2.0], [3.0, 4.0]])
     elastic_net_paths = np.array([[10.0, 20.0], [30.0, 40.0]])
@@ -54,6 +138,28 @@ def test_combine_paths_weighted_sum_and_validation():
         ensemble.combine_paths(sarima_paths, elastic_net_paths[:, :1])
     with pytest.raises(ValueError, match="sum to 1"):
         ensemble.combine_paths(sarima_paths, elastic_net_paths, weights=(0.8, 0.8))
+
+
+def test_combine_paths_accepts_dict_weights_with_explicit_horizons():
+    sarima_paths = np.array([[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])
+    elastic_net_paths = np.array([[0.0, 100.0, 200.0], [10.0, 80.0, 120.0]])
+    weights = {
+        2: (0.25, 0.75),
+        4: (0.75, 0.25),
+        8: (0.5, 0.5),
+    }
+
+    combined = ensemble.combine_paths(
+        sarima_paths,
+        elastic_net_paths,
+        weights=weights,
+        horizons=np.array([4, 2, 8]),
+    )
+
+    np.testing.assert_array_equal(
+        combined,
+        np.array([[7.5, 80.0, 115.0], [32.5, 72.5, 90.0]]),
+    )
 
 
 def test_ensemble_interval_from_paths_uses_combined_draw_quantiles():
@@ -90,6 +196,39 @@ def test_forecast_ensemble_matches_underlying_point_combination(monkeypatch):
     )
 
     np.testing.assert_array_equal(forecast, expected)
+
+
+def test_forecast_ensemble_default_resolves_dynamic_weights(monkeypatch):
+    frame = _synthetic_frame()
+    sarima_point = np.array([10.0, 20.0, 30.0])
+    elastic_net_point = np.array([0.0, 100.0, 200.0])
+    requested = {}
+
+    monkeypatch.setattr(
+        ensemble,
+        "forecast_sarima",
+        lambda series, steps: sarima_point[:steps],
+    )
+    monkeypatch.setattr(
+        ensemble,
+        "forecast_elastic_net_direct",
+        lambda train_frame, steps, seed: elastic_net_point[:steps],
+    )
+
+    def fake_horizon_rmse_weights(horizons, path=ensemble.DYNAMIC_WEIGHTS_SOURCE_PATH):
+        requested["horizons"] = horizons
+        return {
+            1: (0.8, 0.2),
+            2: (0.25, 0.75),
+            3: (0.5, 0.5),
+        }
+
+    monkeypatch.setattr(ensemble, "horizon_rmse_weights", fake_horizon_rmse_weights)
+
+    forecast = ensemble.forecast_ensemble(frame, steps=3, weights=None, seed=123)
+
+    assert requested["horizons"] == (1, 2, 3)
+    np.testing.assert_array_equal(forecast, np.array([8.0, 80.0, 115.0]))
 
 
 def test_simulate_ensemble_paths_shape_seed_divergence_and_forecast_mean(monkeypatch):

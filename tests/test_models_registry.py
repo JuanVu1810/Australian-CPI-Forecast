@@ -98,7 +98,7 @@ def test_stale_shared_grid_report_raises_before_promotion_ranking(tmp_path):
         )
     )
 
-    with pytest.raises(RuntimeError, match="predates.*python -m src.models.elastic_net"):
+    with pytest.raises(RuntimeError, match="predates.*python -m src.models.model_comparison"):
         registry._ensure_shared_grid_report_fresh(client, [candidate], report_path)
 
 

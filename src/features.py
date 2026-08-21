@@ -52,6 +52,8 @@ def add_lag_features(
     result = df.copy()
     lag_map = lag_map or {
         "cpi_yoy": [1, 4],
+        # SARIMAX order search Group F intentionally uses lag-4 raw rate levels
+        # for long-horizon comparability, separate from change-based groups.
         "cash_rate": [1, 2, 4],
         "unemployment_rate": [1, 2, 4],
         "wpi_growth": [1, 2],

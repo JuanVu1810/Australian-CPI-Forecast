@@ -469,21 +469,13 @@ def _baseline_predictions(
         horizons=horizons,
         model_name="sarima",
     )
-    naive = model_evaluation.seasonal_naive_backtest(
+    baselines = model_evaluation.compute_baseline_predictions(
         series=series,
+        rba_path=rba_path,
         initial_train_size=initial_train_size,
         horizons=horizons,
     )
-    frames = [sarimax_predictions, sarima, naive]
-    if rba_path.exists():
-        rba = model_evaluation.align_rba_forecasts_to_grid(
-            pd.read_csv(rba_path),
-            sarimax_predictions,
-            horizons=horizons,
-        )
-        if not rba.empty:
-            frames.append(rba)
-    return frames
+    return [sarimax_predictions, sarima, baselines]
 
 
 def _development_split(

@@ -39,6 +39,25 @@ def test_growth_rates_create_rate_changes_as_percentage_point_differences():
     assert round(result.loc[2, "unemployment_rate_change"], 2) == -0.20
 
 
+def test_growth_rates_create_external_growth_and_exchange_rate_changes():
+    source = pd.DataFrame(
+        {
+            "quarter": ["2020Q1", "2020Q2", "2020Q3"],
+            "producer_price_index": [100.0, 105.0, 94.5],
+            "aud_usd": [0.7000, 0.7350, 0.6615],
+        }
+    )
+
+    result = add_growth_rates(source)
+
+    assert pd.isna(result.loc[0, "ppi_growth"])
+    assert round(result.loc[1, "ppi_growth"], 2) == 5.00
+    assert round(result.loc[2, "ppi_growth"], 2) == -10.00
+    assert pd.isna(result.loc[0, "aud_usd_change"])
+    assert round(result.loc[1, "aud_usd_change"], 2) == 5.00
+    assert round(result.loc[2, "aud_usd_change"], 2) == -10.00
+
+
 def test_lag_features_shift_values_forward_in_time():
     source = pd.DataFrame(
         {

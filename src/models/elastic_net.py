@@ -25,13 +25,12 @@ from src.models.evaluation import (
     PROJECT_ROOT,
     RBA_FORECAST_PATH,
     TrainWindowScaler,
-    align_rba_forecasts_to_grid,
+    compute_baseline_predictions,
     assert_consecutive_quarters,
     compute_metric_table,
     fit_train_window_scaler,
     load_target_series,
     restrict_to_common_grid,
-    seasonal_naive_backtest,
     walk_forward_backtest,
     walk_forward_backtest_direct_multihorizon,
 )
@@ -440,20 +439,13 @@ def run_elastic_net_comparison(
         horizons=requested_horizons,
         model_name="sarima",
     )
-    naive = seasonal_naive_backtest(
+    baselines = compute_baseline_predictions(
         series=series,
+        rba_path=rba_path,
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
     )
-    frames = [elastic_net_predictions, sarima, naive]
-    if rba_path.exists():
-        rba = align_rba_forecasts_to_grid(
-            pd.read_csv(rba_path),
-            elastic_net_predictions,
-            horizons=requested_horizons,
-        )
-        if not rba.empty:
-            frames.append(rba)
+    frames = [elastic_net_predictions, sarima, baselines]
 
     full_horizon_common = restrict_to_common_grid(frames)
     full_metrics = compute_metric_table(full_horizon_common)

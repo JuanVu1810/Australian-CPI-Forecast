@@ -20,7 +20,7 @@ REPORT_PATHS = {
     "sarima": Path("reports/model_comparison_sarima.csv"),
     "elastic_net": Path("reports/model_comparison_elastic_net.csv"),
 }
-SHARED_GRID_REPORT_PATH = REPORT_PATHS["elastic_net"]
+SHARED_GRID_REPORT_PATH = Path("reports/model_comparison_all.csv")
 MetricSource = Literal["mlflow", "report", "shared_grid_report"]
 
 
@@ -137,8 +137,6 @@ def _rank_candidates_on_shared_grid(
     candidates: list[Candidate],
     path: Path = SHARED_GRID_REPORT_PATH,
 ) -> Candidate:
-    # Elastic Net's report is the true origin intersection for current SARIMA/Elastic Net promotion.
-    # If a third eligible family is added later, this shared-grid source must be revisited.
     shared_grid_candidates = [
         _rank_candidate_on_shared_grid(candidate, path) for candidate in candidates
     ]
@@ -167,7 +165,7 @@ def _ensure_shared_grid_report_fresh(
             raise RuntimeError(
                 f"Shared-grid comparison report {path} predates the latest "
                 f"{candidate.family!r} MLflow candidate run {candidate.run_id}; rerun "
-                "python -m src.models.elastic_net before promoting a champion."
+                "python -m src.models.model_comparison before promoting a champion."
             )
 
 
@@ -202,7 +200,7 @@ def _logged_model_uri(client, run_id: str) -> str:
 def promote_champion() -> PromotionResult:
     """Promote the best eligible full-horizon family to MLflow ``@champion``.
 
-    The shared-grid report comes from ``python -m src.models.elastic_net``; rerun
+    The shared-grid report comes from ``python -m src.models.model_comparison``; rerun
     that comparison before promotion whenever SARIMA or Elastic Net specs change.
     """
     mlflow, client, experiment = _client_and_experiment()

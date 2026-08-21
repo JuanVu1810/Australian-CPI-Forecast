@@ -440,6 +440,31 @@ def seasonal_naive_backtest(
     )
 
 
+def compute_baseline_predictions(
+    series: pd.Series,
+    rba_path: Path,
+    initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
+    horizons: Iterable[int] = DEFAULT_HORIZONS,
+) -> pd.DataFrame:
+    """Compute shared seasonal-naive and RBA walk-forward baseline predictions."""
+    requested_horizons = tuple(int(horizon) for horizon in horizons)
+    seasonal_naive = seasonal_naive_backtest(
+        series=series,
+        initial_train_size=initial_train_size,
+        horizons=requested_horizons,
+    )
+    frames = [seasonal_naive]
+    if rba_path.exists():
+        rba = align_rba_forecasts_to_grid(
+            pd.read_csv(rba_path),
+            seasonal_naive,
+            horizons=requested_horizons,
+        )
+        if not rba.empty:
+            frames.append(rba)
+    return pd.concat(frames, ignore_index=True, sort=False)
+
+
 def align_rba_forecasts_to_grid(
     rba_forecasts: pd.DataFrame,
     forecast_grid: pd.DataFrame,
@@ -557,13 +582,13 @@ def run_sarima_comparison(
         horizons=horizons,
         model_name="sarima",
     )
-    naive = seasonal_naive_backtest(
-        target,
+    baselines = compute_baseline_predictions(
+        series=target,
+        rba_path=rba_path,
         initial_train_size=initial_train_size,
         horizons=horizons,
     )
-    rba = align_rba_forecasts_to_grid(pd.read_csv(rba_path), sarima, horizons=horizons)
-    common_predictions = restrict_to_common_grid([sarima, naive, rba])
+    common_predictions = restrict_to_common_grid([sarima, baselines])
     metrics = compute_metric_table(common_predictions)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
