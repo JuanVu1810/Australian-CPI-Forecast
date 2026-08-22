@@ -44,8 +44,22 @@ DirectMultihorizonForecastFunction = Callable[
     [pd.DataFrame, int],
     Sequence[float] | pd.Series | np.ndarray,
 ]
+IntervalSimulationFunction = Callable[..., np.ndarray]
 
 LAG_COLUMN_PATTERN = re.compile(r"_lag(\d+)$")
+INTERVAL_COVERAGE_COLUMNS = [
+    "model",
+    "forecast_origin",
+    "target_quarter",
+    "horizon",
+    "actual",
+    "point_forecast_proxy",
+    "interval_lower",
+    "interval_upper",
+    "hit",
+    "interval_width",
+    "nonconformity_score",
+]
 
 
 @dataclass(frozen=True)
@@ -112,6 +126,37 @@ def _normalise_quarter_columns(df: pd.DataFrame) -> pd.DataFrame:
     if "horizon" in result:
         result["horizon"] = result["horizon"].astype(int)
     return result
+
+
+def _validate_horizons(horizons: Iterable[int]) -> tuple[int, ...]:
+    requested_horizons = tuple(int(horizon) for horizon in horizons)
+    if not requested_horizons or min(requested_horizons) < 1:
+        raise ValueError("horizons must contain positive integers.")
+    return requested_horizons
+
+
+def _prepare_walk_forward_series(
+    series: pd.Series,
+    initial_train_size: int,
+    max_horizon: int,
+) -> pd.Series:
+    y = pd.Series(series).dropna().astype(float).sort_index()
+    if initial_train_size < 1:
+        raise ValueError("initial_train_size must be at least 1.")
+    if len(y) < initial_train_size + max_horizon:
+        raise ValueError("series is too short for the requested initial window and horizons.")
+    if y.index.has_duplicates:
+        raise ValueError("series index must not contain duplicate quarters.")
+    return y
+
+
+def _iter_expanding_origin_positions(
+    series: pd.Series,
+    initial_train_size: int,
+    max_horizon: int,
+):
+    for origin_pos in range(initial_train_size - 1, len(series) - max_horizon):
+        yield origin_pos
 
 
 def infer_min_lag_from_columns(columns: Iterable[str]) -> int:
@@ -187,21 +232,12 @@ def walk_forward_backtest(
     model_name: str = "model",
 ) -> pd.DataFrame:
     """Run an expanding-window rolling-origin backtest over fixed horizons."""
-    horizons = tuple(int(horizon) for horizon in horizons)
-    if not horizons or min(horizons) < 1:
-        raise ValueError("horizons must contain positive integers.")
-
-    y = pd.Series(series).dropna().astype(float).sort_index()
+    horizons = _validate_horizons(horizons)
     max_horizon = max(horizons)
-    if initial_train_size < 1:
-        raise ValueError("initial_train_size must be at least 1.")
-    if len(y) < initial_train_size + max_horizon:
-        raise ValueError("series is too short for the requested initial window and horizons.")
-    if y.index.has_duplicates:
-        raise ValueError("series index must not contain duplicate quarters.")
+    y = _prepare_walk_forward_series(series, initial_train_size, max_horizon)
 
     rows: list[dict[str, object]] = []
-    for origin_pos in range(initial_train_size - 1, len(y) - max_horizon):
+    for origin_pos in _iter_expanding_origin_positions(y, initial_train_size, max_horizon):
         train = y.iloc[: origin_pos + 1]
         raw_forecast = forecast_func(train, max_horizon)
         forecast_values = np.asarray(pd.Series(raw_forecast), dtype=float)
@@ -246,9 +282,7 @@ def walk_forward_backtest_with_exog(
     at ``origin + 3`` would require a future cash-rate value. This harness
     therefore evaluates only horizons up to the minimum lag in the feature set.
     """
-    requested_horizons = tuple(int(horizon) for horizon in horizons)
-    if not requested_horizons or min(requested_horizons) < 1:
-        raise ValueError("horizons must contain positive integers.")
+    requested_horizons = _validate_horizons(horizons)
 
     x = _coerce_quarter_index(pd.DataFrame(exog))
     if x.empty:
@@ -273,17 +307,11 @@ def walk_forward_backtest_with_exog(
             ]
         )
 
-    y = pd.Series(series).dropna().astype(float).sort_index()
     max_horizon = max(capped_horizons)
-    if initial_train_size < 1:
-        raise ValueError("initial_train_size must be at least 1.")
-    if len(y) < initial_train_size + max_horizon:
-        raise ValueError("series is too short for the requested initial window and horizons.")
-    if y.index.has_duplicates:
-        raise ValueError("series index must not contain duplicate quarters.")
+    y = _prepare_walk_forward_series(series, initial_train_size, max_horizon)
 
     rows: list[dict[str, object]] = []
-    for origin_pos in range(initial_train_size - 1, len(y) - max_horizon):
+    for origin_pos in _iter_expanding_origin_positions(y, initial_train_size, max_horizon):
         train_y_raw = y.iloc[: origin_pos + 1]
         train_exog_raw = x.reindex(train_y_raw.index)
         train_frame = pd.concat(
@@ -352,9 +380,7 @@ def walk_forward_backtest_direct_multihorizon(
     so hyperparameters are never selected using the same origins they are
     ultimately reported against.
     """
-    requested_horizons = tuple(int(horizon) for horizon in horizons)
-    if not requested_horizons or min(requested_horizons) < 1:
-        raise ValueError("horizons must contain positive integers.")
+    requested_horizons = _validate_horizons(horizons)
     if initial_train_size < 1:
         raise ValueError("initial_train_size must be at least 1.")
     if max_origins is not None and max_origins < 1:
@@ -362,23 +388,19 @@ def walk_forward_backtest_direct_multihorizon(
     if skip_origins < 0:
         raise ValueError("skip_origins must be at least 0.")
 
-    y = pd.Series(series).dropna().astype(float).sort_index()
     x = _coerce_quarter_index(pd.DataFrame(exog))
     if x.empty:
         raise ValueError("exog must contain at least one column.")
-    if y.index.has_duplicates:
-        raise ValueError("series index must not contain duplicate quarters.")
     if x.index.has_duplicates:
         raise ValueError("exog index must not contain duplicate quarters.")
 
     max_horizon = max(requested_horizons)
-    if len(y) < initial_train_size + max_horizon:
-        raise ValueError("series is too short for the requested initial window and horizons.")
+    y = _prepare_walk_forward_series(series, initial_train_size, max_horizon)
 
     rows: list[dict[str, object]] = []
     completed_origins = 0
     skipped_origins = 0
-    for origin_pos in range(initial_train_size - 1, len(y) - max_horizon):
+    for origin_pos in _iter_expanding_origin_positions(y, initial_train_size, max_horizon):
         train_y_raw = y.iloc[: origin_pos + 1]
         train_exog_raw = x.reindex(train_y_raw.index)
         train_frame = pd.concat(
@@ -421,6 +443,154 @@ def walk_forward_backtest_direct_multihorizon(
             break
 
     return pd.DataFrame(rows)
+
+
+def walk_forward_interval_coverage_backtest(
+    series: pd.Series,
+    simulate_func: IntervalSimulationFunction,
+    initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
+    horizons: Iterable[int] = DEFAULT_HORIZONS,
+    model_name: str = "model",
+    lower_quantile: float = 0.1,
+    upper_quantile: float = 0.9,
+    n_sims: int = 1000,
+    seed: int = 42,
+    exog: pd.DataFrame | None = None,
+    training_data: str = "series",
+    target_column: str = TARGET_COLUMN,
+    horizon_cap: int | None = None,
+    max_origins: int | None = None,
+    skip_origins: int = 0,
+) -> pd.DataFrame:
+    """Backtest forecast interval coverage over expanding walk-forward origins.
+
+    ``training_data`` controls the adapter shape for model-specific simulators:
+    ``"series"`` calls ``simulate_func(train_series, steps=..., n_sims=..., seed=...)``;
+    ``"frame"`` calls ``simulate_func(train_frame, steps=..., n_sims=..., seed=...)``;
+    and ``"series_exog"`` calls
+    ``simulate_func(train_series, train_exog, steps=..., n_sims=..., seed=...)``.
+    """
+    requested_horizons = _validate_horizons(horizons)
+    if not 0 <= lower_quantile < upper_quantile <= 1:
+        raise ValueError("lower_quantile and upper_quantile must satisfy 0 <= lower < upper <= 1.")
+    if n_sims < 1:
+        raise ValueError("n_sims must be at least 1.")
+    if max_origins is not None and max_origins < 1:
+        raise ValueError("max_origins must be at least 1 when supplied.")
+    if skip_origins < 0:
+        raise ValueError("skip_origins must be at least 0.")
+    if training_data not in {"series", "frame", "series_exog"}:
+        raise ValueError("training_data must be one of: 'series', 'frame', 'series_exog'.")
+
+    cap = max(requested_horizons) if horizon_cap is None else int(horizon_cap)
+    capped_horizons = tuple(horizon for horizon in requested_horizons if horizon <= cap)
+    if not capped_horizons:
+        return pd.DataFrame(columns=INTERVAL_COVERAGE_COLUMNS)
+
+    max_horizon = max(capped_horizons)
+    y = _prepare_walk_forward_series(series, initial_train_size, max_horizon)
+    x: pd.DataFrame | None = None
+    if training_data in {"frame", "series_exog"}:
+        if exog is None:
+            raise ValueError(f"exog is required when training_data={training_data!r}.")
+        x = _coerce_quarter_index(pd.DataFrame(exog))
+        if x.empty:
+            raise ValueError("exog must contain at least one column.")
+        if x.index.has_duplicates:
+            raise ValueError("exog index must not contain duplicate quarters.")
+
+    from src.models.ensemble import ensemble_interval_from_paths
+
+    rows: list[dict[str, object]] = []
+    completed_origins = 0
+    skipped_origins = 0
+    for origin_pos in _iter_expanding_origin_positions(y, initial_train_size, max_horizon):
+        train_y_raw = y.iloc[: origin_pos + 1]
+        train_y = train_y_raw
+        train_exog: pd.DataFrame | None = None
+        train_frame: pd.DataFrame | None = None
+        if x is not None:
+            train_exog_raw = x.reindex(train_y_raw.index)
+            train_frame = pd.concat(
+                [train_y_raw.rename(target_column), train_exog_raw],
+                axis=1,
+            ).dropna()
+            if len(train_frame) < initial_train_size:
+                continue
+            train_y = train_frame[target_column]
+            train_exog = train_frame.drop(columns=target_column)
+
+        if skipped_origins < skip_origins:
+            skipped_origins += 1
+            continue
+
+        origin_seed = seed + completed_origins
+        if training_data == "series":
+            paths = simulate_func(train_y, steps=max_horizon, n_sims=n_sims, seed=origin_seed)
+        elif training_data == "frame":
+            if train_frame is None:
+                raise RuntimeError("internal error: train_frame was not built.")
+            paths = simulate_func(train_frame, steps=max_horizon, n_sims=n_sims, seed=origin_seed)
+        else:
+            if train_exog is None:
+                raise RuntimeError("internal error: train_exog was not built.")
+            paths = simulate_func(
+                train_y,
+                train_exog,
+                steps=max_horizon,
+                n_sims=n_sims,
+                seed=origin_seed,
+            )
+
+        path_values = np.asarray(paths, dtype=float)
+        if path_values.ndim != 2:
+            raise ValueError("simulate_func must return a 2D array with shape (n_sims, steps).")
+        if path_values.shape[0] < n_sims or path_values.shape[1] < max_horizon:
+            raise ValueError("simulate_func returned fewer simulations or steps than requested.")
+        if not np.isfinite(path_values[:, :max_horizon]).all():
+            raise ValueError("simulate_func returned non-finite path values.")
+
+        lower_values, upper_values = ensemble_interval_from_paths(
+            path_values[:, :max_horizon],
+            lower=lower_quantile,
+            upper=upper_quantile,
+        )
+        point_values = np.median(path_values[:, :max_horizon], axis=0)
+        forecast_origin = y.index[origin_pos]
+        for horizon in capped_horizons:
+            target_pos = origin_pos + horizon
+            actual = float(y.iloc[target_pos])
+            point_forecast_proxy = float(point_values[horizon - 1])
+            interval_lower = float(lower_values[horizon - 1])
+            interval_upper = float(upper_values[horizon - 1])
+            interval_width = interval_upper - interval_lower
+            half_width = interval_width / 2.0
+            nonconformity_score = (
+                np.inf
+                if np.isclose(half_width, 0.0)
+                else abs(actual - point_forecast_proxy) / half_width
+            )
+            rows.append(
+                {
+                    "model": model_name,
+                    "forecast_origin": forecast_origin,
+                    "target_quarter": y.index[target_pos],
+                    "horizon": horizon,
+                    "actual": actual,
+                    "point_forecast_proxy": point_forecast_proxy,
+                    "interval_lower": interval_lower,
+                    "interval_upper": interval_upper,
+                    "hit": bool(interval_lower <= actual <= interval_upper),
+                    "interval_width": interval_width,
+                    "nonconformity_score": float(nonconformity_score),
+                }
+            )
+
+        completed_origins += 1
+        if max_origins is not None and completed_origins >= max_origins:
+            break
+
+    return pd.DataFrame(rows, columns=INTERVAL_COVERAGE_COLUMNS)
 
 
 def seasonal_naive_backtest(
@@ -555,6 +725,111 @@ def compute_metric_table(predictions: pd.DataFrame) -> pd.DataFrame:
         lambda horizon: 0 if horizon == "overall" else int(horizon)
     )
     return metrics.sort_values(["model", "_horizon_order"]).drop(columns="_horizon_order")
+
+
+def compute_interval_coverage_table(
+    predictions: pd.DataFrame,
+    lower_quantile: float = 0.1,
+    upper_quantile: float = 0.9,
+    confidence_level: float = 0.95,
+) -> pd.DataFrame:
+    """Compute empirical interval coverage overall and by forecast horizon."""
+    from scipy.stats import binomtest
+
+    required_columns = {"model", "horizon", "hit", "interval_width"}
+    missing = required_columns.difference(predictions.columns)
+    if missing:
+        raise ValueError(f"interval predictions missing required columns: {sorted(missing)}")
+    if not 0 <= lower_quantile < upper_quantile <= 1:
+        raise ValueError("lower_quantile and upper_quantile must satisfy 0 <= lower < upper <= 1.")
+    if not 0 < confidence_level < 1:
+        raise ValueError("confidence_level must satisfy 0 < confidence_level < 1.")
+
+    nominal_coverage = float(upper_quantile - lower_quantile)
+    alpha = 1.0 - confidence_level
+
+    def summarise(group: pd.DataFrame, horizon: str | int) -> dict[str, object]:
+        hits = group["hit"].astype(bool)
+        widths = group["interval_width"].astype(float)
+        hit_count = int(hits.sum())
+        n = int(hits.notna().sum())
+        test = binomtest(hit_count, n=n, p=nominal_coverage)
+        ci = test.proportion_ci(confidence_level=confidence_level, method="exact")
+        return {
+            "model": group["model"].iloc[0],
+            "horizon": horizon,
+            "n": n,
+            "nominal_coverage": nominal_coverage,
+            "empirical_coverage": float(hits.mean()),
+            "coverage_ci_lower": float(ci.low),
+            "coverage_ci_upper": float(ci.high),
+            "binom_p_value": float(test.pvalue),
+            "significantly_miscalibrated": bool(test.pvalue < alpha),
+            "mean_interval_width": float(widths.mean()),
+        }
+
+    rows: list[dict[str, object]] = []
+    clean = predictions.dropna(subset=["hit", "interval_width"]).copy()
+    for model, model_rows in clean.groupby("model", sort=True):
+        rows.append(summarise(model_rows, "overall"))
+        for horizon, horizon_rows in model_rows.groupby("horizon", sort=True):
+            rows.append(summarise(horizon_rows, int(horizon)))
+
+    coverage = pd.DataFrame(rows)
+    if coverage.empty:
+        return pd.DataFrame(
+            columns=[
+                "model",
+                "horizon",
+                "n",
+                "nominal_coverage",
+                "empirical_coverage",
+                "coverage_ci_lower",
+                "coverage_ci_upper",
+                "binom_p_value",
+                "significantly_miscalibrated",
+                "mean_interval_width",
+            ]
+        )
+    coverage["_horizon_order"] = coverage["horizon"].map(
+        lambda horizon: 0 if horizon == "overall" else int(horizon)
+    )
+    return coverage.sort_values(["model", "_horizon_order"]).drop(columns="_horizon_order")
+
+
+def compute_conformal_scale_factors(
+    predictions: pd.DataFrame,
+    target_coverage: float,
+) -> pd.DataFrame:
+    """Estimate multiplicative interval half-width scale factors by model+horizon."""
+    required_columns = {"model", "horizon", "nonconformity_score"}
+    missing = required_columns.difference(predictions.columns)
+    if missing:
+        raise ValueError(f"interval predictions missing required columns: {sorted(missing)}")
+    if not 0 < target_coverage < 1:
+        raise ValueError("target_coverage must satisfy 0 < target_coverage < 1.")
+
+    rows: list[dict[str, object]] = []
+    clean = predictions.dropna(subset=["nonconformity_score"]).copy()
+    for (model, horizon), group in clean.groupby(["model", "horizon"], sort=True):
+        scores = group["nonconformity_score"].astype(float).to_numpy()
+        rows.append(
+            {
+                "model": str(model),
+                "horizon": int(horizon),
+                "n": int(len(scores)),
+                "target_coverage": float(target_coverage),
+                "scale_factor": float(np.quantile(scores, target_coverage)),
+            }
+        )
+
+    factors = pd.DataFrame(
+        rows,
+        columns=["model", "horizon", "n", "target_coverage", "scale_factor"],
+    )
+    if factors.empty:
+        return factors
+    return factors.sort_values(["model", "horizon"]).reset_index(drop=True)
 
 
 def run_sarima_comparison(

@@ -401,7 +401,18 @@ GET  /metrics
 GET  /features
 GET  /models
 POST /forecast
+POST /forecast/all
 ```
+
+`POST /forecast/all` includes empirical interval-coverage diagnostics from
+`reports/model_interval_calibration_validation.csv` only for the validated
+10th-90th percentile interval. The served default intervals apply the static
+calibration factors in `reports/model_interval_calibration_factors.csv` when
+available; the coverage diagnostics describe held-out validation performance
+for the calibrated intervals currently returned by the API. On the current
+held-out validation slice, elastic_net, ensemble, and sarima remain below
+nominal 80% coverage after calibration, while sarimax_group_d is the one
+family that reaches nominal coverage post-calibration.
 
 Implemented Streamlit pages: Overview, Data Explorer, EDA Dashboard. Planned
 Streamlit pages: Forecasting Interface (model/horizon/feature selection with

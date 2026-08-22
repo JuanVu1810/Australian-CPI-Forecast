@@ -5,10 +5,13 @@ from src.models import model_comparison
 from src.models.evaluation import (
     align_rba_forecasts_to_grid,
     compute_baseline_predictions,
+    compute_conformal_scale_factors,
+    compute_interval_coverage_table,
     compute_metric_table,
     seasonal_naive_forecast,
     walk_forward_backtest,
     walk_forward_backtest_direct_multihorizon,
+    walk_forward_interval_coverage_backtest,
 )
 
 
@@ -176,6 +179,127 @@ def test_compute_metric_table_returns_overall_and_horizon_rows():
     assert round(a_overall["rmse"], 6) == round(np.sqrt(5), 6)
     assert a_overall["mae"] == 2.0
     assert set(table["horizon"]) == {"overall", 1, 2}
+
+
+def test_walk_forward_interval_coverage_records_hits_and_widths_deterministically():
+    series = pd.Series(
+        np.arange(1, 9, dtype=float),
+        index=pd.period_range("2020Q1", periods=8, freq="Q"),
+        name="cpi_yoy",
+    )
+    calls = []
+
+    def simulator(train, steps, n_sims, seed):
+        calls.append((len(train), train.index[-1], steps, n_sims, seed))
+        latest = float(train.iloc[-1])
+        columns = []
+        for horizon in range(1, steps + 1):
+            actual = latest + horizon
+            if horizon == 1:
+                columns.append(np.linspace(actual - 1.0, actual + 1.0, n_sims))
+            else:
+                columns.append(np.linspace(actual + 10.0, actual + 12.0, n_sims))
+        return np.column_stack(columns)
+
+    result = walk_forward_interval_coverage_backtest(
+        series=series,
+        simulate_func=simulator,
+        initial_train_size=4,
+        horizons=(1, 2),
+        model_name="synthetic",
+        lower_quantile=0.0,
+        upper_quantile=1.0,
+        n_sims=5,
+        seed=99,
+    )
+
+    assert calls == [
+        (4, pd.Period("2020Q4", freq="Q"), 2, 5, 99),
+        (5, pd.Period("2021Q1", freq="Q"), 2, 5, 100),
+        (6, pd.Period("2021Q2", freq="Q"), 2, 5, 101),
+    ]
+    assert result["horizon"].tolist() == [1, 2, 1, 2, 1, 2]
+    assert result["hit"].tolist() == [True, False, True, False, True, False]
+    np.testing.assert_allclose(result["interval_width"], np.repeat(2.0, 6))
+    np.testing.assert_allclose(result["point_forecast_proxy"], [5.0, 17.0, 6.0, 18.0, 7.0, 19.0])
+    np.testing.assert_allclose(result["nonconformity_score"], [0.0, 11.0, 0.0, 11.0, 0.0, 11.0])
+    assert result["forecast_origin"].iloc[0] == pd.Period("2020Q4", freq="Q")
+    assert result["target_quarter"].iloc[1] == pd.Period("2021Q2", freq="Q")
+
+
+def test_compute_conformal_scale_factors_returns_target_quantile_by_model_horizon():
+    predictions = pd.DataFrame(
+        {
+            "model": ["a", "a", "a", "a", "b", "b"],
+            "horizon": [1, 1, 1, 2, 1, 1],
+            "nonconformity_score": [0.5, 1.0, 1.5, 3.0, 2.0, 4.0],
+        }
+    )
+
+    factors = compute_conformal_scale_factors(predictions, target_coverage=0.8)
+
+    a_h1 = factors.loc[(factors["model"].eq("a")) & (factors["horizon"].eq(1))].iloc[0]
+    assert a_h1["n"] == 3
+    assert a_h1["target_coverage"] == 0.8
+    assert a_h1["scale_factor"] == 1.3
+
+    a_h2 = factors.loc[(factors["model"].eq("a")) & (factors["horizon"].eq(2))].iloc[0]
+    assert a_h2["scale_factor"] == 3.0
+
+    b_h1 = factors.loc[(factors["model"].eq("b")) & (factors["horizon"].eq(1))].iloc[0]
+    assert b_h1["scale_factor"] == 3.6
+
+
+def test_compute_interval_coverage_table_returns_overall_and_horizon_rows():
+    predictions = pd.DataFrame(
+        {
+            "model": ["a", "a", "a", "a", "b", "b"],
+            "horizon": [1, 1, 2, 2, 1, 2],
+            "hit": [True, False, False, False, True, True],
+            "interval_width": [1.0, 3.0, 5.0, 7.0, 2.0, 4.0],
+        }
+    )
+
+    table = compute_interval_coverage_table(predictions)
+
+    a_overall = table.loc[(table["model"] == "a") & (table["horizon"] == "overall")].iloc[0]
+    assert a_overall["n"] == 4
+    assert a_overall["nominal_coverage"] == 0.8
+    assert a_overall["empirical_coverage"] == 0.25
+    assert a_overall["mean_interval_width"] == 4.0
+
+    a_h1 = table.loc[(table["model"] == "a") & (table["horizon"] == 1)].iloc[0]
+    assert a_h1["empirical_coverage"] == 0.5
+    assert a_h1["mean_interval_width"] == 2.0
+    assert table["horizon"].tolist() == ["overall", 1, 2, "overall", 1, 2]
+    assert {
+        "coverage_ci_lower",
+        "coverage_ci_upper",
+        "binom_p_value",
+        "significantly_miscalibrated",
+    }.issubset(table.columns)
+
+    exact_case = pd.DataFrame(
+        {
+            "model": ["c", "c", "c", "c"],
+            "horizon": [1, 1, 1, 1],
+            "hit": [False, False, False, False],
+            "interval_width": [1.0, 1.0, 1.0, 1.0],
+        }
+    )
+    exact_table = compute_interval_coverage_table(
+        exact_case,
+        lower_quantile=0.25,
+        upper_quantile=0.75,
+    )
+    exact_overall = exact_table.loc[exact_table["horizon"].eq("overall")].iloc[0]
+    expected_upper = 1.0 - (0.05 / 2.0) ** (1.0 / 4.0)
+    assert exact_overall["nominal_coverage"] == 0.5
+    assert exact_overall["empirical_coverage"] == 0.0
+    assert exact_overall["coverage_ci_lower"] == 0.0
+    assert round(exact_overall["coverage_ci_upper"], 12) == round(expected_upper, 12)
+    assert exact_overall["binom_p_value"] == 0.125
+    assert not exact_overall["significantly_miscalibrated"]
 
 
 def test_joined_model_comparison_keeps_sarimax_on_real_horizon_only():
