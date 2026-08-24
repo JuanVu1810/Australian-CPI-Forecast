@@ -11,12 +11,8 @@ DEFAULT_INTERVENTION_TABLE_PATH = Path("data/metadata/intervention_quarters.csv"
 
 
 def add_growth_rates(df: pd.DataFrame) -> pd.DataFrame:
-    """Add CPI inflation, external growth-rate, and rate-change features."""
+    """Add external growth-rate and rate-change features."""
     result = df.copy()
-
-    if "cpi_index" in result:
-        result["cpi_qoq"] = result["cpi_index"].pct_change(1) * 100
-        result["cpi_yoy"] = result["cpi_index"].pct_change(4) * 100
 
     growth_specs = {
         "wage_price_index": "wpi_growth",
@@ -52,6 +48,7 @@ def add_lag_features(
     result = df.copy()
     lag_map = lag_map or {
         "cpi_yoy": [1, 4],
+        "trimmed_mean_cpi_yoy": [1, 4],
         # SARIMAX order search Group F intentionally uses lag-4 raw rate levels
         # for long-horizon comparability, separate from change-based groups.
         "cash_rate": [1, 2, 4],
@@ -126,9 +123,10 @@ def order_feature_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Place target and high-signal modelling columns before optional extras."""
     preferred = [
         "quarter",
-        "cpi_index",
         "cpi_qoq",
         "cpi_yoy",
+        "trimmed_mean_cpi_qoq",
+        "trimmed_mean_cpi_yoy",
         "unemployment_rate",
         "unemployment_rate_change",
         "cash_rate",

@@ -53,10 +53,31 @@ class SeriesSpec:
 
 SERIES_SPECS = [
     SeriesSpec(
-        name="cpi_index",
-        path=Path("dataset/abs/cpi_index_1995_2025.csv"),
-        value_col="cpi_index",
-        output_col="cpi_index",
+        name="cpi_qoq",
+        path=Path("dataset/abs/cpi_qoq_1995_2025.csv"),
+        value_col="cpi_qoq",
+        output_col="cpi_qoq",
+        agg="last",
+    ),
+    SeriesSpec(
+        name="cpi_yoy",
+        path=Path("dataset/abs/cpi_yoy_1995_2025.csv"),
+        value_col="cpi_yoy",
+        output_col="cpi_yoy",
+        agg="last",
+    ),
+    SeriesSpec(
+        name="trimmed_mean_cpi_qoq",
+        path=Path("dataset/abs/trimmed_mean_cpi_qoq_1995_2025.csv"),
+        value_col="trimmed_mean_cpi_qoq",
+        output_col="trimmed_mean_cpi_qoq",
+        agg="last",
+    ),
+    SeriesSpec(
+        name="trimmed_mean_cpi_yoy",
+        path=Path("dataset/abs/trimmed_mean_cpi_yoy_1995_2025.csv"),
+        value_col="trimmed_mean_cpi_yoy",
+        output_col="trimmed_mean_cpi_yoy",
         agg="last",
     ),
     SeriesSpec(

@@ -15,7 +15,7 @@ CURATED_DATA_PATH = PROJECT_ROOT / "data/curated/quarterly_macro_features.csv"
 @st.cache_data
 def load_curated_data() -> pd.DataFrame:
     df = pd.read_csv(CURATED_DATA_PATH)
-    df["quarter_date"] = pd.PeriodIndex(df["quarter"], freq="Q").to_timestamp(how="end")
+    df["quarter_date"] = pd.PeriodIndex(df["quarter"], freq="Q").to_timestamp(how="end").normalize()
     return df
 
 
@@ -35,8 +35,8 @@ metric_cols[2].metric("End", df["quarter"].iloc[-1])
 latest_cpi_yoy = df["cpi_yoy"].dropna().iloc[-1]
 metric_cols[3].metric("Latest CPI YoY", f"{latest_cpi_yoy:.2f}%")
 
-st.subheader("CPI Index And YoY Inflation")
+st.subheader("CPI YoY Inflation")
 st.line_chart(
-    df.set_index("quarter_date")[["cpi_index", "cpi_yoy"]],
+    df.set_index("quarter_date")[["cpi_yoy"]],
     height=340,
 )

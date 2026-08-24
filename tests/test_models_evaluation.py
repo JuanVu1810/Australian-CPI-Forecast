@@ -349,6 +349,35 @@ def test_joined_model_comparison_keeps_sarimax_on_real_horizon_only():
     assert set(overall_rows["best_model"]) == {"elastic_net"}
 
 
+def test_build_backtest_predictions_table_stacks_all_models_with_extras_preserved():
+    sarima = _comparison_prediction_frame("sarima", {1: 1.0, 2: 2.0})
+    elastic_net = _comparison_prediction_frame("elastic_net", {1: 0.5})
+    rba = _comparison_prediction_frame("rba", {1: 0.2})
+    rba["rba_actual"] = rba["actual"]
+    rba["rba_reported_error"] = rba["error"]
+    sarimax = _comparison_prediction_frame("sarimax", {1: 0.1})
+    sarimax["horizon_cap"] = 1
+
+    table = model_comparison.build_backtest_predictions_table(
+        [sarima, elastic_net, rba, sarimax]
+    )
+
+    assert list(table.columns) == model_comparison.PREDICTIONS_COLUMNS
+    assert len(table) == len(sarima) + len(elastic_net) + len(rba) + len(sarimax)
+    # Rows are ordered by MODEL_ORDER (sarima, elastic_net, ..., sarimax, ..., rba).
+    assert list(table["model"].unique()) == ["sarima", "elastic_net", "sarimax", "rba"]
+
+    elastic_net_rows = table.loc[table["model"].eq("elastic_net")]
+    assert elastic_net_rows["rba_actual"].isna().all()
+    assert elastic_net_rows["horizon_cap"].isna().all()
+
+    rba_rows = table.loc[table["model"].eq("rba")]
+    assert (rba_rows["rba_actual"] == rba_rows["actual"]).all()
+
+    sarimax_rows = table.loc[table["model"].eq("sarimax")]
+    assert (sarimax_rows["horizon_cap"] == 1).all()
+
+
 def test_skip_origins_produces_a_chronologically_disjoint_origin_set():
     series = pd.Series(
         np.arange(1, 26, dtype=float),

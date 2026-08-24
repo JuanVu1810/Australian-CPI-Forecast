@@ -30,15 +30,38 @@ import yfinance as yf
 # Exact ABS series are used so the script does not download and save every
 # series in each catalogue. These identify the intended Australia-wide series.
 ABS_SERIES: dict[str, dict[str, str]] = {
-    "cpi_index": {
+    "cpi_qoq": {
         "catalogue": "6401.0",
-        "series_id": "A2325846C",
-        # Since the ABS moved quarterly CPI to Table 17, the CPI landing page
-        # also contains a conversion-factor workbook without a standard
-        # time-series "Index" sheet. Restricting readabs to 6401017 avoids
-        # parsing that auxiliary workbook.
-        "single_excel_only": "6401017",
-        "title": "Consumer Price Index: All groups CPI, Australia, quarterly",
+        "series_id": "A3604507J",
+        "single_excel_only": "64010Appendix1a",
+        "title": (
+            "Consumer Price Index: All groups CPI, seasonally adjusted, "
+            "quarterly percentage change"
+        ),
+    },
+    "cpi_yoy": {
+        "catalogue": "6401.0",
+        "series_id": "A3604508K",
+        "single_excel_only": "64010Appendix1a",
+        "title": (
+            "Consumer Price Index: All groups CPI, seasonally adjusted, "
+            "year-ended percentage change"
+        ),
+    },
+    # Trimmed mean quarters near the October 2025 CPI compilation transition
+    # may differ from contemporaneous ABS headline prints as the continuing
+    # pre-October-2025-basis analytical series is revised.
+    "trimmed_mean_cpi_qoq": {
+        "catalogue": "6401.0",
+        "series_id": "A3604510W",
+        "single_excel_only": "64010Appendix1a",
+        "title": "Consumer Price Index: Trimmed Mean, quarterly percentage change",
+    },
+    "trimmed_mean_cpi_yoy": {
+        "catalogue": "6401.0",
+        "series_id": "A3604511X",
+        "single_excel_only": "64010Appendix1a",
+        "title": "Consumer Price Index: Trimmed Mean, year-ended percentage change",
     },
     "unemployment_rate": {
         "catalogue": "6202.0",

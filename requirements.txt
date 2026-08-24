@@ -12,6 +12,8 @@ fastapi
 uvicorn
 pydantic
 streamlit
+altair
+requests
 mlflow
 duckdb
 google-cloud-bigquery

@@ -15,5 +15,6 @@ st.markdown(
     - Overview
     - Data Explorer
     - EDA Dashboard
+    - Forecasts
     """
 )

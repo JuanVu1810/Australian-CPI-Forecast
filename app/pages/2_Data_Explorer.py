@@ -16,7 +16,7 @@ QUALITY_REPORT_PATH = PROJECT_ROOT / "reports/data_quality_report.csv"
 @st.cache_data
 def load_curated_data() -> pd.DataFrame:
     df = pd.read_csv(CURATED_DATA_PATH)
-    df["quarter_date"] = pd.PeriodIndex(df["quarter"], freq="Q").to_timestamp(how="end")
+    df["quarter_date"] = pd.PeriodIndex(df["quarter"], freq="Q").to_timestamp(how="end").normalize()
     return df
 
 

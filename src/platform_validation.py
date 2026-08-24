@@ -39,7 +39,6 @@ def validate_curated_with_pandera(df: pd.DataFrame) -> QualityRecord:
     schema = pa.DataFrameSchema(
         {
             "quarter": Column(str, checks=Check(lambda s: s.is_unique)),
-            "cpi_index": Column(float, nullable=False),
             "cpi_qoq": Column(float, nullable=True),
             "cpi_yoy": Column(float, nullable=True),
         },

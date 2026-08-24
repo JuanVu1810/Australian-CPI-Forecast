@@ -1,8 +1,8 @@
 {
-  "downloaded_at_utc": "2026-08-14T13:55:05.624284+00:00",
+  "downloaded_at_utc": "2026-08-24T15:00:29.488698+00:00",
   "python_version": "3.11.15 (main, Jun 11 2026, 15:20:16) [GCC 14.3.0]",
   "packages": {
-    "pandas": "3.0.5",
+    "pandas": "2.3.3",
     "readabs": "0.2.5",
     "yfinance": "1.5.2"
   },
@@ -10,21 +10,123 @@
   "end_year": 2025,
   "abs": [
     {
-      "variable": "cpi_index",
+      "variable": "cpi_qoq",
       "catalogue": "6401.0",
-      "series_id": "A2325846C",
-      "single_excel_only": "6401017",
-      "title": "Consumer Price Index: All groups CPI, Australia, quarterly",
+      "series_id": "A3604507J",
+      "single_excel_only": "64010Appendix1a",
+      "title": "Consumer Price Index: All groups CPI, seasonally adjusted, quarterly percentage change",
       "data": {
-        "file": "dataset/abs/cpi_index_1995_2025.csv",
+        "file": "dataset/abs/cpi_qoq_1995_2025.csv",
         "rows": 124,
         "columns": [
           "date",
-          "cpi_index"
+          "cpi_qoq"
         ]
       },
       "metadata": {
-        "file": "dataset/abs/cpi_index_metadata.csv",
+        "file": "dataset/abs/cpi_qoq_metadata.csv",
+        "rows": 1,
+        "columns": [
+          "Data Item Description",
+          "Series Type",
+          "Series ID",
+          "Series Start",
+          "Series End",
+          "No. Obs.",
+          "Unit",
+          "Data Type",
+          "Freq.",
+          "Collection Month",
+          "Table",
+          "Table Description",
+          "Catalogue number"
+        ]
+      }
+    },
+    {
+      "variable": "cpi_yoy",
+      "catalogue": "6401.0",
+      "series_id": "A3604508K",
+      "single_excel_only": "64010Appendix1a",
+      "title": "Consumer Price Index: All groups CPI, seasonally adjusted, year-ended percentage change",
+      "data": {
+        "file": "dataset/abs/cpi_yoy_1995_2025.csv",
+        "rows": 124,
+        "columns": [
+          "date",
+          "cpi_yoy"
+        ]
+      },
+      "metadata": {
+        "file": "dataset/abs/cpi_yoy_metadata.csv",
+        "rows": 1,
+        "columns": [
+          "Data Item Description",
+          "Series Type",
+          "Series ID",
+          "Series Start",
+          "Series End",
+          "No. Obs.",
+          "Unit",
+          "Data Type",
+          "Freq.",
+          "Collection Month",
+          "Table",
+          "Table Description",
+          "Catalogue number"
+        ]
+      }
+    },
+    {
+      "variable": "trimmed_mean_cpi_qoq",
+      "catalogue": "6401.0",
+      "series_id": "A3604510W",
+      "single_excel_only": "64010Appendix1a",
+      "title": "Consumer Price Index: Trimmed Mean, quarterly percentage change",
+      "data": {
+        "file": "dataset/abs/trimmed_mean_cpi_qoq_1995_2025.csv",
+        "rows": 124,
+        "columns": [
+          "date",
+          "trimmed_mean_cpi_qoq"
+        ]
+      },
+      "metadata": {
+        "file": "dataset/abs/trimmed_mean_cpi_qoq_metadata.csv",
+        "rows": 1,
+        "columns": [
+          "Data Item Description",
+          "Series Type",
+          "Series ID",
+          "Series Start",
+          "Series End",
+          "No. Obs.",
+          "Unit",
+          "Data Type",
+          "Freq.",
+          "Collection Month",
+          "Table",
+          "Table Description",
+          "Catalogue number"
+        ]
+      }
+    },
+    {
+      "variable": "trimmed_mean_cpi_yoy",
+      "catalogue": "6401.0",
+      "series_id": "A3604511X",
+      "single_excel_only": "64010Appendix1a",
+      "title": "Consumer Price Index: Trimmed Mean, year-ended percentage change",
+      "data": {
+        "file": "dataset/abs/trimmed_mean_cpi_yoy_1995_2025.csv",
+        "rows": 124,
+        "columns": [
+          "date",
+          "trimmed_mean_cpi_yoy"
+        ]
+      },
+      "metadata": {
+        "file": "dataset/abs/trimmed_mean_cpi_yoy_metadata.csv",
         "rows": 1,
         "columns": [
           "Data Item Description",

@@ -1,23 +1,30 @@
 import pandas as pd
 import pytest
 
-from src.features import add_growth_rates, add_intervention_dummies, add_lag_features
+from src.features import (
+    add_growth_rates,
+    add_intervention_dummies,
+    add_lag_features,
+    order_feature_columns,
+)
 
 
-def test_growth_rates_create_cpi_qoq_and_yoy_without_backfill():
+def test_growth_rates_preserve_abs_cpi_percentage_change_columns():
     source = pd.DataFrame(
         {
             "quarter": ["2020Q1", "2020Q2", "2020Q3", "2020Q4", "2021Q1"],
-            "cpi_index": [100.0, 101.0, 102.0, 103.0, 108.0],
+            "cpi_qoq": [0.2, 0.4, 0.3, 0.5, 0.6],
+            "cpi_yoy": [1.1, 1.3, 1.5, 1.7, 2.0],
+            "trimmed_mean_cpi_qoq": [0.3, 0.5, 0.4, 0.6, 0.7],
+            "trimmed_mean_cpi_yoy": [1.4, 1.6, 1.8, 2.0, 2.2],
         }
     )
 
     result = add_growth_rates(source)
 
-    assert pd.isna(result.loc[0, "cpi_qoq"])
-    assert round(result.loc[1, "cpi_qoq"], 2) == 1.00
-    assert pd.isna(result.loc[3, "cpi_yoy"])
-    assert round(result.loc[4, "cpi_yoy"], 2) == 8.00
+    assert result[
+        ["cpi_qoq", "cpi_yoy", "trimmed_mean_cpi_qoq", "trimmed_mean_cpi_yoy"]
+    ].equals(source[["cpi_qoq", "cpi_yoy", "trimmed_mean_cpi_qoq", "trimmed_mean_cpi_yoy"]])
 
 
 def test_growth_rates_create_rate_changes_as_percentage_point_differences():
@@ -73,6 +80,29 @@ def test_lag_features_shift_values_forward_in_time():
     assert result.loc[2, "cash_rate_lag1"] == 1.5
 
 
+def test_order_feature_columns_places_trimmed_mean_cpi_next_to_cpi_columns():
+    source = pd.DataFrame(
+        {
+            "unemployment_rate": [5.0],
+            "trimmed_mean_cpi_yoy": [3.0],
+            "cpi_yoy": [2.5],
+            "trimmed_mean_cpi_qoq": [0.7],
+            "quarter": ["2020Q1"],
+            "cpi_qoq": [0.5],
+        }
+    )
+
+    result = order_feature_columns(source)
+
+    assert result.columns.tolist()[:5] == [
+        "quarter",
+        "cpi_qoq",
+        "cpi_yoy",
+        "trimmed_mean_cpi_qoq",
+        "trimmed_mean_cpi_yoy",
+    ]
+
+
 def test_default_lag_features_include_rate_changes_and_household_spending_growth():
     source = pd.DataFrame(
         {
@@ -92,6 +122,22 @@ def test_default_lag_features_include_rate_changes_and_household_spending_growth
     assert result.loc[2, "cash_rate_change_lag1"] == 0.25
     assert result.loc[2, "unemployment_rate_change_lag1"] == 0.30
     assert result.loc[2, "household_spending_growth_lag1"] == 1.0
+
+
+def test_default_lag_features_include_trimmed_mean_cpi_yoy_lags():
+    source = pd.DataFrame(
+        {
+            "quarter": ["2020Q1", "2020Q2", "2020Q3", "2020Q4", "2021Q1"],
+            "trimmed_mean_cpi_yoy": [1.1, 1.2, 1.3, 1.4, 1.5],
+        }
+    )
+
+    result = add_lag_features(source)
+
+    assert "trimmed_mean_cpi_yoy_lag1" in result
+    assert "trimmed_mean_cpi_yoy_lag4" in result
+    assert result.loc[4, "trimmed_mean_cpi_yoy_lag1"] == 1.4
+    assert result.loc[4, "trimmed_mean_cpi_yoy_lag4"] == 1.1
 
 
 def test_intervention_dummies_flag_only_documented_quarters(tmp_path):

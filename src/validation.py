@@ -145,7 +145,7 @@ def validate_curated_dataset(
     """Validate the final quarterly modelling table."""
     records: list[QualityRecord] = []
 
-    required_cols = ["quarter", "cpi_index", "cpi_qoq", "cpi_yoy"]
+    required_cols = ["quarter", "cpi_qoq", "cpi_yoy"]
     notes: list[str] = []
     status = "PASS"
 

@@ -45,6 +45,19 @@ from src.models.sarimax_order_search import (
 
 
 COMPARISON_ALL_OUTPUT_PATH = PROJECT_ROOT / "reports/model_comparison_all.csv"
+PREDICTIONS_OUTPUT_PATH = PROJECT_ROOT / "reports/backtest_predictions.csv"
+PREDICTIONS_COLUMNS = [
+    "model",
+    "forecast_origin",
+    "target_quarter",
+    "horizon",
+    "actual",
+    "forecast",
+    "error",
+    "rba_actual",
+    "rba_reported_error",
+    "horizon_cap",
+]
 KEY_COLUMNS = ["forecast_origin", "target_quarter", "horizon"]
 MODEL_ORDER = {
     "sarima": 0,
@@ -197,6 +210,34 @@ def build_joined_metric_table(
     )
 
 
+def build_backtest_predictions_table(
+    prediction_frames: Sequence[pd.DataFrame],
+) -> pd.DataFrame:
+    """Stack row-level walk-forward predictions from every model into one table.
+
+    Each source frame (SARIMA, Elastic Net, Ensemble, seasonal-naive, RBA,
+    SARIMAX Group D) carries the same forecast/actual/error core, plus a few
+    model-specific extras (``rba_actual``, ``rba_reported_error``,
+    ``horizon_cap``). This is a plain outer-union stack of those origin-level
+    rows -- unlike ``build_joined_metric_table``, it is not restricted to a
+    common forecast grid, so every model's full evaluated history is kept
+    for BI/downstream consumption (e.g. an actual-vs-forecast-over-time chart).
+    """
+    if not prediction_frames:
+        raise ValueError("prediction_frames must contain at least one prediction frame.")
+
+    combined = pd.concat(prediction_frames, ignore_index=True, sort=False)
+    for column in PREDICTIONS_COLUMNS:
+        if column not in combined.columns:
+            combined[column] = pd.NA
+    combined = combined.loc[:, PREDICTIONS_COLUMNS].copy()
+    combined["_model_order"] = combined["model"].map(MODEL_ORDER).fillna(99)
+    combined = combined.sort_values(
+        ["_model_order", "forecast_origin", "horizon"]
+    ).drop(columns="_model_order")
+    return combined.reset_index(drop=True)
+
+
 def _sarimax_group_d_predictions(
     curated_path: Path,
     initial_train_size: int,
@@ -249,6 +290,7 @@ def run_model_comparison_all(
     curated_path: Path = CURATED_DATA_PATH,
     rba_path: Path = RBA_FORECAST_PATH,
     output_path: Path = COMPARISON_ALL_OUTPUT_PATH,
+    predictions_output_path: Path | None = PREDICTIONS_OUTPUT_PATH,
     initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
     horizons: Iterable[int] = DEFAULT_HORIZONS,
     weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
@@ -343,6 +385,24 @@ def run_model_comparison_all(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     comparison.round({"rmse": 6, "mae": 6}).to_csv(output_path, index=False)
+
+    if predictions_output_path is not None:
+        predictions = build_backtest_predictions_table(
+            [
+                sarima_predictions,
+                elastic_net_predictions,
+                ensemble_predictions,
+                baseline_predictions,
+                sarimax_group_d,
+            ]
+        )
+        predictions_output_path.parent.mkdir(parents=True, exist_ok=True)
+        predictions.round({"actual": 6, "forecast": 6, "error": 6}).to_csv(
+            predictions_output_path, index=False
+        )
+        if verbose:
+            print(f"Wrote {predictions_output_path} in {time.perf_counter() - started:.1f}s", flush=True)
+
     if verbose:
         print(f"Wrote {output_path} in {time.perf_counter() - started:.1f}s", flush=True)
     return comparison
@@ -357,6 +417,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--data", type=Path, default=CURATED_DATA_PATH)
     parser.add_argument("--rba-data", type=Path, default=RBA_FORECAST_PATH)
     parser.add_argument("--output", type=Path, default=COMPARISON_ALL_OUTPUT_PATH)
+    parser.add_argument("--predictions-output", type=Path, default=PREDICTIONS_OUTPUT_PATH)
+    parser.add_argument(
+        "--no-predictions-output",
+        action="store_true",
+        help="Skip writing the row-level backtest predictions table.",
+    )
     parser.add_argument("--initial-train-size", type=int, default=DEFAULT_INITIAL_TRAIN_SIZE)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--max-origins", type=int, default=None)
@@ -379,6 +445,7 @@ def main(argv: list[str] | None = None) -> None:
         curated_path=args.data,
         rba_path=args.rba_data,
         output_path=args.output,
+        predictions_output_path=None if args.no_predictions_output else args.predictions_output,
         initial_train_size=args.initial_train_size,
         seed=args.seed,
         max_origins=args.max_origins,
