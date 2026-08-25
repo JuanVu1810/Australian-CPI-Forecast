@@ -157,9 +157,8 @@ def test_forecast_all_returns_registered_sarima_and_marks_missing_families(
     assert [model["model_family"] for model in payload["models"]] == ["sarima"]
     assert len(payload["models"][0]["forecast"]) == 2
     unavailable = {item["model_family"]: item["reason"] for item in payload["unavailable"]}
-    assert set(unavailable) == {"elastic_net", "sarimax_group_d", "ensemble"}
+    assert set(unavailable) == {"elastic_net", "ensemble"}
     assert "No finished MLflow run found" in unavailable["elastic_net"]
-    assert "No finished MLflow run found" in unavailable["sarimax_group_d"]
     assert "No finished MLflow run found" in unavailable["ensemble"]
 
 
@@ -647,58 +646,6 @@ def test_forecast_all_marks_elastic_net_horizon_mismatch_unavailable(
     unavailable = {item["model_family"]: item["reason"] for item in payload["unavailable"]}
     assert "elastic_net" in unavailable
     assert "does not have fitted horizons [3]" in unavailable["elastic_net"]
-
-
-def test_forecast_all_sarimax_group_d_caps_requested_horizon(
-    monkeypatch,
-    tmp_path,
-):
-    class FakeSarimaxFit:
-        def get_forecast(self, steps, exog):
-            assert steps == 1
-            return SimpleNamespace(
-                predicted_mean=pd.Series([5.5], index=pd.DataFrame(exog).index)
-            )
-
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-sarimax-group-d")
-    curated_path = tmp_path / "curated.csv"
-    _write_curated_frame(curated_path, end_quarter="2021Q4")
-    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    run_id = _log_run_with_model("sarimax_group_d", 1.4)
-    curated_frame = pd.DataFrame(
-        {"cpi_yoy": [4.0]},
-        index=pd.period_range("2021Q4", periods=1, freq="Q"),
-    )
-    monkeypatch.setattr(api_main, "_load_curated_frame_for_group_d", lambda: curated_frame)
-    monkeypatch.setattr(mlflow.statsmodels, "load_model", lambda model_uri: FakeSarimaxFit())
-    monkeypatch.setattr(
-        api_main.sarimax,
-        "group_d_future_exog",
-        lambda frame: pd.DataFrame(
-            {"cash_rate_change_lag1": [1.0]},
-            index=[frame.index[-1] + 1],
-        ),
-    )
-    monkeypatch.setattr(
-        api_main.sarimax,
-        "simulate_paths_from_fit",
-        lambda fitted, future_exog, steps, n_sims, seed: np.full((n_sims, steps), 5.0),
-    )
-
-    payload = api_main.forecast_all(
-        api_main.AllForecastsRequest(horizon=8, n_sims=100)
-    ).model_dump()
-
-    assert len(payload["models"]) == 1
-    model = payload["models"][0]
-    assert model["model_family"] == "sarimax_group_d"
-    assert model["run_id"] == run_id
-    assert model["horizon"] == 1
-    assert model["horizon_cap"] == 1
-    assert model["forecast"] == [5.5]
-    assert len(model["interval_lower"]) == 1
-    assert len(model["interval_upper"]) == 1
-    assert model["quarters"] == ["2022Q1"]
 
 
 def test_forecast_all_ensemble_uses_component_model_uris_without_own_model_artifact(

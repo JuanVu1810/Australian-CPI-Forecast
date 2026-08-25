@@ -43,9 +43,6 @@ def _fake_response(quarter: str = "2026Q3") -> api_main.AllForecastsResponse:
         ],
         unavailable=[
             api_main.UnavailableFamily(
-                model_family="sarimax_group_d", reason="No finished MLflow run found"
-            ),
-            api_main.UnavailableFamily(
                 model_family="ensemble", reason="No finished MLflow run found"
             ),
         ],
@@ -120,7 +117,7 @@ def test_snapshot_forecasts_inserts_available_families(monkeypatch, sqlite_engin
     assert summary.status == "completed"
     assert sorted(summary.inserted) == ["elastic_net", "sarima"]
     assert summary.skipped == []
-    assert sorted(summary.unavailable) == ["ensemble", "sarimax_group_d"]
+    assert sorted(summary.unavailable) == ["ensemble"]
 
     with sqlite_engine.connect() as conn:
         metrics = pd.read_sql("SELECT * FROM model_metrics ORDER BY model_name", conn)

@@ -1,11 +1,12 @@
 """Regularized direct multi-horizon Elastic Net challenger for CPI year-ended inflation.
 
-SARIMAX loses to plain SARIMA on every screened feature group
-(``reports/model_comparison_sarimax.csv``), pointing at small-sample
-overfitting on the exogenous macro block rather than underfitting. This model
-tests the direct fix -- L1/L2-penalized coefficients -- on SARIMAX Group D's
-lag-safe feature set, plus explicit CPI autoregressive lags (a linear model
-has no built-in AR structure the way SARIMA/SARIMAX do).
+Uses L1/L2-penalized coefficients on a lag-safe macro feature block, plus
+explicit CPI autoregressive lags (a linear model has no built-in AR structure
+the way SARIMA does). Regularized coefficients also make this the model of
+choice for exogenous-variable scenario/sensitivity analysis: every shipped
+feature's coefficient is stable and well-behaved under cross-validated
+selection, unlike an unregularized single-equation MLE fit on the same
+small sample.
 """
 
 from __future__ import annotations
@@ -95,18 +96,13 @@ DEFAULT_MAX_ITER = 10_000
 
 ELASTIC_NET_COMPARISON_OUTPUT_PATH = PROJECT_ROOT / "reports/model_comparison_elastic_net.csv"
 ELASTIC_NET_COEFFICIENT_OUTPUT_PATH = PROJECT_ROOT / "reports/elastic_net_coefficients.csv"
-SARIMAX_COMPARISON_REPORT_PATH = PROJECT_ROOT / "reports/model_comparison_sarimax.csv"
 
 ELASTIC_NET_MODEL_NOTE = (
     "Direct multi-horizon Elastic Net: one scaler+ElasticNet Pipeline per "
-    "horizon (1-8), features = SARIMAX Group D macro block + cpi_yoy_lag1/"
+    "horizon (1-8), features = lag-safe macro block + cpi_yoy_lag1/"
     "lag4, GridSearchCV over alpha/l1_ratio with TimeSeriesSplit inner CV -- "
     "chronological (never shuffled) folds -- refitting the scaler inside "
     "each fold so no validation row leaks into that fold's own scaling."
-)
-SARIMAX_D_NOTE = (
-    "SARIMAX(D) remains lag-safety capped at horizon 1 because Group D includes "
-    "lag-1 regressors; Elastic Net horizons 1-8 use only the past origin row."
 )
 
 
@@ -117,6 +113,7 @@ class ElasticNetDirectFit:
     feature_columns: tuple[str, ...]
     target_column: str
     horizons: tuple[int, ...]
+    oos_residuals: dict[int, pd.Series]
 
     def predict_next(self, train_frame: pd.DataFrame) -> np.ndarray:
         """Predict all fitted horizons from the most recent origin-time row.
@@ -169,6 +166,51 @@ def _safe_cv_splits(n_examples: int, requested: int) -> int:
     return max(2, min(requested, n_examples - 1))
 
 
+def _time_series_oos_residuals(
+    x: pd.DataFrame,
+    y: pd.Series,
+    alpha: float,
+    l1_ratio: float,
+    n_splits: int,
+    max_iter: int,
+    seed: int,
+) -> pd.Series:
+    """Genuinely out-of-sample residuals from the already-selected hyperparameters.
+
+    ``sklearn.model_selection.cross_val_predict`` cannot be used with
+    ``TimeSeriesSplit`` here: it requires every row to appear in some test
+    fold, but ``TimeSeriesSplit``'s initial training-only block never does
+    ("cross_val_predict only works for partitions"). This loops the same
+    fold shape manually and only keeps rows that land in a test fold. The
+    final ``ElasticNetDirectFit.models[horizon]`` pipeline (fit on the whole
+    window) is not reused for residuals: its residuals are in-sample and
+    understate true forecast-error variance, especially at longer horizons.
+    """
+    from sklearn.linear_model import ElasticNet
+    from sklearn.model_selection import TimeSeriesSplit
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    cv = TimeSeriesSplit(n_splits=n_splits)
+    residual_frames: list[pd.Series] = []
+    for train_idx, test_idx in cv.split(x):
+        pipeline = Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                ("model", ElasticNet(alpha=alpha, l1_ratio=l1_ratio, max_iter=max_iter, random_state=seed)),
+            ]
+        )
+        pipeline.fit(x.iloc[train_idx], y.iloc[train_idx].to_numpy())
+        predicted = pipeline.predict(x.iloc[test_idx])
+        residual_frames.append(
+            pd.Series(y.iloc[test_idx].to_numpy() - predicted, index=x.index[test_idx])
+        )
+    residuals = pd.concat(residual_frames).sort_index()
+    if residuals.empty:
+        raise ValueError("no out-of-sample residuals were produced by the CV folds.")
+    return residuals
+
+
 def _elastic_net_horizon_training_xy(
     clean: pd.DataFrame,
     horizon: int,
@@ -216,6 +258,7 @@ def fit_elastic_net_direct(
     clean = clean_elastic_net_frame(train_frame, target_column=target_column, feature_columns=feature_columns)
 
     models: dict[int, Any] = {}
+    oos_residuals: dict[int, pd.Series] = {}
     for horizon in horizons:
         if len(clean) <= horizon:
             raise ValueError(f"training frame is too short for horizon {horizon}.")
@@ -241,6 +284,15 @@ def fit_elastic_net_direct(
         )
         search.fit(x, y.to_numpy())
         models[horizon] = search.best_estimator_
+        oos_residuals[horizon] = _time_series_oos_residuals(
+            x=x,
+            y=y,
+            alpha=search.best_params_["model__alpha"],
+            l1_ratio=search.best_params_["model__l1_ratio"],
+            n_splits=n_splits,
+            max_iter=max_iter,
+            seed=seed,
+        )
 
     # Full-training-window scaler kept only for MLflow logging metadata
     # (documenting the feature scale at this origin); prediction/coefficients
@@ -253,6 +305,7 @@ def fit_elastic_net_direct(
         feature_columns=feature_columns,
         target_column=target_column,
         horizons=tuple(horizons),
+        oos_residuals=oos_residuals,
     )
 
 
@@ -279,21 +332,18 @@ def forecast_elastic_net_direct(
     return forecast_from_fit(fitted, train_frame)[:steps]
 
 
-def _elastic_net_residual_matrix(fitted: ElasticNetDirectFit, clean: pd.DataFrame) -> pd.DataFrame:
-    residuals = []
-    for horizon in fitted.horizons:
-        x, y = _elastic_net_horizon_training_xy(
-            clean=clean,
-            horizon=horizon,
-            feature_columns=fitted.feature_columns,
-            target_column=fitted.target_column,
-        )
-        predicted = fitted.models[horizon].predict(x)
-        residuals.append(pd.Series(y.to_numpy() - predicted, index=x.index, name=horizon))
+def _elastic_net_residual_matrix(fitted: ElasticNetDirectFit) -> pd.DataFrame:
+    """Join each horizon's out-of-sample CV residuals on shared origin dates.
 
+    Using ``fitted.oos_residuals`` (computed once, out-of-sample, in
+    ``fit_elastic_net_direct``) instead of predicting with the final
+    full-window pipeline keeps the cross-horizon error correlation a joint
+    bootstrap draw needs, without the in-sample understatement of variance.
+    """
+    residuals = [fitted.oos_residuals[horizon].rename(horizon) for horizon in fitted.horizons]
     matrix = pd.concat(residuals, axis=1, join="inner").dropna()
     if matrix.empty:
-        raise ValueError("Elastic Net residual bootstrap has no common training origins.")
+        raise ValueError("Elastic Net residual bootstrap has no common out-of-sample origins.")
     return matrix
 
 
@@ -321,15 +371,8 @@ def simulate_paths_from_fit(
             f"{missing_horizons}; available horizons: {available_horizons}."
         )
 
-    clean = clean_elastic_net_frame(
-        train_frame,
-        target_column=fitted.target_column,
-        feature_columns=fitted.feature_columns,
-    )
     point_forecast = fitted.predict_next(train_frame)[:steps]
-    # In-sample residuals likely understate true forecast-error variance,
-    # especially at longer horizons; not a calibrated out-of-sample interval.
-    residual_matrix = _elastic_net_residual_matrix(fitted=fitted, clean=clean).loc[:, list(horizons)]
+    residual_matrix = _elastic_net_residual_matrix(fitted=fitted).loc[:, list(horizons)]
 
     rng = np.random.default_rng(seed)
     origin_indices = rng.integers(0, len(residual_matrix), size=n_sims)
@@ -422,24 +465,6 @@ def _comparison_metadata(
     return result
 
 
-def _load_existing_sarimax_d_metrics(path: Path = SARIMAX_COMPARISON_REPORT_PATH) -> pd.DataFrame:
-    """Load canonical SARIMAX(D) metrics from the existing SARIMAX report, if present."""
-    if not path.exists():
-        return pd.DataFrame()
-    report = pd.read_csv(path)
-    required_columns = {"group_id", "model", "horizon", "n", "rmse", "mae"}
-    if not required_columns.issubset(report.columns):
-        return pd.DataFrame()
-    rows = report.loc[report["group_id"].eq("D") & report["model"].eq("sarimax")].copy()
-    if rows.empty:
-        return pd.DataFrame()
-    rows["sample_size_note"] = (
-        "Copied from reports/model_comparison_sarimax.csv Group D; not "
-        "intersected with the Elastic Net 8-horizon grid."
-    )
-    return rows
-
-
 def run_elastic_net_comparison(
     curated_path: Path = CURATED_DATA_PATH,
     rba_path: Path = RBA_FORECAST_PATH,
@@ -454,10 +479,9 @@ def run_elastic_net_comparison(
     sarima_order: tuple[int, int, int] | None = None,
     sarima_seasonal_order: tuple[int, int, int, int] | None = None,
     include_rba: bool = True,
-    include_existing_sarimax_metrics: bool = True,
     run_name: str = "elastic_net_comparison",
     model_family_tag: str = "elastic_net",
-    reused_feature_group_id: str = "D",
+    feature_set_label: str = "macro_core",
     verbose: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, float]:
     """Run the Elastic Net walk-forward backtest, comparison, and coefficient report."""
@@ -523,14 +547,12 @@ def run_elastic_net_comparison(
     comparison = _comparison_metadata(
         full_metrics,
         origin_n=origin_n,
-        note=SARIMAX_D_NOTE,
+        note=(
+            "Elastic Net horizons 1-8 use only the past origin row (direct "
+            "multi-horizon, lag-safe feature set)."
+        ),
         features=";".join(feature_columns),
     )
-
-    if max_origins is None and include_existing_sarimax_metrics:
-        sarimax_comparison = _load_existing_sarimax_d_metrics()
-        if not sarimax_comparison.empty:
-            comparison = pd.concat([comparison, sarimax_comparison], ignore_index=True, sort=False)
 
     if verbose:
         print("Fitting final full-sample Elastic Net for coefficients/MLflow logging...", flush=True)
@@ -572,7 +594,7 @@ def run_elastic_net_comparison(
         tags={
             "model_family": model_family_tag,
             "target_column": target_column,
-            "reused_feature_group_id": reused_feature_group_id,
+            "feature_set_label": feature_set_label,
             "run_role": "comparison_with_full_sample_model",
         },
         artifact_paths=[comparison_output_path, coefficient_output_path],

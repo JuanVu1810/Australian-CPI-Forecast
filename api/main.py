@@ -18,7 +18,7 @@ from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 from pydantic import BaseModel, Field
 
-from src.models import elastic_net, ensemble, sarima, sarimax, tracking
+from src.models import elastic_net, ensemble, sarima, tracking
 from src.models.elastic_net import (
     TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
     TRIMMED_MEAN_TARGET_COLUMN,
@@ -53,7 +53,6 @@ VALIDATED_INTERVAL_LOWER = 0.1
 VALIDATED_INTERVAL_UPPER = 0.9
 TRIMMED_MEAN_FAMILY_RUN_TAGS = {
     **TRIMMED_MEAN_MODEL_FAMILY_TAGS,
-    "sarimax_trimmed_mean_primary": "sarimax_trimmed_mean_primary",
     "ensemble": "trimmed_mean_ensemble",
 }
 
@@ -156,16 +155,6 @@ def _load_elastic_net_fit(model_uri: str):
     import mlflow.sklearn
 
     return mlflow.sklearn.load_model(model_uri)
-
-
-def _load_curated_frame_for_group_d() -> pd.DataFrame:
-    df = pd.read_csv(CURATED_DATA_PATH)
-    if "quarter" not in df.columns:
-        raise RuntimeError(
-            f"Curated dataset at {CURATED_DATA_PATH} must contain quarter column."
-        )
-    df.index = pd.PeriodIndex(df.pop("quarter").astype(str), freq="Q")
-    return df.sort_index()
 
 
 def _sarima_forecast_metadata(values) -> tuple[str, list[str]]:
@@ -526,79 +515,6 @@ def _elastic_net_family_forecast(
     )
 
 
-def _sarimax_group_d_family_forecast(
-    model_uri: str,
-    requested_horizon: int,
-    n_sims: int,
-    seed: int,
-) -> FamilyForecastData:
-    import mlflow.statsmodels
-
-    curated_frame = _load_curated_frame_for_group_d()
-    fitted = mlflow.statsmodels.load_model(model_uri)
-    try:
-        future = sarimax.group_d_future_exog(curated_frame)
-    except KeyError as exc:
-        raise RuntimeError(
-            "SARIMAX Group D future exog could not be built; curated dataset "
-            f"is missing required column {exc.args[0]!r}."
-        ) from exc
-    point = fitted.get_forecast(steps=1, exog=future).predicted_mean
-    draws = sarimax.simulate_paths_from_fit(
-        fitted,
-        future,
-        steps=1,
-        n_sims=n_sims,
-        seed=seed,
-    )
-    last_quarter = pd.Period(curated_frame.sort_index().index[-1], freq="Q")
-    return FamilyForecastData(
-        forecast=np.asarray(point, dtype=float).tolist(),
-        draws=draws,
-        quarters=next_quarters(str(last_quarter), 1),
-        forecast_origin=str(last_quarter),
-        horizon_served=1,
-        horizon_cap=1,
-    )
-
-
-def _sarimax_trimmed_mean_family_forecast(
-    model_uri: str,
-    requested_horizon: int,
-    n_sims: int,
-    seed: int,
-) -> FamilyForecastData:
-    del requested_horizon
-    import mlflow.statsmodels
-
-    curated_frame = _load_curated_frame_for_group_d()
-    fitted = mlflow.statsmodels.load_model(model_uri)
-    try:
-        future = sarimax.trimmed_mean_primary_future_exog(curated_frame)
-    except KeyError as exc:
-        raise RuntimeError(
-            "SARIMAX trimmed-mean primary future exog could not be built; "
-            f"curated dataset is missing required column {exc.args[0]!r}."
-        ) from exc
-    point = fitted.get_forecast(steps=1, exog=future).predicted_mean
-    draws = sarimax.simulate_paths_from_fit(
-        fitted,
-        future,
-        steps=1,
-        n_sims=n_sims,
-        seed=seed,
-    )
-    last_quarter = pd.Period(curated_frame.sort_index().index[-1], freq="Q")
-    return FamilyForecastData(
-        forecast=np.asarray(point, dtype=float).tolist(),
-        draws=draws,
-        quarters=next_quarters(str(last_quarter), 1),
-        forecast_origin=str(last_quarter),
-        horizon_served=1,
-        horizon_cap=1,
-    )
-
-
 def _ensemble_family_forecast(
     model_uri: str,
     requested_horizon: int,
@@ -742,7 +658,6 @@ def _ensemble_trimmed_mean_family_forecast(
 FAMILY_HANDLERS: dict[str, Callable[[str, int, int, int], FamilyForecastData]] = {
     "sarima": _sarima_family_forecast,
     "elastic_net": _elastic_net_family_forecast,
-    "sarimax_group_d": _sarimax_group_d_family_forecast,
     "ensemble": _ensemble_family_forecast,
 }
 
@@ -753,7 +668,6 @@ TRIMMED_MEAN_FAMILY_HANDLERS: dict[str, Callable[[str, int, int, int], FamilyFor
         target_column=TRIMMED_MEAN_TARGET_COLUMN,
         feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
     ),
-    "sarimax_trimmed_mean_primary": _sarimax_trimmed_mean_family_forecast,
     "ensemble": _ensemble_trimmed_mean_family_forecast,
 }
 

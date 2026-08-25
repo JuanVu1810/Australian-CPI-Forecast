@@ -798,6 +798,28 @@ def compute_interval_coverage_table(
     return coverage.sort_values(["model", "_horizon_order"]).drop(columns="_horizon_order")
 
 
+def root_stability_summary(fitted, stability_margin: float = 0.02) -> dict[str, object]:
+    """Summarize AR/MA root distance from the unit circle for a fitted SARIMA model.
+
+    ``sarima.py`` fits with ``enforce_stationarity=False`` and
+    ``enforce_invertibility=False``, so nothing stops an AIC/BIC order search
+    from landing on a near-unit-root or near-noninvertible solution that
+    still converges and reports a finite AIC. A root modulus within
+    ``stability_margin`` of 1.0 flags that fragility even though the ordinary
+    convergence/bounded-forecast screen would not catch it.
+    """
+    ar_roots = np.asarray(getattr(fitted, "arroots", np.array([])), dtype=complex)
+    ma_roots = np.asarray(getattr(fitted, "maroots", np.array([])), dtype=complex)
+    ar_min = float(np.min(np.abs(ar_roots))) if ar_roots.size else float("inf")
+    ma_min = float(np.min(np.abs(ma_roots))) if ma_roots.size else float("inf")
+    threshold = 1.0 + stability_margin
+    return {
+        "ar_root_min_modulus": ar_min,
+        "ma_root_min_modulus": ma_min,
+        "stable": bool(ar_min >= threshold and ma_min >= threshold),
+    }
+
+
 def compute_conformal_scale_factors(
     predictions: pd.DataFrame,
     target_coverage: float,

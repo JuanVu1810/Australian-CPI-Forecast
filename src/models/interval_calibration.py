@@ -45,7 +45,7 @@ TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_OUTPUT_PATH = (
     PROJECT_ROOT / "reports/model_interval_calibration_validation_trimmed_mean.csv"
 )
 DEFAULT_CALIBRATION_FRACTION = 0.7
-DEFAULT_FAMILIES = ("sarima", "elastic_net", "sarimax_group_d", "ensemble")
+DEFAULT_FAMILIES = ("sarima", "elastic_net", "ensemble")
 
 
 def _origin_counts_from_coverage_report(

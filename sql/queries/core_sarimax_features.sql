@@ -1,4 +1,6 @@
--- Feature extract for the first long-sample SARIMAX experiment.
+-- Core macro feature extract, originally built for the SARIMAX experiment
+-- (SARIMAX was later removed from the project; kept as a general feature
+-- extract example, the underlying curated columns are unaffected).
 
 SELECT
     quarter,

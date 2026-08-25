@@ -31,7 +31,6 @@ from src.models.sarima import simulate_sarima_paths
 from src.models.sarima import DEFAULT_ORDER as SARIMA_DEFAULT_ORDER
 from src.models.sarima import DEFAULT_SEASONAL_ORDER as SARIMA_DEFAULT_SEASONAL_ORDER
 from src.models.sarima import TRIMMED_MEAN_DEFAULT_ORDER, TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER
-from src.models.sarimax import GROUP_D_FEATURE_COLUMNS, simulate_sarimax_group_d_paths
 
 
 INTERVAL_COVERAGE_OUTPUT_PATH = PROJECT_ROOT / "reports/model_interval_coverage.csv"
@@ -50,18 +49,10 @@ DEFAULT_SEED = 42
 DEFAULT_LOWER_QUANTILE = 0.1
 DEFAULT_UPPER_QUANTILE = 0.9
 DEFAULT_INITIAL_TRAIN_SIZE = ELASTIC_NET_INITIAL_TRAIN_SIZE
-SARIMAX_GROUP_D_BASE_COLUMNS = (
-    "cash_rate_change",
-    "unemployment_rate_change",
-    "inflation_expectations_business",
-    "ppi_growth_lag1",
-    "commodity_growth",
-    "wti_growth",
-)
 
 
 def _normalise_families(families: tuple[str, ...] | None) -> tuple[str, ...]:
-    available = ("sarima", "elastic_net", "sarimax_group_d", "ensemble")
+    available = ("sarima", "elastic_net", "ensemble")
     if families is None:
         return available
     requested = tuple(str(family) for family in families)
@@ -69,18 +60,6 @@ def _normalise_families(families: tuple[str, ...] | None) -> tuple[str, ...]:
     if unknown:
         raise ValueError(f"unknown interval coverage families: {unknown}")
     return requested
-
-
-def load_sarimax_group_d_interval_exog(path: Path = CURATED_DATA_PATH) -> pd.DataFrame:
-    """Load the wide macro frame needed by SARIMAX Group D simulation."""
-    required_columns = (
-        "quarter",
-        *GROUP_D_FEATURE_COLUMNS,
-        *SARIMAX_GROUP_D_BASE_COLUMNS,
-    )
-    df = pd.read_csv(path, usecols=list(dict.fromkeys(required_columns)))
-    df.index = pd.PeriodIndex(df.pop("quarter").astype(str), freq="Q")
-    return df.sort_index().astype(float)
 
 
 def load_interval_calibration_factors(
@@ -197,7 +176,6 @@ def run_family_interval_backtests(
         curated_path,
         feature_columns=elastic_net_feature_columns,
     )
-    sarimax_exog = load_sarimax_group_d_interval_exog(curated_path)
     if weights is None:
         weights = horizon_rmse_weights(horizons=requested_horizons)
 
@@ -252,29 +230,6 @@ def run_family_interval_backtests(
                     feature_columns=elastic_net_feature_columns,
                     target_column=target_column,
                 ),
-                max_origins=max_origins,
-                skip_origins=skip_origins,
-            )
-        )
-
-    if "sarimax_group_d" in requested_families:
-        if verbose:
-            print("Running SARIMAX Group D interval coverage backtest...", flush=True)
-        frames.append(
-            walk_forward_interval_coverage_backtest(
-                series=series,
-                exog=sarimax_exog,
-                simulate_func=simulate_sarimax_group_d_paths,
-                initial_train_size=initial_train_size,
-                horizons=requested_horizons,
-                model_name="sarimax_group_d",
-                lower_quantile=lower_quantile,
-                upper_quantile=upper_quantile,
-                n_sims=n_sims,
-                seed=seed + 20_000,
-                training_data="series_exog",
-                target_column=target_column,
-                horizon_cap=1,
                 max_origins=max_origins,
                 skip_origins=skip_origins,
             )

@@ -64,19 +64,6 @@ def fit_sarima(
         return model.fit(disp=False, maxiter=maxiter)
 
 
-def _simulation_result_to_paths(simulated, n_sims: int, steps: int) -> np.ndarray:
-    paths = np.asarray(simulated, dtype=float)
-    if paths.shape != (steps, n_sims):
-        raise ValueError(
-            "unexpected simulation result shape: "
-            f"got {paths.shape}, expected {(steps, n_sims)} from statsmodels."
-        )
-    paths = paths.T
-    if paths.shape != (n_sims, steps):
-        raise ValueError(f"simulation paths have shape {paths.shape}, expected {(n_sims, steps)}.")
-    return paths
-
-
 def forecast_sarima(
     series: pd.Series,
     steps: int = 8,
@@ -100,19 +87,44 @@ def forecast_sarima(
     return pd.Series(forecast, name="forecast")
 
 
+def _simulation_result_to_paths(simulated, n_sims: int, steps: int) -> np.ndarray:
+    paths = np.asarray(simulated, dtype=float)
+    if paths.shape != (steps, n_sims):
+        raise ValueError(
+            "unexpected simulation result shape: "
+            f"got {paths.shape}, expected {(steps, n_sims)} from statsmodels."
+        )
+    paths = paths.T
+    if paths.shape != (n_sims, steps):
+        raise ValueError(f"simulation paths have shape {paths.shape}, expected {(n_sims, steps)}.")
+    return paths
+
+
 def simulate_paths_from_fit(
     fitted,
     steps: int = 8,
     n_sims: int = 1000,
     seed: int = 42,
 ) -> np.ndarray:
-    """Simulate future ``cpi_yoy`` paths from an already-fitted SARIMA model."""
+    """Simulate future ``cpi_yoy`` paths from an already-fitted SARIMA model.
+
+    A residual bootstrap (the fit's own standardized innovations, resampled
+    with replacement) was tried here to address badly non-Gaussian residuals
+    (see reports/model_residual_diagnostics.csv), but walk-forward testing on
+    the current curated dataset showed it made raw interval coverage *worse*
+    on average (75.3% -> 70.6% overall, most horizons down), not better:
+    resampling a leptokurtic empirical distribution concentrates more mass
+    near the center than a Gaussian with the same variance, which narrows
+    the 10th-90th percentile interval even though the true tails are fatter.
+    Kept on Gaussian innovations because that is what the walk-forward
+    evidence supports, despite the residual normality violation. This is
+    innovation uncertainty only; it does not include parameter uncertainty.
+    """
     if steps < 1:
         raise ValueError("steps must be at least 1.")
     if n_sims < 1:
         raise ValueError("n_sims must be at least 1.")
 
-    # Innovation uncertainty only; this does not include parameter uncertainty.
     simulated = fitted.simulate(
         nsimulations=steps,
         anchor="end",

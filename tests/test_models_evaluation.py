@@ -329,47 +329,19 @@ def test_compute_interval_coverage_table_returns_overall_and_horizon_rows():
     assert not exact_overall["significantly_miscalibrated"]
 
 
-def test_joined_model_comparison_keeps_sarimax_on_real_horizon_only():
+def test_joined_model_comparison_assigns_best_model_on_shared_grid():
     sarima = _comparison_prediction_frame("sarima", {1: 1.0, 2: 2.0})
     elastic_net = _comparison_prediction_frame("elastic_net", {1: 0.5, 2: 1.0})
     ensemble = _comparison_prediction_frame("ensemble", {1: 0.25, 2: 1.5})
     seasonal_naive = _comparison_prediction_frame("seasonal_naive", {1: 3.0, 2: 4.0})
-    sarimax = pd.concat(
-        [
-            pd.DataFrame(
-                [
-                    {
-                        "model": "sarimax",
-                        "forecast_origin": pd.Period("2020Q3", freq="Q"),
-                        "target_quarter": pd.Period("2020Q4", freq="Q"),
-                        "horizon": 1,
-                        "actual": 10.0,
-                        "forecast": 9.9,
-                        "error": 0.1,
-                    }
-                ]
-            ),
-            _comparison_prediction_frame("sarimax", {1: 0.1}),
-        ],
-        ignore_index=True,
-    )
 
     table = model_comparison.build_joined_metric_table(
         wide_prediction_frames=[sarima, elastic_net, ensemble, seasonal_naive],
-        sarimax_group_d_predictions=sarimax,
         horizons=(1, 2),
     )
 
-    sarimax_h1 = table.loc[(table["model"].eq("sarimax")) & (table["horizon"].eq(1))].iloc[0]
-    assert sarimax_h1["n"] == 2
-    assert sarimax_h1["forecast_origin_n"] == 2
-    assert sarimax_h1["group_id"] == "D"
-
-    sarimax_h2 = table.loc[(table["model"].eq("sarimax")) & (table["horizon"].eq(2))].iloc[0]
-    assert sarimax_h2["n"] == 0
-    assert pd.isna(sarimax_h2["rmse"])
-    assert sarimax_h2["evaluation_status"] == "not_evaluated_at_this_horizon"
-
+    h1_rows = table.loc[table["horizon"].eq(1)]
+    assert set(h1_rows["best_model"]) == {"ensemble"}
     h2_rows = table.loc[table["horizon"].eq(2)]
     assert set(h2_rows["best_model"]) == {"elastic_net"}
     overall_rows = table.loc[table["horizon"].eq("overall")]
@@ -382,17 +354,18 @@ def test_build_backtest_predictions_table_stacks_all_models_with_extras_preserve
     rba = _comparison_prediction_frame("rba", {1: 0.2})
     rba["rba_actual"] = rba["actual"]
     rba["rba_reported_error"] = rba["error"]
-    sarimax = _comparison_prediction_frame("sarimax", {1: 0.1})
-    sarimax["horizon_cap"] = 1
+    other_model = _comparison_prediction_frame("other_model", {1: 0.1})
+    other_model["horizon_cap"] = 1
 
     table = model_comparison.build_backtest_predictions_table(
-        [sarima, elastic_net, rba, sarimax]
+        [sarima, elastic_net, rba, other_model]
     )
 
     assert list(table.columns) == model_comparison.PREDICTIONS_COLUMNS
-    assert len(table) == len(sarima) + len(elastic_net) + len(rba) + len(sarimax)
-    # Rows are ordered by MODEL_ORDER (sarima, elastic_net, ..., sarimax, ..., rba).
-    assert list(table["model"].unique()) == ["sarima", "elastic_net", "sarimax", "rba"]
+    assert len(table) == len(sarima) + len(elastic_net) + len(rba) + len(other_model)
+    # Rows are ordered by MODEL_ORDER (sarima, elastic_net, ..., rba, then
+    # anything unlisted, like "other_model", sorted last).
+    assert list(table["model"].unique()) == ["sarima", "elastic_net", "rba", "other_model"]
 
     elastic_net_rows = table.loc[table["model"].eq("elastic_net")]
     assert elastic_net_rows["rba_actual"].isna().all()
@@ -401,8 +374,8 @@ def test_build_backtest_predictions_table_stacks_all_models_with_extras_preserve
     rba_rows = table.loc[table["model"].eq("rba")]
     assert (rba_rows["rba_actual"] == rba_rows["actual"]).all()
 
-    sarimax_rows = table.loc[table["model"].eq("sarimax")]
-    assert (sarimax_rows["horizon_cap"] == 1).all()
+    other_model_rows = table.loc[table["model"].eq("other_model")]
+    assert (other_model_rows["horizon_cap"] == 1).all()
 
 
 def test_skip_origins_produces_a_chronologically_disjoint_origin_set():

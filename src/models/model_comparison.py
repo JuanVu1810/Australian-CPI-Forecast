@@ -37,23 +37,6 @@ from src.models.sarima import forecast_sarima
 from src.models.sarima import DEFAULT_ORDER as SARIMA_DEFAULT_ORDER
 from src.models.sarima import DEFAULT_SEASONAL_ORDER as SARIMA_DEFAULT_SEASONAL_ORDER
 from src.models.sarima import TRIMMED_MEAN_DEFAULT_ORDER, TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER
-from src.models.sarimax import (
-    TRIMMED_MEAN_PRIMARY_FEATURE_COLUMNS,
-    TRIMMED_MEAN_PRIMARY_ORDER,
-    TRIMMED_MEAN_PRIMARY_SEASONAL_ORDER,
-    forecast_sarimax,
-)
-from src.models.sarimax_order_search import (
-    DEFAULT_COMPARISON_MAX_ARMA_ORDER,
-    ORDER_SELECTION_HOLDOUT_QUARTERS,
-    _development_split,
-    _group_predictions,
-    _select_order,
-    build_feature_groups,
-    load_exog_frame,
-    resolve_level_change_features,
-    run_sarimax_order_search,
-)
 
 
 COMPARISON_ALL_OUTPUT_PATH = PROJECT_ROOT / "reports/model_comparison_all.csv"
@@ -81,7 +64,6 @@ MODEL_ORDER = {
     "sarima": 0,
     "elastic_net": 1,
     "ensemble": 2,
-    "sarimax": 3,
     "seasonal_naive": 4,
     "rba": 5,
 }
@@ -135,32 +117,6 @@ def _with_grid_metadata(
     return result
 
 
-def _sarimax_placeholder_rows(
-    evaluated_horizons: set[int],
-    requested_horizons: tuple[int, ...],
-    group_id: str = "D",
-    comparison_grid: str = "sarimax_group_d_shared_key_intersection",
-) -> pd.DataFrame:
-    missing_horizons = [horizon for horizon in requested_horizons if horizon not in evaluated_horizons]
-    return pd.DataFrame(
-        [
-            {
-                "model": "sarimax",
-                "horizon": horizon,
-                "n": 0,
-                "rmse": np.nan,
-                "mae": np.nan,
-                "comparison_grid": comparison_grid,
-                "evaluation_status": "not_evaluated_at_this_horizon",
-                "forecast_origin_n": 0,
-                "evaluated_horizons": _horizon_range_label(evaluated_horizons),
-                "group_id": group_id,
-            }
-            for horizon in missing_horizons
-        ]
-    )
-
-
 def _assign_best_model(metrics: pd.DataFrame, full_horizon_label: str) -> pd.DataFrame:
     result = metrics.copy()
     result["best_model"] = pd.NA
@@ -180,17 +136,12 @@ def _assign_best_model(metrics: pd.DataFrame, full_horizon_label: str) -> pd.Dat
 
 def build_joined_metric_table(
     wide_prediction_frames: Sequence[pd.DataFrame],
-    sarimax_group_d_predictions: pd.DataFrame,
     horizons: Iterable[int] = DEFAULT_HORIZONS,
-    sarimax_group_id: str = "D",
-    sarimax_comparison_grid: str = "sarimax_group_d_shared_key_intersection",
 ) -> pd.DataFrame:
     """Build metrics from row-level predictions aligned by forecast keys.
 
     SARIMA, Elastic Net, Ensemble, seasonal-naive, and optional RBA are
-    evaluated on their full shared 1-8 horizon grid. SARIMAX Group D is then
-    intersected with that same key grid and reported only for horizons it
-    genuinely emits.
+    evaluated on their full shared 1-8 horizon grid.
     """
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     if not wide_prediction_frames:
@@ -206,31 +157,7 @@ def build_joined_metric_table(
         evaluation_status="evaluated",
     )
 
-    key_grid = wide_common.loc[:, KEY_COLUMNS].drop_duplicates()
-    sarimax_aligned = sarimax_group_d_predictions.merge(key_grid, on=KEY_COLUMNS, how="inner")
-    sarimax_frames: list[pd.DataFrame] = []
-    evaluated_horizons: set[int] = set()
-    if not sarimax_aligned.empty:
-        evaluated_horizons = {int(value) for value in sarimax_aligned["horizon"].unique()}
-        sarimax_metrics = _with_grid_metadata(
-            compute_metric_table(sarimax_aligned),
-            predictions=sarimax_aligned,
-            comparison_grid=sarimax_comparison_grid,
-            evaluation_status="evaluated_on_available_horizons",
-            group_id=sarimax_group_id,
-        )
-        sarimax_frames.append(sarimax_metrics)
-    sarimax_placeholders = _sarimax_placeholder_rows(
-        evaluated_horizons,
-        requested_horizons,
-        group_id=sarimax_group_id,
-        comparison_grid=sarimax_comparison_grid,
-    )
-    if not sarimax_placeholders.empty:
-        sarimax_frames.append(sarimax_placeholders)
-
-    metrics = pd.concat([wide_metrics, *sarimax_frames], ignore_index=True, sort=False)
-    metrics = _assign_best_model(metrics, full_horizon_label=_horizon_range_label(requested_horizons))
+    metrics = _assign_best_model(wide_metrics, full_horizon_label=_horizon_range_label(requested_horizons))
     metrics["_horizon_order"] = metrics["horizon"].map(_horizon_order)
     metrics["_model_order"] = metrics["model"].map(MODEL_ORDER).fillna(99)
     return metrics.sort_values(["_horizon_order", "_model_order"]).drop(
@@ -243,8 +170,8 @@ def build_backtest_predictions_table(
 ) -> pd.DataFrame:
     """Stack row-level walk-forward predictions from every model into one table.
 
-    Each source frame (SARIMA, Elastic Net, Ensemble, seasonal-naive, RBA,
-    SARIMAX Group D) carries the same forecast/actual/error core, plus a few
+    Each source frame (SARIMA, Elastic Net, Ensemble, seasonal-naive, RBA)
+    carries the same forecast/actual/error core, plus a few
     model-specific extras (``rba_actual``, ``rba_reported_error``,
     ``horizon_cap``). This is a plain outer-union stack of those origin-level
     rows -- unlike ``build_joined_metric_table``, it is not restricted to a
@@ -266,86 +193,6 @@ def build_backtest_predictions_table(
     return combined.reset_index(drop=True)
 
 
-def _sarimax_group_d_predictions(
-    curated_path: Path,
-    initial_train_size: int,
-    horizons: tuple[int, ...],
-    criterion: str,
-    max_p: int,
-    max_q: int,
-    max_p_seasonal: int,
-    max_q_seasonal: int,
-    d_values: Iterable[int],
-    seasonal_d_values: Iterable[int],
-    maxiter: int,
-    order_selection_holdout_quarters: int,
-) -> pd.DataFrame:
-    series = load_target_series(curated_path)
-    exog = load_exog_frame(curated_path)
-    development_series, development_exog = _development_split(
-        series,
-        exog,
-        holdout_quarters=order_selection_holdout_quarters,
-    )
-    choices = resolve_level_change_features(development_series, development_exog, maxiter=maxiter)
-    group_d = next(group for group in build_feature_groups(choices) if group.group_id == "D")
-    search_results = run_sarimax_order_search(
-        series=development_series,
-        exog=development_exog.loc[:, list(group_d.features)],
-        max_p=max_p,
-        max_q=max_q,
-        max_p_seasonal=max_p_seasonal,
-        max_q_seasonal=max_q_seasonal,
-        d_values=d_values,
-        seasonal_d_values=seasonal_d_values,
-        trend="n",
-        maxiter=maxiter,
-    )
-    best = _select_order(search_results, criterion)
-    return _group_predictions(
-        group=group_d,
-        series=series,
-        exog=exog,
-        order=best["order"],
-        seasonal_order=best["seasonal_order"],
-        initial_train_size=initial_train_size,
-        horizons=horizons,
-        maxiter=maxiter,
-    )
-
-
-def _sarimax_fixed_predictions(
-    curated_path: Path,
-    target_column: str,
-    feature_columns: tuple[str, ...],
-    order: tuple[int, int, int],
-    seasonal_order: tuple[int, int, int, int],
-    initial_train_size: int,
-    horizons: tuple[int, ...],
-    maxiter: int,
-) -> pd.DataFrame:
-    from src.models import evaluation as model_evaluation
-
-    series = load_target_series(curated_path, target_column=target_column)
-    exog = load_exog_frame(curated_path).loc[:, list(feature_columns)]
-    return model_evaluation.walk_forward_backtest_with_exog(
-        series=series,
-        exog=exog,
-        forecast_func=lambda train_y, train_x, future_x, steps: forecast_sarimax(
-            train_y,
-            train_x,
-            future_x,
-            steps=steps,
-            order=order,
-            seasonal_order=seasonal_order,
-            maxiter=maxiter,
-        ),
-        initial_train_size=initial_train_size,
-        horizons=horizons,
-        model_name="sarimax",
-    )
-
-
 def run_model_comparison_all(
     curated_path: Path = CURATED_DATA_PATH,
     rba_path: Path = RBA_FORECAST_PATH,
@@ -361,20 +208,6 @@ def run_model_comparison_all(
     elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
     sarima_order: tuple[int, int, int] = SARIMA_DEFAULT_ORDER,
     sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
-    sarimax_feature_columns: tuple[str, ...] | None = None,
-    sarimax_order: tuple[int, int, int] | None = None,
-    sarimax_seasonal_order: tuple[int, int, int, int] | None = None,
-    sarimax_group_id: str = "D",
-    sarimax_comparison_grid: str = "sarimax_group_d_shared_key_intersection",
-    criterion: str = "aic",
-    max_p: int = DEFAULT_COMPARISON_MAX_ARMA_ORDER,
-    max_q: int = DEFAULT_COMPARISON_MAX_ARMA_ORDER,
-    max_p_seasonal: int = DEFAULT_COMPARISON_MAX_ARMA_ORDER,
-    max_q_seasonal: int = DEFAULT_COMPARISON_MAX_ARMA_ORDER,
-    d_values: Iterable[int] = (0,),
-    seasonal_d_values: Iterable[int] = (0,),
-    maxiter: int = 100,
-    order_selection_holdout_quarters: int = ORDER_SELECTION_HOLDOUT_QUARTERS,
     verbose: bool = False,
 ) -> pd.DataFrame:
     """Compute and save the joined all-model comparison report."""
@@ -437,37 +270,6 @@ def run_model_comparison_all(
         include_rba=include_rba,
     )
 
-    if verbose:
-        print("Running SARIMAX row-level backtest...", flush=True)
-    if sarimax_feature_columns is None:
-        sarimax_predictions = _sarimax_group_d_predictions(
-            curated_path=curated_path,
-            initial_train_size=initial_train_size,
-            horizons=requested_horizons,
-            criterion=criterion,
-            max_p=max_p,
-            max_q=max_q,
-            max_p_seasonal=max_p_seasonal,
-            max_q_seasonal=max_q_seasonal,
-            d_values=d_values,
-            seasonal_d_values=seasonal_d_values,
-            maxiter=maxiter,
-            order_selection_holdout_quarters=order_selection_holdout_quarters,
-        )
-    else:
-        if sarimax_order is None or sarimax_seasonal_order is None:
-            raise ValueError("sarimax_order and sarimax_seasonal_order are required for fixed SARIMAX specs.")
-        sarimax_predictions = _sarimax_fixed_predictions(
-            curated_path=curated_path,
-            target_column=target_column,
-            feature_columns=sarimax_feature_columns,
-            order=sarimax_order,
-            seasonal_order=sarimax_seasonal_order,
-            initial_train_size=initial_train_size,
-            horizons=requested_horizons,
-            maxiter=maxiter,
-        )
-
     comparison = build_joined_metric_table(
         wide_prediction_frames=[
             sarima_predictions,
@@ -475,10 +277,7 @@ def run_model_comparison_all(
             ensemble_predictions,
             baseline_predictions,
         ],
-        sarimax_group_d_predictions=sarimax_predictions,
         horizons=requested_horizons,
-        sarimax_group_id=sarimax_group_id,
-        sarimax_comparison_grid=sarimax_comparison_grid,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     comparison.round({"rmse": 6, "mae": 6}).to_csv(output_path, index=False)
@@ -490,7 +289,6 @@ def run_model_comparison_all(
                 elastic_net_predictions,
                 ensemble_predictions,
                 baseline_predictions,
-                sarimax_predictions,
             ]
         )
         predictions_output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -513,7 +311,6 @@ def run_trimmed_mean_model_comparison_all(
     horizons: Iterable[int] = DEFAULT_HORIZONS,
     seed: int = DEFAULT_SEED,
     max_origins: int | None = None,
-    maxiter: int = 100,
     verbose: bool = False,
 ) -> pd.DataFrame:
     """Reproduce the Phase 3 trimmed-mean all-model comparison report."""
@@ -531,20 +328,8 @@ def run_trimmed_mean_model_comparison_all(
         elastic_net_feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
         sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
         sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
-        sarimax_feature_columns=TRIMMED_MEAN_PRIMARY_FEATURE_COLUMNS,
-        sarimax_order=TRIMMED_MEAN_PRIMARY_ORDER,
-        sarimax_seasonal_order=TRIMMED_MEAN_PRIMARY_SEASONAL_ORDER,
-        sarimax_group_id="TRIMMED_MEAN_PRIMARY_WTI",
-        sarimax_comparison_grid="trimmed_mean_sarimax_primary_wti_shared_key_intersection",
-        d_values=(0, 1),
-        seasonal_d_values=(0, 1),
-        maxiter=maxiter,
         verbose=verbose,
     )
-
-
-def _parse_int_values(raw: str) -> tuple[int, ...]:
-    return tuple(int(value.strip()) for value in raw.split(",") if value.strip())
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -571,19 +356,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--initial-train-size", type=int, default=DEFAULT_INITIAL_TRAIN_SIZE)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--max-origins", type=int, default=None)
-    parser.add_argument("--criterion", choices=("aic", "bic"), default="aic")
-    parser.add_argument("--d-values", default="0")
-    parser.add_argument("--seasonal-d-values", default="0")
-    parser.add_argument("--max-p", type=int, default=DEFAULT_COMPARISON_MAX_ARMA_ORDER)
-    parser.add_argument("--max-q", type=int, default=DEFAULT_COMPARISON_MAX_ARMA_ORDER)
-    parser.add_argument("--max-p-seasonal", type=int, default=DEFAULT_COMPARISON_MAX_ARMA_ORDER)
-    parser.add_argument("--max-q-seasonal", type=int, default=DEFAULT_COMPARISON_MAX_ARMA_ORDER)
-    parser.add_argument("--maxiter", type=int, default=100)
-    parser.add_argument(
-        "--order-selection-holdout-quarters",
-        type=int,
-        default=ORDER_SELECTION_HOLDOUT_QUARTERS,
-    )
     args = parser.parse_args(argv)
 
     if args.target == "trimmed_mean":
@@ -598,7 +370,6 @@ def main(argv: list[str] | None = None) -> None:
             initial_train_size=args.initial_train_size,
             seed=args.seed,
             max_origins=args.max_origins,
-            maxiter=args.maxiter,
             verbose=True,
         )
     else:
@@ -613,15 +384,6 @@ def main(argv: list[str] | None = None) -> None:
             initial_train_size=args.initial_train_size,
             seed=args.seed,
             max_origins=args.max_origins,
-            criterion=args.criterion,
-            max_p=args.max_p,
-            max_q=args.max_q,
-            max_p_seasonal=args.max_p_seasonal,
-            max_q_seasonal=args.max_q_seasonal,
-            d_values=_parse_int_values(args.d_values),
-            seasonal_d_values=_parse_int_values(args.seasonal_d_values),
-            maxiter=args.maxiter,
-            order_selection_holdout_quarters=args.order_selection_holdout_quarters,
             verbose=True,
         )
     print(comparison.round({"rmse": 3, "mae": 3}).to_string(index=False))

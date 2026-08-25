@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.models.evaluation import CURATED_DATA_PATH, load_target_series
+from src.models.evaluation import CURATED_DATA_PATH, load_target_series, root_stability_summary
 from src.models.sarima import DEFAULT_ORDER, DEFAULT_SEASONAL_ORDER, fit_sarima
 
 
@@ -74,6 +74,9 @@ def run_order_search(
             "converged": False,
             "aic": float("inf"),
             "bic": float("inf"),
+            "ar_root_min_modulus": float("nan"),
+            "ma_root_min_modulus": float("nan"),
+            "stable": False,
             "error": "",
         }
         try:
@@ -91,6 +94,7 @@ def run_order_search(
                     "bic": float(fitted.bic),
                 }
             )
+            row.update(root_stability_summary(fitted))
         except Exception as exc:  # pragma: no cover - defensive CLI path
             row["error"] = str(exc)
         rows.append(row)
@@ -115,8 +119,7 @@ def main(argv: list[str] | None = None) -> None:
         default=0,
         help="Exclude this many quarters from the tail of the series before "
         "searching, so DEFAULT_ORDER can be re-derived on development-only "
-        "data rather than the full sample (mirrors sarimax_order_search.py's "
-        "ORDER_SELECTION_HOLDOUT_QUARTERS).",
+        "data rather than the full sample.",
     )
     args = parser.parse_args(argv)
 
