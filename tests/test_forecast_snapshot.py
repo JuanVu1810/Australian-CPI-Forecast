@@ -114,7 +114,6 @@ def test_compare_forecast_snapshots_skips_gracefully_when_database_url_unset(
 
 def test_snapshot_forecasts_inserts_available_families(monkeypatch, sqlite_engine):
     monkeypatch.setattr(api_main, "forecast_all", lambda request: _fake_response())
-    monkeypatch.setattr(forecast_snapshot, "_current_champion_family", lambda: "sarima")
 
     summary = forecast_snapshot.snapshot_forecasts()
 
@@ -129,7 +128,7 @@ def test_snapshot_forecasts_inserts_available_families(monkeypatch, sqlite_engin
 
     assert sorted(metrics["run_id"]) == ["elastic_net:2026Q3", "sarima:2026Q3"]
     selected = dict(zip(metrics["model_name"], metrics["selected_model"]))
-    assert bool(selected["sarima"]) is True
+    assert bool(selected["sarima"]) is False
     assert bool(selected["elastic_net"]) is False
     assert set(metrics["forecast_horizon"]) == {1}
 
@@ -141,7 +140,6 @@ def test_snapshot_forecasts_inserts_available_families(monkeypatch, sqlite_engin
 
 def test_snapshot_forecasts_is_idempotent_for_same_quarter(monkeypatch, sqlite_engine):
     monkeypatch.setattr(api_main, "forecast_all", lambda request: _fake_response())
-    monkeypatch.setattr(forecast_snapshot, "_current_champion_family", lambda: "sarima")
 
     first = forecast_snapshot.snapshot_forecasts()
     second = forecast_snapshot.snapshot_forecasts()
@@ -161,7 +159,6 @@ def test_compare_forecast_snapshots_splits_observed_and_pending(
     monkeypatch, sqlite_engine, tmp_path
 ):
     monkeypatch.setattr(api_main, "forecast_all", lambda request: _fake_response())
-    monkeypatch.setattr(forecast_snapshot, "_current_champion_family", lambda: "sarima")
     forecast_snapshot.snapshot_forecasts()
 
     with sqlite_engine.begin() as conn:

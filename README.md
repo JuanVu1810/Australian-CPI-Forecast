@@ -49,7 +49,7 @@ demonstrated shallowly:
 |---|---|---|
 | Data Science | SARIMA vs SARIMAX vs Elastic Net, walk-forward validated against seasonal naive **and** the RBA forecast, with SARIMAX/Elastic Net coefficient interpretability | EDA notebook, feature engineering |
 | Data Engineering | Ingestion -> validation -> curated Parquet -> DuckDB, fully local and credential-free | BigQuery documented as target, not deployed |
-| ML Engineering | MLflow runs, model registry with `@champion`, FastAPI selected-model serving, Docker, deployed and live on Google Cloud Run | Postgres as the optional MLflow backend and run metadata store |
+| ML Engineering | MLflow runs, FastAPI serving every trained model family (no promoted champion), Docker, deployed and live on Google Cloud Run | Postgres as the optional MLflow backend and run metadata store |
 
 ## What `cpi_forecast_V1.ipynb` Found
 
@@ -186,8 +186,8 @@ clear job is documented as a target rather than built.
 | SARIMA | implemented | **DS flagship** | `notebooks/cpi_forecast_V1.ipynb`, `src/models/sarima.py` |
 | SARIMAX / Elastic Net comparison + RBA benchmark | implemented; SARIMAX also includes two COVID intervention-dummy feature groups (I, J) | **DS flagship** | `src/models/`, `reports/model_comparison_sarimax.csv`, `reports/model_comparison_elastic_net.csv`, `reports/elastic_net_coefficients.csv` |
 | MLflow | implemented locally: comparison runs log params, metrics, report artifacts, and full-sample model artifacts | **MLE flagship** | `src/models/tracking.py`, `mlruns/` (local, gitignored) |
-| FastAPI | deployed: MLflow `@champion` `/health`, `/features`, `/models`, `/metrics`, `/forecast`, and `/forecast/all` serving | **MLE flagship** | `api/main.py`, `src/models/registry.py`, live at the URL below |
-| Docker / Google Cloud Run | deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs -- verified 2026-08-22 on image tag `redeploy-20260822-05bf9b9`, serving Elastic Net `@champion` version 9 (RMSE 1.703591 from `shared_grid_report`) | **MLE flagship** | `Dockerfile`, `.dockerignore` |
+| FastAPI | deployed: `/health`, `/features`, `/forecast/all`, and `/forecast/trimmed-mean/all` serve every trained model family directly from each family's latest MLflow run -- there is no promoted champion or Model Registry alias | **MLE flagship** | `api/main.py`, `src/models/registry.py`, live at the URL below |
+| Docker / Google Cloud Run | deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs -- verified 2026-08-25 on image tag `redeploy-20260825-16a2f90`, serving `cpi_forecast_champion`/`trimmed_mean_forecast_champion` and all four families with calibrated intervals. That verified deployment predates the champion/registry removal below and still runs the `@champion`-based API; redeploy to pick up the current `/forecast/all`-only serving code | **MLE flagship** | `Dockerfile`, `.dockerignore` |
 | Streamlit | multipage dashboard implemented for overview, data exploration, and static EDA summaries | supporting | `app/streamlit_app.py`, `app/pages/` |
 | GitHub Actions | CI + scheduled ETL scaffolded; no deploy-to-Cloud-Run step, so the live service above does not auto-update on push | supporting | `.github/workflows/` |
 
@@ -333,9 +333,10 @@ work already underway or planned:
 ## High-Level Architecture
 
 The flow is MLflow-centred: model training and walk-forward evaluation
-produce tracked runs, artifacts, and registry candidates; only the selected
-champion model is promoted to the serving path, keeping the API focused on
-inference rather than training logic.
+produce tracked runs and artifacts; the API loads each family's latest
+finished run directly and serves every family side by side, keeping the API
+focused on inference rather than training logic. There is no promoted
+"champion" model or MLflow Model Registry step in this project.
 
 ```mermaid
 flowchart TD
@@ -369,10 +370,7 @@ flowchart TD
 
     MLFLOW --> POSTGRES["Supabase PostgreSQL (optional MLflow backend store)"]
     MLFLOW --> ARTIFACTS["Artifact storage (models + reports + coefficients)"]
-    MLFLOW --> REGISTRY["MLflow Model Registry"]
-
-    REGISTRY --> CHAMPION["MLflow @champion alias"]
-    CHAMPION --> API["FastAPI inference API"]
+    MLFLOW --> API["FastAPI inference API (loads each family's latest run)"]
 
     STREAMLIT["Streamlit dashboard"] --> API
 
@@ -421,23 +419,20 @@ comparisons, residual diagnostics, permutation-importance/coefficient interpreta
 
 Container deployment path: FastAPI -> Docker image -> Google Cloud Run --
 deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs.
-The MLflow champion currently lives in the local gitignored `mlruns/` file
-store, so the Docker image must be built from a local checkout that already
-contains a promoted champion snapshot:
+Every trained model family's MLflow runs currently live in the local
+gitignored `mlruns/` file store, so the Docker image must be built from a
+local checkout that already has finished runs for each family:
 
 ```bash
 python -m src.models.evaluation
 python -m src.models.sarimax_order_search
 python -m src.models.elastic_net
 python -m src.models.model_comparison
-python -m src.models.registry
 
 docker build -t cpi-forecast-api:latest .
 docker run --rm -d --name cpi-forecast-api -p 8000:8000 cpi-forecast-api:latest
 curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/models
-curl http://127.0.0.1:8000/metrics
-curl -X POST http://127.0.0.1:8000/forecast \
+curl -X POST http://127.0.0.1:8000/forecast/all \
   -H "Content-Type: application/json" \
   -d '{"horizon":4}'
 docker stop cpi-forecast-api
@@ -457,10 +452,10 @@ gcloud run deploy cpi-forecast-api \
 ```
 
 Do not use a git-triggered build for this version: a fresh `git clone` will
-not include `mlruns/` (it's gitignored), so the champion alias and model
-artifacts would be missing. Deploying the pre-built image intentionally bakes
-the current local MLflow run history into the image, not only the champion;
-that is an accepted tradeoff at this project's scale. The Dockerfile rewrites
+not include `mlruns/` (it's gitignored), so every family's model artifacts
+would be missing. Deploying the pre-built image intentionally bakes the
+current local MLflow run history into the image; that is an accepted
+tradeoff at this project's scale. The Dockerfile rewrites
 absolute local `mlruns/` artifact paths to `/app/mlruns` during image build so
 the baked MLflow file store resolves inside the container. Cloud Run injects a
 `PORT` environment variable and expects the container to listen on it, which
@@ -535,12 +530,14 @@ other two flagship pillars, with dashboard polish last.
    walk-forward validated against seasonal naive **and** the RBA benchmark,
    reported overall and by horizon -- `src/models/`,
    `reports/model_comparison_*.csv`.
-2. **ML Engineering flagship (deployed and current as of 2026-08-22):** every
-   run (params, features, horizon, metrics, and model settings) logs to
-   MLflow; the selected model serves through FastAPI (`/health`,
-   `/features`, `/models`, `/metrics`, `/forecast`, `/forecast/all`);
-   containerised with Docker and live on Google Cloud Run (see Implementation
-   Status for the URL), serving Elastic Net as the MLflow `@champion`.
+2. **ML Engineering flagship (deployed as of 2026-08-25, predates the
+   champion/registry removal below):** every run (params, features, horizon,
+   metrics, and model settings) logs to MLflow; FastAPI (`/health`,
+   `/features`, `/forecast/all`, `/forecast/trimmed-mean/all`) serves every
+   trained model family directly from its latest MLflow run, with no
+   promoted champion or Model Registry step; containerised with Docker and
+   live on Google Cloud Run (see Implementation Status for the URL and
+   redeploy caveat).
 3. **Data Engineering flagship:** confirm DuckDB SQL examples against the
    regenerated curated dataset; add the Postgres run/metrics metadata store;
    confirm GitHub Actions CI and scheduled ETL after pushing.

@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -12,23 +13,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY api api
 COPY src src
 COPY data/curated data/curated
+# .dockerignore excludes reports/* except the handful of CSVs api/main.py
+# and ensemble.py read at request time (interval calibration/coverage
+# diagnostics, headline's dynamic ensemble weight source) -- this only
+# copies those.
+COPY reports reports
 COPY mlruns mlruns
-# Rewrites POSIX-style host paths from Linux/WSL/macOS builds; Windows-native paths are not handled.
-RUN python - <<'PY'
-from pathlib import Path
-import re
-
-for path in Path("mlruns").rglob("*"):
-    if not path.is_file():
-        continue
-    try:
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        continue
-    updated = re.sub(r"/(?:home|Users)/[^\n\r]*?/mlruns", "/app/mlruns", text)
-    if updated != text:
-        path.write_text(updated, encoding="utf-8")
-PY
+COPY scripts/rewrite_mlruns_paths.py scripts/rewrite_mlruns_paths.py
+# Rewrites POSIX-style host paths from Linux/WSL/macOS builds; Windows-native
+# paths are not handled. A plain script file (not a heredoc) so this builds
+# on Cloud Build's legacy gcr.io/cloud-builders/gcb-internal step too, which
+# does not honor the BuildKit `# syntax=` directive or heredoc RUN syntax.
+RUN python scripts/rewrite_mlruns_paths.py
 
 ENV PORT=8000
 EXPOSE 8000

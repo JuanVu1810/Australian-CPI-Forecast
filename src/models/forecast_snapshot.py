@@ -20,7 +20,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from fastapi import HTTPException
 
 from api import main as api_main
 from src.models.evaluation import CURATED_DATA_PATH, PROJECT_ROOT, load_target_series
@@ -54,19 +53,6 @@ class SnapshotSummary:
     notes: str = ""
 
 
-def _current_champion_family() -> str | None:
-    """Return the family currently holding the MLflow ``@champion`` alias, if any."""
-    client = api_main._mlflow_client()
-    try:
-        version = api_main._champion_model_version(client)
-    except HTTPException:
-        return None
-    try:
-        return api_main._model_family(client, version)
-    except HTTPException:
-        return None
-
-
 def snapshot_forecasts(
     n_sims: int = DEFAULT_N_SIMS,
 ) -> SnapshotSummary:
@@ -96,7 +82,6 @@ def snapshot_forecasts(
     response = api_main.forecast_all(
         api_main.AllForecastsRequest(horizon=SNAPSHOT_HORIZON, n_sims=n_sims)
     )
-    champion_family = _current_champion_family()
     run_date = datetime.now(timezone.utc).isoformat()
 
     inserted: list[str] = []
@@ -127,7 +112,10 @@ def snapshot_forecasts(
                     "model_name": family,
                     "run_date": run_date,
                     "forecast_horizon": SNAPSHOT_HORIZON,
-                    "selected_model": family == champion_family,
+                    # Always False: this project has no promoted "champion" model,
+                    # so no family is singled out as selected. Column kept for
+                    # schema compatibility with the deployed Postgres table.
+                    "selected_model": False,
                 },
             )
             conn.execute(

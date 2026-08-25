@@ -1,4 +1,8 @@
-"""FastAPI service for serving the MLflow champion CPI forecast model."""
+"""FastAPI service serving CPI forecasts for every trained model family.
+
+Each family's most recent finished MLflow run is loaded directly (see
+``src/models/registry.py``) -- there is no promoted "champion" model.
+"""
 
 from __future__ import annotations
 
@@ -22,10 +26,7 @@ from src.models.elastic_net import (
 )
 from src.models.evaluation import TARGET_COLUMN, load_target_series
 from src.models.registry import (
-    CHAMPION_ALIAS,
-    REGISTERED_MODEL_NAME,
     TRIMMED_MEAN_MODEL_FAMILY_TAGS,
-    TRIMMED_MEAN_REGISTERED_MODEL_NAME,
     _client_and_experiment,
     _latest_model_run_id,
     _logged_model_uri,
@@ -59,23 +60,8 @@ TRIMMED_MEAN_FAMILY_RUN_TAGS = {
 app = FastAPI(
     title="Australian CPI Forecast API",
     version="0.2.0",
-    description="Portfolio API for serving the MLflow Model Registry champion.",
+    description="Portfolio API serving CPI forecasts for every trained model family.",
 )
-
-
-class ForecastRequest(BaseModel):
-    horizon: int = Field(default=8, ge=1, le=MAX_FORECAST_HORIZON)
-
-
-class ForecastResponse(BaseModel):
-    model_name: str
-    model_version: str
-    model_family: str
-    run_id: str
-    horizon: int
-    forecast: list[float]
-    quarters: list[str]
-    forecast_origin: str
 
 
 class AllForecastsRequest(BaseModel):
@@ -112,13 +98,6 @@ class AllForecastsResponse(BaseModel):
 
 
 @dataclass(frozen=True)
-class ModelForecast:
-    values: list[float]
-    forecast_origin: str
-    quarters: list[str]
-
-
-@dataclass(frozen=True)
 class FamilyForecastData:
     forecast: list[float]
     draws: np.ndarray
@@ -151,78 +130,6 @@ def next_quarters(last_quarter: str, horizon: int) -> list[str]:
 def _mlflow_client() -> MlflowClient:
     tracking.configure_mlflow()
     return MlflowClient()
-
-
-def _champion_model_version(
-    client: MlflowClient,
-    registered_model_name: str = REGISTERED_MODEL_NAME,
-    champion_alias: str = CHAMPION_ALIAS,
-):
-    try:
-        return client.get_model_version_by_alias(registered_model_name, champion_alias)
-    except Exception as exc:  # pragma: no cover - MLflow exception classes vary by version
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"No MLflow champion alias found for {registered_model_name!r}. "
-                "Run `python -m src.models.registry` after model orchestrators log runs."
-            ),
-        ) from exc
-
-
-def _model_family(
-    client: MlflowClient,
-    version,
-    registered_model_name: str = REGISTERED_MODEL_NAME,
-    champion_alias: str = CHAMPION_ALIAS,
-) -> str:
-    del registered_model_name
-    del champion_alias
-    tags = dict(getattr(version, "tags", {}) or {})
-    if tags.get("model_family"):
-        return str(tags["model_family"])
-    if getattr(version, "run_id", None):
-        run = client.get_run(version.run_id)
-        if run.data.tags.get("model_family"):
-            return str(run.data.tags["model_family"])
-    raise HTTPException(
-        status_code=503,
-        detail=f"Champion version {version.version} is missing a model_family tag.",
-    )
-
-
-def _metric_payload(
-    client: MlflowClient,
-    version,
-    registered_model_name: str = REGISTERED_MODEL_NAME,
-    champion_alias: str = CHAMPION_ALIAS,
-) -> dict[str, object]:
-    del champion_alias
-    if not getattr(version, "run_id", None):
-        raise HTTPException(
-            status_code=503,
-            detail=f"Champion version {version.version} is missing its source run.",
-        )
-    run = client.get_run(version.run_id)
-    metrics = {
-        key: float(value)
-        for key, value in run.data.metrics.items()
-        if key == "rmse_overall"
-        or key == "mae_overall"
-        or key.startswith("rmse_h")
-        or key.startswith("mae_h")
-    }
-    return {
-        "model_name": registered_model_name,
-        "model_version": str(version.version),
-        "model_family": _model_family(
-            client,
-            version,
-            registered_model_name=registered_model_name,
-        ),
-        "run_id": version.run_id,
-        "metrics": metrics,
-    }
 
 
 def _current_elastic_net_frame(
@@ -266,14 +173,14 @@ def _sarima_forecast_metadata(values) -> tuple[str, list[str]]:
     if index is None or len(index) == 0:
         raise HTTPException(
             status_code=503,
-            detail="SARIMA champion forecast did not include a date index.",
+            detail="SARIMA forecast did not include a date index.",
         )
     try:
         periods = pd.PeriodIndex(index, freq="Q")
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail="SARIMA champion forecast index cannot be interpreted as quarters.",
+            detail="SARIMA forecast index cannot be interpreted as quarters.",
         ) from exc
     forecast_origin = str(periods[0] - 1)
     quarters = [str(period) for period in periods]
@@ -851,65 +758,12 @@ TRIMMED_MEAN_FAMILY_HANDLERS: dict[str, Callable[[str, int, int, int], FamilyFor
 }
 
 
-def _forecast_values(
-    client: MlflowClient,
-    version,
-    family: str,
-    horizon: int,
-    registered_model_name: str = REGISTERED_MODEL_NAME,
-    champion_alias: str = CHAMPION_ALIAS,
-    target_column: str = TARGET_COLUMN,
-    feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
-) -> ModelForecast:
-    model_uri = f"models:/{registered_model_name}@{champion_alias}"
-    if family in {"sarima", TRIMMED_MEAN_MODEL_FAMILY_TAGS["sarima"]}:
-        import mlflow.statsmodels
-
-        model = mlflow.statsmodels.load_model(model_uri)
-        values = model.forecast(steps=horizon)
-        forecast_origin, quarters = _sarima_forecast_metadata(values)
-        return ModelForecast(
-            values=np.asarray(values, dtype=float).tolist(),
-            forecast_origin=forecast_origin,
-            quarters=quarters,
-        )
-    if family in {"elastic_net", TRIMMED_MEAN_MODEL_FAMILY_TAGS["elastic_net"]}:
-        fitted = _load_elastic_net_fit(model_uri)
-        current_frame = _current_elastic_net_frame(
-            target_column=target_column,
-            feature_columns=feature_columns,
-        )
-        horizon_to_value = dict(zip(fitted.horizons, fitted.predict_next(current_frame)))
-        missing = [h for h in range(1, horizon + 1) if h not in horizon_to_value]
-        if missing:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Elastic Net champion does not have fitted horizons {missing}.",
-            )
-        values = [float(horizon_to_value[h]) for h in range(1, horizon + 1)]
-        clean_frame = (
-            current_frame.loc[:, list(fitted.feature_columns)].dropna().astype(float).sort_index()
-        )
-        forecast_origin = str(clean_frame.index[-1])
-        return ModelForecast(
-            values=values,
-            forecast_origin=forecast_origin,
-            quarters=next_quarters(forecast_origin, horizon),
-        )
-    raise HTTPException(
-        status_code=503,
-        detail=f"Champion model family {family!r} is not servable by this API.",
-    )
-
-
 @app.get("/health")
 def health() -> dict[str, object]:
     return {
         "status": "ok",
         "curated_dataset_available": CURATED_DATA_PATH.exists(),
         "curated_dataset": str(CURATED_DATA_PATH),
-        "registered_model_name": REGISTERED_MODEL_NAME,
-        "champion_alias": CHAMPION_ALIAS,
     }
 
 
@@ -922,95 +776,6 @@ def features() -> dict[str, object]:
         "start_quarter": df["quarter"].iloc[0],
         "end_quarter": df["quarter"].iloc[-1],
     }
-
-
-@app.get("/models")
-def models() -> dict[str, object]:
-    client = _mlflow_client()
-    registered = []
-    for model in client.search_registered_models():
-        versions = []
-        model_versions = client.search_model_versions(f"name = '{model.name}'")
-        for version in sorted(model_versions, key=lambda item: int(item.version)):
-            versions.append(
-                {
-                    "version": str(version.version),
-                    "run_id": version.run_id,
-                    "status": version.status,
-                    "aliases": list(getattr(version, "aliases", []) or []),
-                    "tags": dict(getattr(version, "tags", {}) or {}),
-                }
-            )
-        registered.append(
-            {
-                "name": model.name,
-                "aliases": dict(getattr(model, "aliases", {}) or {}),
-                "versions": versions,
-            }
-        )
-    return {"registered_models": registered}
-
-
-@app.get("/metrics")
-def metrics() -> dict[str, object]:
-    client = _mlflow_client()
-    version = _champion_model_version(client)
-    return _metric_payload(client, version)
-
-
-@app.post("/forecast", response_model=ForecastResponse)
-def forecast(request: ForecastRequest) -> ForecastResponse:
-    load_curated_data()
-    client = _mlflow_client()
-    version = _champion_model_version(client)
-    family = _model_family(client, version)
-    forecast_result = _forecast_values(client, version, family, request.horizon)
-    return ForecastResponse(
-        model_name=REGISTERED_MODEL_NAME,
-        model_version=str(version.version),
-        model_family=family,
-        run_id=version.run_id,
-        horizon=request.horizon,
-        forecast=[round(float(value), 4) for value in forecast_result.values],
-        quarters=forecast_result.quarters,
-        forecast_origin=forecast_result.forecast_origin,
-    )
-
-
-@app.post("/forecast/trimmed-mean", response_model=ForecastResponse)
-def forecast_trimmed_mean(request: ForecastRequest) -> ForecastResponse:
-    load_curated_data()
-    client = _mlflow_client()
-    version = _champion_model_version(
-        client,
-        registered_model_name=TRIMMED_MEAN_REGISTERED_MODEL_NAME,
-        champion_alias=CHAMPION_ALIAS,
-    )
-    family = _model_family(
-        client,
-        version,
-        registered_model_name=TRIMMED_MEAN_REGISTERED_MODEL_NAME,
-    )
-    forecast_result = _forecast_values(
-        client,
-        version,
-        family,
-        request.horizon,
-        registered_model_name=TRIMMED_MEAN_REGISTERED_MODEL_NAME,
-        champion_alias=CHAMPION_ALIAS,
-        target_column=TRIMMED_MEAN_TARGET_COLUMN,
-        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
-    )
-    return ForecastResponse(
-        model_name=TRIMMED_MEAN_REGISTERED_MODEL_NAME,
-        model_version=str(version.version),
-        model_family=family,
-        run_id=version.run_id,
-        horizon=request.horizon,
-        forecast=[round(float(value), 4) for value in forecast_result.values],
-        quarters=forecast_result.quarters,
-        forecast_origin=forecast_result.forecast_origin,
-    )
 
 
 def _forecast_all_with_handlers(

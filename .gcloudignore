@@ -14,9 +14,9 @@ data/processed
 # Exclude reports/ by default, but api/main.py and ensemble.py read a
 # handful of these CSVs at request time (interval calibration/coverage
 # diagnostics, and headline's dynamic ensemble weight source) -- keep those
-# specific files. Use reports/* (not a bare "reports") so the negations
-# below actually take effect; Docker cannot un-exclude files inside a
-# wholesale-ignored parent directory.
+# specific files uploaded to Cloud Build so the Docker build (which mirrors
+# this same allowlist in .dockerignore) can include them. Use reports/*
+# (not a bare "reports") so the negations below actually take effect.
 reports/*
 !reports/model_interval_coverage.csv
 !reports/model_interval_calibration_factors.csv
@@ -25,3 +25,11 @@ reports/*
 !reports/model_interval_calibration_factors_trimmed_mean.csv
 !reports/model_interval_calibration_validation_trimmed_mean.csv
 !reports/model_comparison_elastic_net.csv
+
+# Deliberately NOT ignoring mlruns/ or data/curated/, unlike .gitignore --
+# the Cloud Run image is built from a local checkout that bakes in the
+# current local MLflow run history (see README's "API, Dashboard, And
+# Deployment" section). gcloud builds submit falls back to .gitignore's
+# rules when no .gcloudignore is present, which would silently drop
+# mlruns/ from the uploaded build context and break `COPY mlruns mlruns`
+# in the Dockerfile.
