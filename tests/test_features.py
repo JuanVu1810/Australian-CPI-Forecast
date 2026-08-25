@@ -5,6 +5,7 @@ from src.features import (
     add_growth_rates,
     add_intervention_dummies,
     add_lag_features,
+    add_nonlinear_elastic_net_terms,
     order_feature_columns,
 )
 
@@ -138,6 +139,33 @@ def test_default_lag_features_include_trimmed_mean_cpi_yoy_lags():
     assert "trimmed_mean_cpi_yoy_lag4" in result
     assert result.loc[4, "trimmed_mean_cpi_yoy_lag1"] == 1.4
     assert result.loc[4, "trimmed_mean_cpi_yoy_lag4"] == 1.1
+
+
+def test_nonlinear_elastic_net_terms_use_lagged_origin_available_inputs():
+    source = pd.DataFrame(
+        {
+            "ppi_growth_lag2": [None, 2.0, -3.0],
+            "commodity_growth_lag1": [1.0, -4.0, 0.5],
+            "wti_growth_lag1": [1.5, -2.0, 0.0],
+            "brent_growth_lag1": [2.0, -3.0, 4.0],
+            "cash_rate_change_lag1": [0.25, -0.10, 0.00],
+            "unemployment_rate_change_lag1": [0.20, 0.30, -0.40],
+        }
+    )
+
+    result = add_nonlinear_elastic_net_terms(source)
+
+    assert pd.isna(result.loc[0, "ppi_growth_lag2_sq"])
+    assert result.loc[1, "ppi_growth_lag2_sq"] == 4.0
+    assert result.loc[2, "ppi_growth_lag2_sq"] == 9.0
+    assert result["commodity_growth_lag1_sq"].tolist() == [1.0, 16.0, 0.25]
+    assert result["wti_growth_lag1_sq"].tolist() == [2.25, 4.0, 0.0]
+    assert result["brent_growth_lag1_sq"].tolist() == [4.0, 9.0, 16.0]
+    assert result["cash_rate_change_lag1_x_unemployment_rate_change_lag1"].round(3).tolist() == [
+        0.05,
+        -0.03,
+        -0.0,
+    ]
 
 
 def test_intervention_dummies_flag_only_documented_quarters(tmp_path):

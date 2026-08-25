@@ -119,3 +119,33 @@ def test_elastic_net_candidate_is_not_checked_against_its_own_report_mtime(tmp_p
     client = SimpleNamespace(get_run=fail_if_called)
 
     registry._ensure_shared_grid_report_fresh(client, [candidate], report_path)
+
+
+def test_trimmed_mean_registry_config_is_separate_from_headline():
+    assert registry.REGISTERED_MODEL_NAME == "cpi_forecast_champion"
+    assert registry.TRIMMED_MEAN_REGISTERED_MODEL_NAME == "trimmed_mean_forecast_champion"
+    assert registry.TRIMMED_MEAN_SHARED_GRID_REPORT_PATH != registry.SHARED_GRID_REPORT_PATH
+    assert registry.TRIMMED_MEAN_REPORT_PATHS != registry.REPORT_PATHS
+    assert registry.TRIMMED_MEAN_ELIGIBLE_FAMILIES == registry.ELIGIBLE_FAMILIES
+    assert registry.TRIMMED_MEAN_MODEL_FAMILY_TAGS["sarima"] == "trimmed_mean_sarima"
+
+
+def test_trimmed_mean_candidate_lookup_uses_target_specific_model_family_tag(tmp_path):
+    report_path = tmp_path / "missing_report.csv"
+    seen = {}
+
+    class FakeClient:
+        def search_runs(self, experiment_ids, filter_string, order_by, max_results):
+            seen["filter"] = filter_string
+            return []
+
+    candidate = registry._candidate_for_family(
+        FakeClient(),
+        "experiment-id",
+        "sarima",
+        report_paths={"sarima": report_path},
+        model_family_tags={"sarima": "trimmed_mean_sarima"},
+    )
+
+    assert candidate is None
+    assert seen["filter"] == "tags.model_family = 'trimmed_mean_sarima'"

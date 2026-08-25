@@ -8,6 +8,14 @@ import pandas as pd
 from src import eda_export
 
 
+def test_default_export_columns_include_trimmed_mean_cpi_features():
+    assert "trimmed_mean_cpi_yoy" in eda_export.STATIONARITY_COLUMNS
+    assert "trimmed_mean_cpi_qoq" in eda_export.STATIONARITY_COLUMNS
+    assert "trimmed_mean_cpi_yoy" in eda_export.CORRELATION_COLUMNS
+    assert "trimmed_mean_cpi_qoq" in eda_export.CORRELATION_COLUMNS
+    assert "trimmed_mean_cpi_yoy_lag1" in eda_export.VIF_COLUMNS
+
+
 def test_stationarity_summary_handles_low_variance_and_valid_series(monkeypatch):
     monkeypatch.setattr(eda_export, "STATIONARITY_COLUMNS", ["constant_feature", "valid_feature"])
     rng = np.random.default_rng(42)

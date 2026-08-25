@@ -9,7 +9,7 @@ from src.models.evaluation import walk_forward_backtest_direct_multihorizon
 def _synthetic_frame(n: int = 40) -> pd.DataFrame:
     index = pd.period_range("2010Q1", periods=n, freq="Q")
     rng = np.random.default_rng(0)
-    return pd.DataFrame(
+    frame = pd.DataFrame(
         {
             "cpi_yoy": 2.0 + np.sin(np.arange(n) / 4) + 0.05 * rng.standard_normal(n),
             "cpi_yoy_lag1": 2.0 + np.sin((np.arange(n) - 1) / 4),
@@ -23,6 +23,12 @@ def _synthetic_frame(n: int = 40) -> pd.DataFrame:
         },
         index=index,
     )
+    frame["ppi_growth_lag2_sq"] = frame["ppi_growth_lag2"] ** 2
+    frame["wti_growth_lag1_sq"] = frame["wti_growth_lag1"] ** 2
+    frame["cash_rate_change_lag1_x_unemployment_rate_change_lag1"] = (
+        frame["cash_rate_change_lag1"] * frame["unemployment_rate_change_lag1"]
+    )
+    return frame
 
 
 def test_forecast_elastic_net_direct_returns_exactly_8_finite_values():
@@ -121,6 +127,19 @@ def test_scaler_is_fit_on_feature_columns_only_not_target():
 
     assert set(fitted.scaler.columns) == set(elastic_net.ELASTIC_NET_FEATURE_COLUMNS)
     assert elastic_net.TARGET_COLUMN not in fitted.scaler.columns
+
+
+def test_trimmed_mean_elastic_net_feature_constants_are_separate_from_headline():
+    primary = elastic_net.TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS
+    brent_alt = elastic_net.TRIMMED_MEAN_ELASTIC_NET_BRENT_ALT_FEATURE_COLUMNS
+
+    assert primary[:2] == ("trimmed_mean_cpi_yoy_lag1", "trimmed_mean_cpi_yoy_lag4")
+    assert "commodity_growth_lag1_sq" in primary
+    assert "wti_growth_lag1_sq" in primary
+    assert "brent_growth_lag1_sq" not in primary
+    assert "brent_growth_lag1_sq" in brent_alt
+    assert "wti_growth_lag1_sq" not in brent_alt
+    assert elastic_net.ELASTIC_NET_FEATURE_COLUMNS[:2] == ("cpi_yoy_lag1", "cpi_yoy_lag4")
 
 
 def test_coefficient_table_has_one_row_per_horizon_and_feature():

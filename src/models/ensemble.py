@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from src.models.elastic_net import (
+    ELASTIC_NET_FEATURE_COLUMNS,
     TARGET_COLUMN,
     forecast_elastic_net_direct,
     load_elastic_net_feature_frame,
@@ -198,13 +199,28 @@ def forecast_ensemble(
     steps: int = 8,
     weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
     seed: int = DEFAULT_SEED,
+    target_column: str = TARGET_COLUMN,
+    sarima_order: tuple[int, int, int] = SARIMA_DEFAULT_ORDER,
+    sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
+    elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
 ) -> np.ndarray:
     """Fit both components on raw training data and combine their point forecasts."""
     requested_horizons = tuple(range(1, steps + 1))
     if weights is None:
         weights = horizon_rmse_weights(horizons=requested_horizons)
-    sarima_forecast = forecast_sarima(train_frame[TARGET_COLUMN], steps=steps)
-    elastic_net_forecast = forecast_elastic_net_direct(train_frame, steps=steps, seed=seed)
+    sarima_forecast = forecast_sarima(
+        train_frame[target_column],
+        steps=steps,
+        order=sarima_order,
+        seasonal_order=sarima_seasonal_order,
+    )
+    elastic_net_forecast = forecast_elastic_net_direct(
+        train_frame,
+        steps=steps,
+        seed=seed,
+        feature_columns=elastic_net_feature_columns,
+        target_column=target_column,
+    )
     return combine_point_forecasts(
         sarima_forecast,
         elastic_net_forecast,
@@ -219,15 +235,21 @@ def simulate_ensemble_paths(
     n_sims: int = 1000,
     weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
     seed: int = DEFAULT_SEED,
+    target_column: str = TARGET_COLUMN,
+    sarima_order: tuple[int, int, int] = SARIMA_DEFAULT_ORDER,
+    sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
+    elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
 ) -> np.ndarray:
     """Fit both components on raw training data and combine their predictive draws."""
     requested_horizons = tuple(range(1, steps + 1))
     if weights is None:
         weights = horizon_rmse_weights(horizons=requested_horizons)
     sarima_paths = simulate_sarima_paths(
-        train_frame[TARGET_COLUMN],
+        train_frame[target_column],
         steps=steps,
         n_sims=n_sims,
+        order=sarima_order,
+        seasonal_order=sarima_seasonal_order,
         seed=seed,
     )
     elastic_net_paths = simulate_elastic_net_paths(
@@ -235,6 +257,8 @@ def simulate_ensemble_paths(
         steps=steps,
         n_sims=n_sims,
         seed=seed + 1,
+        feature_columns=elastic_net_feature_columns,
+        target_column=target_column,
     )
     return combine_paths(
         sarima_paths,
@@ -323,6 +347,12 @@ def run_ensemble_comparison(
     weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
     seed: int = DEFAULT_SEED,
     max_origins: int | None = None,
+    target_column: str = TARGET_COLUMN,
+    sarima_order: tuple[int, int, int] = SARIMA_DEFAULT_ORDER,
+    sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
+    elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
+    include_rba: bool = True,
+    run_name: str = "ensemble_comparison",
     verbose: bool = False,
 ) -> pd.DataFrame:
     """Run the ensemble comparison, write its report, and log an MLflow run."""
@@ -335,14 +365,22 @@ def run_ensemble_comparison(
         weighting_scheme = "dynamic_inverse_rmse_per_horizon"
     elif not isinstance(weights, dict):
         weights = _validate_weights(weights)
-    series = load_target_series(curated_path)
-    exog = load_elastic_net_feature_frame(curated_path)
+    series = load_target_series(curated_path, target_column=target_column)
+    exog = load_elastic_net_feature_frame(
+        curated_path,
+        feature_columns=elastic_net_feature_columns,
+    )
 
     if verbose:
         print("Running SARIMA walk-forward backtest...", flush=True)
     sarima_predictions = walk_forward_backtest(
         series=series,
-        forecast_func=lambda train, steps: forecast_sarima(train, steps=steps),
+        forecast_func=lambda train, steps: forecast_sarima(
+            train,
+            steps=steps,
+            order=sarima_order,
+            seasonal_order=sarima_seasonal_order,
+        ),
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
         model_name="sarima",
@@ -357,11 +395,13 @@ def run_ensemble_comparison(
             train_frame,
             steps=steps,
             seed=seed,
+            feature_columns=elastic_net_feature_columns,
+            target_column=target_column,
         ),
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
         model_name="elastic_net",
-        target_column=TARGET_COLUMN,
+        target_column=target_column,
         max_origins=max_origins,
     )
     if elastic_net_predictions.empty:
@@ -377,6 +417,7 @@ def run_ensemble_comparison(
         rba_path=rba_path,
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
+        include_rba=include_rba,
     )
 
     frames = [
@@ -393,7 +434,7 @@ def run_ensemble_comparison(
     comparison.round({"rmse": 6, "mae": 6}).to_csv(comparison_output_path, index=False)
 
     tracking.log_model_run(
-        run_name="ensemble_comparison",
+        run_name=run_name,
         model_name="ensemble",
         metrics=comparison,
         params={
@@ -406,14 +447,17 @@ def run_ensemble_comparison(
                 if weighting_scheme == "dynamic_inverse_rmse_per_horizon"
                 else ""
             ),
-            "sarima_order": SARIMA_DEFAULT_ORDER,
-            "sarima_seasonal_order": SARIMA_DEFAULT_SEASONAL_ORDER,
+            "sarima_order": sarima_order,
+            "sarima_seasonal_order": sarima_seasonal_order,
+            "elastic_net_feature_columns": elastic_net_feature_columns,
+            "target_column": target_column,
             "seed": seed,
             "initial_train_size": initial_train_size,
             "horizons": requested_horizons,
         },
         tags={
             "model_family": "ensemble",
+            "target_column": target_column,
             "component_families": "sarima;elastic_net",
             "run_role": "comparison_with_full_sample_model",
         },

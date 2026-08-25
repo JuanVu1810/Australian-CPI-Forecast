@@ -35,6 +35,12 @@ GROUP_D_FEATURE_COLUMNS = (
 GROUP_D_ORDER = (1, 0, 1)
 GROUP_D_SEASONAL_ORDER = (0, 0, 1, 4)
 GROUP_D_HORIZON_CAP_ERROR = "SARIMAX Group D is lag-safety capped at horizon 1"
+TRIMMED_MEAN_PRIMARY_FEATURE_COLUMNS = (
+    "commodity_growth_lag1",
+    "wti_growth_lag1",
+)
+TRIMMED_MEAN_PRIMARY_ORDER = (1, 1, 1)
+TRIMMED_MEAN_PRIMARY_SEASONAL_ORDER = (0, 0, 1, 4)
 SARIMAX_COMPARISON_REPORT_PATH = PROJECT_ROOT / "reports/model_comparison_sarimax.csv"
 
 

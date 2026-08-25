@@ -38,6 +38,7 @@ from src.models.sarima import forecast_sarima
 
 
 TARGET_COLUMN = "cpi_yoy"
+TRIMMED_MEAN_TARGET_COLUMN = "trimmed_mean_cpi_yoy"
 ELASTIC_NET_MACRO_FEATURE_COLUMNS = (
     "cash_rate_change_lag1",
     "unemployment_rate_change_lag1",
@@ -45,11 +46,38 @@ ELASTIC_NET_MACRO_FEATURE_COLUMNS = (
     "ppi_growth_lag2",
     "commodity_growth_lag1",
     "wti_growth_lag1",
+    "ppi_growth_lag2_sq",
+    "wti_growth_lag1_sq",
+    "cash_rate_change_lag1_x_unemployment_rate_change_lag1",
 )
 ELASTIC_NET_FEATURE_COLUMNS = (
     "cpi_yoy_lag1",
     "cpi_yoy_lag4",
     *ELASTIC_NET_MACRO_FEATURE_COLUMNS,
+)
+TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_MACRO_FEATURE_COLUMNS = (
+    "commodity_growth_lag1",
+    "wti_growth_lag1",
+    "commodity_growth_lag1_sq",
+    "wti_growth_lag1_sq",
+    "cash_rate_change_lag1_x_unemployment_rate_change_lag1",
+)
+TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS = (
+    "trimmed_mean_cpi_yoy_lag1",
+    "trimmed_mean_cpi_yoy_lag4",
+    *TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_MACRO_FEATURE_COLUMNS,
+)
+TRIMMED_MEAN_ELASTIC_NET_BRENT_ALT_MACRO_FEATURE_COLUMNS = (
+    "commodity_growth_lag1",
+    "brent_growth_lag1",
+    "commodity_growth_lag1_sq",
+    "brent_growth_lag1_sq",
+    "cash_rate_change_lag1_x_unemployment_rate_change_lag1",
+)
+TRIMMED_MEAN_ELASTIC_NET_BRENT_ALT_FEATURE_COLUMNS = (
+    "trimmed_mean_cpi_yoy_lag1",
+    "trimmed_mean_cpi_yoy_lag4",
+    *TRIMMED_MEAN_ELASTIC_NET_BRENT_ALT_MACRO_FEATURE_COLUMNS,
 )
 
 FORECAST_HORIZON = 8
@@ -125,9 +153,12 @@ def clean_elastic_net_frame(
     return clean
 
 
-def load_elastic_net_feature_frame(path: Path = CURATED_DATA_PATH) -> pd.DataFrame:
+def load_elastic_net_feature_frame(
+    path: Path = CURATED_DATA_PATH,
+    feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
+) -> pd.DataFrame:
     """Load the Elastic Net feature block with a quarterly index."""
-    required_columns = ("quarter", *ELASTIC_NET_FEATURE_COLUMNS)
+    required_columns = ("quarter", *feature_columns)
     df = pd.read_csv(path, usecols=list(required_columns))
     df.index = pd.PeriodIndex(df.pop("quarter").astype(str), freq="Q")
     return df.sort_index().astype(float)
@@ -233,11 +264,18 @@ def forecast_elastic_net_direct(
     train_frame: pd.DataFrame,
     steps: int = FORECAST_HORIZON,
     seed: int = DEFAULT_SEED,
+    feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
+    target_column: str = TARGET_COLUMN,
 ) -> np.ndarray:
     """Fit the Elastic Net and return a direct 8-quarter forecast vector."""
     if steps > FORECAST_HORIZON:
         raise ValueError("the Elastic Net baseline emits at most 8 horizons.")
-    fitted = fit_elastic_net_direct(train_frame, seed=seed)
+    fitted = fit_elastic_net_direct(
+        train_frame,
+        seed=seed,
+        feature_columns=feature_columns,
+        target_column=target_column,
+    )
     return forecast_from_fit(fitted, train_frame)[:steps]
 
 
@@ -304,6 +342,8 @@ def simulate_elastic_net_paths(
     steps: int = 8,
     n_sims: int = 1000,
     seed: int = DEFAULT_SEED,
+    feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
+    target_column: str = TARGET_COLUMN,
 ) -> np.ndarray:
     """Fit Elastic Net once and draw residual-bootstrap future ``cpi_yoy`` paths."""
     if steps < 1:
@@ -314,7 +354,13 @@ def simulate_elastic_net_paths(
         raise ValueError("n_sims must be at least 1.")
 
     horizons = tuple(range(1, steps + 1))
-    fitted = fit_elastic_net_direct(train_frame, horizons=horizons, seed=seed)
+    fitted = fit_elastic_net_direct(
+        train_frame,
+        horizons=horizons,
+        seed=seed,
+        feature_columns=feature_columns,
+        target_column=target_column,
+    )
     return simulate_paths_from_fit(
         fitted=fitted,
         train_frame=train_frame,
@@ -403,15 +449,29 @@ def run_elastic_net_comparison(
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
     seed: int = DEFAULT_SEED,
     max_origins: int | None = None,
+    target_column: str = TARGET_COLUMN,
+    feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
+    sarima_order: tuple[int, int, int] | None = None,
+    sarima_seasonal_order: tuple[int, int, int, int] | None = None,
+    include_rba: bool = True,
+    include_existing_sarimax_metrics: bool = True,
+    run_name: str = "elastic_net_comparison",
+    model_family_tag: str = "elastic_net",
+    reused_feature_group_id: str = "D",
     verbose: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, float]:
     """Run the Elastic Net walk-forward backtest, comparison, and coefficient report."""
     from src.models import tracking
+    from src.models.sarima import DEFAULT_ORDER, DEFAULT_SEASONAL_ORDER
 
     started = time.perf_counter()
     requested_horizons = tuple(int(horizon) for horizon in horizons)
-    series = load_target_series(curated_path)
-    exog = load_elastic_net_feature_frame(curated_path)
+    sarima_order = DEFAULT_ORDER if sarima_order is None else sarima_order
+    sarima_seasonal_order = (
+        DEFAULT_SEASONAL_ORDER if sarima_seasonal_order is None else sarima_seasonal_order
+    )
+    series = load_target_series(curated_path, target_column=target_column)
+    exog = load_elastic_net_feature_frame(curated_path, feature_columns=feature_columns)
 
     if verbose:
         print("Running Elastic Net direct-multihorizon walk-forward backtest...", flush=True)
@@ -422,11 +482,13 @@ def run_elastic_net_comparison(
             train_frame,
             steps=steps,
             seed=seed,
+            feature_columns=feature_columns,
+            target_column=target_column,
         ),
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
         model_name="elastic_net",
-        target_column=TARGET_COLUMN,
+        target_column=target_column,
         max_origins=max_origins,
     )
     if elastic_net_predictions.empty:
@@ -434,7 +496,12 @@ def run_elastic_net_comparison(
 
     sarima = walk_forward_backtest(
         series=series,
-        forecast_func=lambda train, steps: forecast_sarima(train, steps=steps),
+        forecast_func=lambda train, steps: forecast_sarima(
+            train,
+            steps=steps,
+            order=sarima_order,
+            seasonal_order=sarima_seasonal_order,
+        ),
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
         model_name="sarima",
@@ -444,6 +511,7 @@ def run_elastic_net_comparison(
         rba_path=rba_path,
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
+        include_rba=include_rba,
     )
     frames = [elastic_net_predictions, sarima, baselines]
 
@@ -452,17 +520,28 @@ def run_elastic_net_comparison(
     origin_n = int(
         full_horizon_common.loc[full_horizon_common["model"].eq("elastic_net"), "forecast_origin"].nunique()
     )
-    comparison = _comparison_metadata(full_metrics, origin_n=origin_n, note=SARIMAX_D_NOTE)
+    comparison = _comparison_metadata(
+        full_metrics,
+        origin_n=origin_n,
+        note=SARIMAX_D_NOTE,
+        features=";".join(feature_columns),
+    )
 
-    if max_origins is None:
+    if max_origins is None and include_existing_sarimax_metrics:
         sarimax_comparison = _load_existing_sarimax_d_metrics()
         if not sarimax_comparison.empty:
             comparison = pd.concat([comparison, sarimax_comparison], ignore_index=True, sort=False)
 
     if verbose:
         print("Fitting final full-sample Elastic Net for coefficients/MLflow logging...", flush=True)
-    full_frame = pd.concat([series.rename(TARGET_COLUMN), exog], axis=1)
-    final_fit = fit_elastic_net_direct(full_frame, horizons=requested_horizons, seed=seed)
+    full_frame = pd.concat([series.rename(target_column), exog], axis=1)
+    final_fit = fit_elastic_net_direct(
+        full_frame,
+        horizons=requested_horizons,
+        seed=seed,
+        feature_columns=feature_columns,
+        target_column=target_column,
+    )
     coefficients = coefficient_table(final_fit)
 
     comparison_output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -473,13 +552,16 @@ def run_elastic_net_comparison(
     ).to_csv(coefficient_output_path, index=False)
 
     tracking.log_model_run(
-        run_name="elastic_net_comparison",
+        run_name=run_name,
         model_name="elastic_net",
         metrics=comparison,
         params={
             "order": "fixed_architecture",
             "seasonal_order": "",
-            "features": ELASTIC_NET_FEATURE_COLUMNS,
+            "features": feature_columns,
+            "target_column": target_column,
+            "sarima_order_for_comparison": sarima_order,
+            "sarima_seasonal_order_for_comparison": sarima_seasonal_order,
             "selection_criterion": "elastic_net_cv_per_horizon",
             "initial_train_size": initial_train_size,
             "horizons": requested_horizons,
@@ -488,8 +570,9 @@ def run_elastic_net_comparison(
             "seed": seed,
         },
         tags={
-            "model_family": "elastic_net",
-            "reused_feature_group_id": "D",
+            "model_family": model_family_tag,
+            "target_column": target_column,
+            "reused_feature_group_id": reused_feature_group_id,
             "run_role": "comparison_with_full_sample_model",
         },
         artifact_paths=[comparison_output_path, coefficient_output_path],

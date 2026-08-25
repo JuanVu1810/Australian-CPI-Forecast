@@ -6,6 +6,8 @@ from src.models.sarima import (
     CPI_INDEX_NOTEBOOK_SEASONAL_ORDER,
     DEFAULT_ORDER,
     DEFAULT_SEASONAL_ORDER,
+    TRIMMED_MEAN_DEFAULT_ORDER,
+    TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
     fit_sarima,
     forecast_sarima,
     simulate_paths_from_fit,
@@ -17,8 +19,10 @@ from src.models.sarima_order_search import iter_candidate_orders
 def test_sarima_defaults_reflect_cpi_yoy_selected_specification():
     assert CPI_INDEX_NOTEBOOK_ORDER == (0, 1, 1)
     assert CPI_INDEX_NOTEBOOK_SEASONAL_ORDER == (0, 1, 1, 4)
-    assert DEFAULT_ORDER == (2, 0, 2)
-    assert DEFAULT_SEASONAL_ORDER == (0, 0, 2, 4)
+    assert DEFAULT_ORDER == (1, 0, 2)
+    assert DEFAULT_SEASONAL_ORDER == (1, 0, 2, 4)
+    assert TRIMMED_MEAN_DEFAULT_ORDER == (1, 1, 1)
+    assert TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER == (0, 0, 1, 4)
 
 
 def test_order_search_default_grid_is_non_differenced_for_cpi_yoy():

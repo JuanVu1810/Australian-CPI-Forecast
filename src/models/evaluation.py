@@ -615,6 +615,7 @@ def compute_baseline_predictions(
     rba_path: Path,
     initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
     horizons: Iterable[int] = DEFAULT_HORIZONS,
+    include_rba: bool = True,
 ) -> pd.DataFrame:
     """Compute shared seasonal-naive and RBA walk-forward baseline predictions."""
     requested_horizons = tuple(int(horizon) for horizon in horizons)
@@ -624,7 +625,7 @@ def compute_baseline_predictions(
         horizons=requested_horizons,
     )
     frames = [seasonal_naive]
-    if rba_path.exists():
+    if include_rba and rba_path.exists():
         rba = align_rba_forecasts_to_grid(
             pd.read_csv(rba_path),
             seasonal_naive,
@@ -838,6 +839,13 @@ def run_sarima_comparison(
     output_path: Path = COMPARISON_OUTPUT_PATH,
     initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
     horizons: Iterable[int] = DEFAULT_HORIZONS,
+    target_column: str = TARGET_COLUMN,
+    order: tuple[int, int, int] | None = None,
+    seasonal_order: tuple[int, int, int, int] | None = None,
+    include_rba: bool = True,
+    run_name: str = "sarima_comparison",
+    model_family_tag: str = "sarima",
+    selection_criterion: str = "fixed_cpi_yoy_default",
 ) -> pd.DataFrame:
     """Run SARIMA, seasonal naive, and RBA comparison and save the metric table."""
     from src.models import tracking
@@ -849,10 +857,17 @@ def run_sarima_comparison(
     )
 
     horizons = tuple(horizons)
-    target = load_target_series(curated_path)
+    order = DEFAULT_ORDER if order is None else order
+    seasonal_order = DEFAULT_SEASONAL_ORDER if seasonal_order is None else seasonal_order
+    target = load_target_series(curated_path, target_column=target_column)
     sarima = walk_forward_backtest(
         target,
-        forecast_sarima,
+        lambda train, steps: forecast_sarima(
+            train,
+            steps=steps,
+            order=order,
+            seasonal_order=seasonal_order,
+        ),
         initial_train_size=initial_train_size,
         horizons=horizons,
         model_name="sarima",
@@ -862,6 +877,7 @@ def run_sarima_comparison(
         rba_path=rba_path,
         initial_train_size=initial_train_size,
         horizons=horizons,
+        include_rba=include_rba,
     )
     common_predictions = restrict_to_common_grid([sarima, baselines])
     metrics = compute_metric_table(common_predictions)
@@ -870,23 +886,25 @@ def run_sarima_comparison(
     metrics.round({"rmse": 6, "mae": 6}).to_csv(output_path, index=False)
     final_fit = fit_sarima(
         target,
-        order=DEFAULT_ORDER,
-        seasonal_order=DEFAULT_SEASONAL_ORDER,
+        order=order,
+        seasonal_order=seasonal_order,
     )
     tracking.log_model_run(
-        run_name="sarima_comparison",
+        run_name=run_name,
         model_name="sarima",
         metrics=metrics,
         params={
-            "order": DEFAULT_ORDER,
-            "seasonal_order": DEFAULT_SEASONAL_ORDER,
+            "order": order,
+            "seasonal_order": seasonal_order,
             "features": (),
-            "selection_criterion": "fixed_cpi_yoy_default",
+            "target_column": target_column,
+            "selection_criterion": selection_criterion,
             "initial_train_size": initial_train_size,
             "horizons": horizons,
         },
         tags={
-            "model_family": "sarima",
+            "model_family": model_family_tag,
+            "target_column": target_column,
             "run_role": "comparison_with_full_sample_model",
         },
         artifact_paths=[output_path],

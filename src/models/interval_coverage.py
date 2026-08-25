@@ -11,7 +11,10 @@ import pandas as pd
 
 from src.models.elastic_net import (
     DEFAULT_INITIAL_TRAIN_SIZE as ELASTIC_NET_INITIAL_TRAIN_SIZE,
+    ELASTIC_NET_FEATURE_COLUMNS,
     TARGET_COLUMN,
+    TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    TRIMMED_MEAN_TARGET_COLUMN,
     load_elastic_net_feature_frame,
     simulate_elastic_net_paths,
 )
@@ -25,10 +28,16 @@ from src.models.evaluation import (
     walk_forward_interval_coverage_backtest,
 )
 from src.models.sarima import simulate_sarima_paths
+from src.models.sarima import DEFAULT_ORDER as SARIMA_DEFAULT_ORDER
+from src.models.sarima import DEFAULT_SEASONAL_ORDER as SARIMA_DEFAULT_SEASONAL_ORDER
+from src.models.sarima import TRIMMED_MEAN_DEFAULT_ORDER, TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER
 from src.models.sarimax import GROUP_D_FEATURE_COLUMNS, simulate_sarimax_group_d_paths
 
 
 INTERVAL_COVERAGE_OUTPUT_PATH = PROJECT_ROOT / "reports/model_interval_coverage.csv"
+TRIMMED_MEAN_INTERVAL_COVERAGE_OUTPUT_PATH = (
+    PROJECT_ROOT / "reports/model_interval_coverage_trimmed_mean.csv"
+)
 INTERVAL_CALIBRATION_FACTORS_PATH = (
     PROJECT_ROOT / "reports/model_interval_calibration_factors.csv"
 )
@@ -173,15 +182,24 @@ def run_family_interval_backtests(
     max_origins: int | None = None,
     skip_origins: int = 0,
     families: tuple[str, ...] | None = None,
+    target_column: str = TARGET_COLUMN,
+    sarima_order: tuple[int, int, int] = SARIMA_DEFAULT_ORDER,
+    sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
+    elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
+    weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
     verbose: bool = False,
 ) -> pd.DataFrame:
     """Run raw interval walk-forward backtests for selected served model families."""
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     requested_families = _normalise_families(families)
-    series = load_target_series(curated_path)
-    elastic_net_exog = load_elastic_net_feature_frame(curated_path)
+    series = load_target_series(curated_path, target_column=target_column)
+    elastic_net_exog = load_elastic_net_feature_frame(
+        curated_path,
+        feature_columns=elastic_net_feature_columns,
+    )
     sarimax_exog = load_sarimax_group_d_interval_exog(curated_path)
-    weights = horizon_rmse_weights(horizons=requested_horizons)
+    if weights is None:
+        weights = horizon_rmse_weights(horizons=requested_horizons)
 
     frames: list[pd.DataFrame] = []
     if "sarima" in requested_families:
@@ -190,7 +208,14 @@ def run_family_interval_backtests(
         frames.append(
             walk_forward_interval_coverage_backtest(
                 series=series,
-                simulate_func=simulate_sarima_paths,
+                simulate_func=lambda train_series, steps, n_sims, seed: simulate_sarima_paths(
+                    train_series,
+                    steps=steps,
+                    n_sims=n_sims,
+                    order=sarima_order,
+                    seasonal_order=sarima_seasonal_order,
+                    seed=seed,
+                ),
                 initial_train_size=initial_train_size,
                 horizons=requested_horizons,
                 model_name="sarima",
@@ -210,7 +235,6 @@ def run_family_interval_backtests(
             walk_forward_interval_coverage_backtest(
                 series=series,
                 exog=elastic_net_exog,
-                simulate_func=simulate_elastic_net_paths,
                 initial_train_size=initial_train_size,
                 horizons=requested_horizons,
                 model_name="elastic_net",
@@ -219,7 +243,15 @@ def run_family_interval_backtests(
                 n_sims=n_sims,
                 seed=seed + 10_000,
                 training_data="frame",
-                target_column=TARGET_COLUMN,
+                target_column=target_column,
+                simulate_func=lambda train_frame, steps, n_sims, seed: simulate_elastic_net_paths(
+                    train_frame,
+                    steps=steps,
+                    n_sims=n_sims,
+                    seed=seed,
+                    feature_columns=elastic_net_feature_columns,
+                    target_column=target_column,
+                ),
                 max_origins=max_origins,
                 skip_origins=skip_origins,
             )
@@ -241,7 +273,7 @@ def run_family_interval_backtests(
                 n_sims=n_sims,
                 seed=seed + 20_000,
                 training_data="series_exog",
-                target_column=TARGET_COLUMN,
+                target_column=target_column,
                 horizon_cap=1,
                 max_origins=max_origins,
                 skip_origins=skip_origins,
@@ -261,6 +293,10 @@ def run_family_interval_backtests(
                     n_sims=n_sims,
                     weights=weights,
                     seed=seed,
+                    target_column=target_column,
+                    sarima_order=sarima_order,
+                    sarima_seasonal_order=sarima_seasonal_order,
+                    elastic_net_feature_columns=elastic_net_feature_columns,
                 ),
                 initial_train_size=initial_train_size,
                 horizons=requested_horizons,
@@ -270,7 +306,7 @@ def run_family_interval_backtests(
                 n_sims=n_sims,
                 seed=seed + 30_000,
                 training_data="frame",
-                target_column=TARGET_COLUMN,
+                target_column=target_column,
                 max_origins=max_origins,
                 skip_origins=skip_origins,
             )
@@ -293,6 +329,11 @@ def run_interval_coverage(
     families: tuple[str, ...] | None = None,
     apply_calibration: bool = True,
     calibration_factors_path: Path = INTERVAL_CALIBRATION_FACTORS_PATH,
+    target_column: str = TARGET_COLUMN,
+    sarima_order: tuple[int, int, int] = SARIMA_DEFAULT_ORDER,
+    sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
+    elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
+    weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
     verbose: bool = False,
 ) -> pd.DataFrame:
     """Run interval coverage backtests for served model families and save a report.
@@ -313,6 +354,11 @@ def run_interval_coverage(
         max_origins=max_origins,
         skip_origins=skip_origins,
         families=families,
+        target_column=target_column,
+        sarima_order=sarima_order,
+        sarima_seasonal_order=sarima_seasonal_order,
+        elastic_net_feature_columns=elastic_net_feature_columns,
+        weights=weights,
         verbose=verbose,
     )
 
@@ -354,10 +400,47 @@ def run_interval_coverage(
     return coverage
 
 
+def run_trimmed_mean_interval_coverage(
+    curated_path: Path = CURATED_DATA_PATH,
+    output_path: Path = TRIMMED_MEAN_INTERVAL_COVERAGE_OUTPUT_PATH,
+    initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
+    horizons: tuple[int, ...] = DEFAULT_HORIZONS,
+    lower_quantile: float = DEFAULT_LOWER_QUANTILE,
+    upper_quantile: float = DEFAULT_UPPER_QUANTILE,
+    n_sims: int = DEFAULT_N_SIMS,
+    seed: int = DEFAULT_SEED,
+    max_origins: int | None = None,
+    skip_origins: int = 0,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    """Reproduce the Phase 3 raw trimmed-mean interval coverage report."""
+    return run_interval_coverage(
+        curated_path=curated_path,
+        output_path=output_path,
+        initial_train_size=initial_train_size,
+        horizons=horizons,
+        lower_quantile=lower_quantile,
+        upper_quantile=upper_quantile,
+        n_sims=n_sims,
+        seed=seed,
+        max_origins=max_origins,
+        skip_origins=skip_origins,
+        families=("sarima", "elastic_net", "ensemble"),
+        apply_calibration=False,
+        target_column=TRIMMED_MEAN_TARGET_COLUMN,
+        sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
+        sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
+        elastic_net_feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+        weights=(0.5, 0.5),
+        verbose=verbose,
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target", choices=("headline", "trimmed_mean"), default="headline")
     parser.add_argument("--data", type=Path, default=CURATED_DATA_PATH)
-    parser.add_argument("--output", type=Path, default=INTERVAL_COVERAGE_OUTPUT_PATH)
+    parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--initial-train-size", type=int, default=DEFAULT_INITIAL_TRAIN_SIZE)
     parser.add_argument("--n-sims", type=int, default=DEFAULT_N_SIMS)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
@@ -373,20 +456,34 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    coverage = run_interval_coverage(
-        curated_path=args.data,
-        output_path=args.output,
-        initial_train_size=args.initial_train_size,
-        lower_quantile=args.lower_quantile,
-        upper_quantile=args.upper_quantile,
-        n_sims=args.n_sims,
-        seed=args.seed,
-        max_origins=args.max_origins,
-        skip_origins=args.skip_origins,
-        apply_calibration=not args.raw,
-        calibration_factors_path=args.calibration_factors,
-        verbose=True,
-    )
+    if args.target == "trimmed_mean":
+        coverage = run_trimmed_mean_interval_coverage(
+            curated_path=args.data,
+            output_path=args.output or TRIMMED_MEAN_INTERVAL_COVERAGE_OUTPUT_PATH,
+            initial_train_size=args.initial_train_size,
+            lower_quantile=args.lower_quantile,
+            upper_quantile=args.upper_quantile,
+            n_sims=args.n_sims,
+            seed=args.seed,
+            max_origins=args.max_origins,
+            skip_origins=args.skip_origins,
+            verbose=True,
+        )
+    else:
+        coverage = run_interval_coverage(
+            curated_path=args.data,
+            output_path=args.output or INTERVAL_COVERAGE_OUTPUT_PATH,
+            initial_train_size=args.initial_train_size,
+            lower_quantile=args.lower_quantile,
+            upper_quantile=args.upper_quantile,
+            n_sims=args.n_sims,
+            seed=args.seed,
+            max_origins=args.max_origins,
+            skip_origins=args.skip_origins,
+            apply_calibration=not args.raw,
+            calibration_factors_path=args.calibration_factors,
+            verbose=True,
+        )
     print("\nInterval coverage:")
     print(
         coverage.round(

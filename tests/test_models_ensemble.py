@@ -86,9 +86,17 @@ def test_horizon_rmse_weights_real_report_sanity_check():
         horizons=(1, 4),
         path=ENSEMBLE_COMPARISON_SOURCE,
     )
+    report = pd.read_csv(ENSEMBLE_COMPARISON_SOURCE)
 
-    assert weights[1][0] == pytest.approx(0.62, rel=0.01)
-    assert weights[4][0] == pytest.approx(0.476, rel=0.01)
+    for horizon in (1, 4):
+        rows = report.loc[
+            report["group_id"].eq("ELASTIC_NET")
+            & report["model"].isin(["sarima", "elastic_net"])
+            & report["horizon"].astype(str).eq(str(horizon))
+        ]
+        rmse = dict(zip(rows["model"], rows["rmse"]))
+        expected_sarima_weight = rmse["elastic_net"] / (rmse["sarima"] + rmse["elastic_net"])
+        assert weights[horizon][0] == pytest.approx(expected_sarima_weight)
 
 
 def test_combine_point_forecasts_weighted_average_and_validation():
@@ -180,12 +188,12 @@ def test_forecast_ensemble_matches_underlying_point_combination(monkeypatch):
     monkeypatch.setattr(
         ensemble,
         "forecast_sarima",
-        lambda series, steps: sarima_point[:steps],
+        lambda series, steps, **kwargs: sarima_point[:steps],
     )
     monkeypatch.setattr(
         ensemble,
         "forecast_elastic_net_direct",
-        lambda train_frame, steps, seed: elastic_net_point[:steps],
+        lambda train_frame, steps, seed, **kwargs: elastic_net_point[:steps],
     )
 
     forecast = ensemble.forecast_ensemble(frame, steps=3, weights=weights, seed=123)
@@ -207,12 +215,12 @@ def test_forecast_ensemble_default_resolves_dynamic_weights(monkeypatch):
     monkeypatch.setattr(
         ensemble,
         "forecast_sarima",
-        lambda series, steps: sarima_point[:steps],
+        lambda series, steps, **kwargs: sarima_point[:steps],
     )
     monkeypatch.setattr(
         ensemble,
         "forecast_elastic_net_direct",
-        lambda train_frame, steps, seed: elastic_net_point[:steps],
+        lambda train_frame, steps, seed, **kwargs: elastic_net_point[:steps],
     )
 
     def fake_horizon_rmse_weights(horizons, path=ensemble.DYNAMIC_WEIGHTS_SOURCE_PATH):
@@ -231,27 +239,69 @@ def test_forecast_ensemble_default_resolves_dynamic_weights(monkeypatch):
     np.testing.assert_array_equal(forecast, np.array([8.0, 80.0, 115.0]))
 
 
+def test_forecast_ensemble_passes_target_specific_component_configuration(monkeypatch):
+    frame = _synthetic_frame()
+    frame["trimmed_mean_cpi_yoy"] = frame["cpi_yoy"] - 0.2
+    feature_columns = ("trimmed_mean_cpi_yoy_lag1", "commodity_growth_lag1")
+    for column in feature_columns:
+        frame[column] = np.arange(len(frame), dtype=float)
+    calls = {}
+
+    def fake_sarima(series, steps, order, seasonal_order):
+        calls["sarima_name"] = series.name
+        calls["sarima_order"] = order
+        calls["sarima_seasonal_order"] = seasonal_order
+        return np.array([1.0, 2.0])
+
+    def fake_elastic_net(train_frame, steps, seed, feature_columns, target_column):
+        calls["elastic_target"] = target_column
+        calls["elastic_features"] = feature_columns
+        return np.array([3.0, 4.0])
+
+    monkeypatch.setattr(ensemble, "forecast_sarima", fake_sarima)
+    monkeypatch.setattr(ensemble, "forecast_elastic_net_direct", fake_elastic_net)
+
+    forecast = ensemble.forecast_ensemble(
+        frame,
+        steps=2,
+        weights=(0.5, 0.5),
+        target_column="trimmed_mean_cpi_yoy",
+        sarima_order=(1, 1, 1),
+        sarima_seasonal_order=(0, 0, 1, 4),
+        elastic_net_feature_columns=feature_columns,
+    )
+
+    np.testing.assert_array_equal(forecast, np.array([2.0, 3.0]))
+    assert calls == {
+        "sarima_name": "trimmed_mean_cpi_yoy",
+        "sarima_order": (1, 1, 1),
+        "sarima_seasonal_order": (0, 0, 1, 4),
+        "elastic_target": "trimmed_mean_cpi_yoy",
+        "elastic_features": feature_columns,
+    }
+
+
 def test_simulate_ensemble_paths_shape_seed_divergence_and_forecast_mean(monkeypatch):
     frame = _synthetic_frame()
     weights = (0.25, 0.75)
     sarima_point = np.array([2.0, 3.0])
     elastic_net_point = np.array([6.0, 7.0])
 
-    def fake_sarima_paths(series, steps, n_sims, seed):
+    def fake_sarima_paths(series, steps, n_sims, seed, **kwargs):
         rng = np.random.default_rng(seed)
         return sarima_point[:steps] + rng.normal(0.0, 0.05, size=(n_sims, steps))
 
-    def fake_elastic_net_paths(train_frame, steps, n_sims, seed):
+    def fake_elastic_net_paths(train_frame, steps, n_sims, seed, **kwargs):
         rng = np.random.default_rng(seed)
         return elastic_net_point[:steps] + rng.normal(0.0, 0.05, size=(n_sims, steps))
 
     monkeypatch.setattr(ensemble, "simulate_sarima_paths", fake_sarima_paths)
     monkeypatch.setattr(ensemble, "simulate_elastic_net_paths", fake_elastic_net_paths)
-    monkeypatch.setattr(ensemble, "forecast_sarima", lambda series, steps: sarima_point[:steps])
+    monkeypatch.setattr(ensemble, "forecast_sarima", lambda series, steps, **kwargs: sarima_point[:steps])
     monkeypatch.setattr(
         ensemble,
         "forecast_elastic_net_direct",
-        lambda train_frame, steps, seed: elastic_net_point[:steps],
+        lambda train_frame, steps, seed, **kwargs: elastic_net_point[:steps],
     )
 
     paths = ensemble.simulate_ensemble_paths(frame, steps=2, n_sims=200, weights=weights, seed=123)
@@ -281,12 +331,16 @@ def test_run_ensemble_comparison_smoke_on_tiny_synthetic_frame(tmp_path, monkeyp
     monkeypatch.setattr(
         ensemble,
         "forecast_sarima",
-        lambda series, steps: np.linspace(float(series.iloc[-1]), float(series.iloc[-1]) + 0.1, steps),
+        lambda series, steps, **kwargs: np.linspace(
+            float(series.iloc[-1]),
+            float(series.iloc[-1]) + 0.1,
+            steps,
+        ),
     )
     monkeypatch.setattr(
         ensemble,
         "forecast_elastic_net_direct",
-        lambda train_frame, steps, seed: np.linspace(
+        lambda train_frame, steps, seed, **kwargs: np.linspace(
             float(train_frame["cpi_yoy"].iloc[-1]) + 0.2,
             float(train_frame["cpi_yoy"].iloc[-1]) + 0.3,
             steps,

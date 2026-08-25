@@ -74,6 +74,31 @@ def add_lag_features(
     return result
 
 
+def add_nonlinear_elastic_net_terms(df: pd.DataFrame) -> pd.DataFrame:
+    """Add the small approved nonlinear Elastic Net terms.
+
+    These columns are deterministic transforms of lagged, origin-available
+    inputs. They keep Elastic Net linear in parameters while allowing a few
+    screened squared/interaction effects.
+    """
+    result = df.copy()
+
+    if "ppi_growth_lag2" in result:
+        result["ppi_growth_lag2_sq"] = result["ppi_growth_lag2"] ** 2
+    if "commodity_growth_lag1" in result:
+        result["commodity_growth_lag1_sq"] = result["commodity_growth_lag1"] ** 2
+    if "wti_growth_lag1" in result:
+        result["wti_growth_lag1_sq"] = result["wti_growth_lag1"] ** 2
+    if "brent_growth_lag1" in result:
+        result["brent_growth_lag1_sq"] = result["brent_growth_lag1"] ** 2
+    if {"cash_rate_change_lag1", "unemployment_rate_change_lag1"}.issubset(result.columns):
+        result["cash_rate_change_lag1_x_unemployment_rate_change_lag1"] = (
+            result["cash_rate_change_lag1"] * result["unemployment_rate_change_lag1"]
+        )
+
+    return result
+
+
 def add_intervention_dummies(
     df: pd.DataFrame,
     table_path: Path = DEFAULT_INTERVENTION_TABLE_PATH,
@@ -146,8 +171,13 @@ def order_feature_columns(df: pd.DataFrame) -> pd.DataFrame:
         "household_spending",
         "household_spending_growth",
         "inflation_expectations_business",
+        "ppi_growth_lag2_sq",
+        "commodity_growth_lag1_sq",
+        "wti_growth_lag1_sq",
+        "brent_growth_lag1_sq",
+        "cash_rate_change_lag1_x_unemployment_rate_change_lag1",
     ]
     lagged = [column for column in df.columns if "_lag" in column]
-    ordered = [column for column in preferred + lagged if column in df.columns]
+    ordered = list(dict.fromkeys(column for column in preferred + lagged if column in df.columns))
     remaining = [column for column in df.columns if column not in ordered]
     return df[ordered + remaining]

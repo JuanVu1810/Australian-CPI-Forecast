@@ -20,20 +20,22 @@ DEFAULT_TARGET_COLUMN = "cpi_yoy"
 CPI_INDEX_NOTEBOOK_ORDER = (0, 1, 1)
 CPI_INDEX_NOTEBOOK_SEASONAL_ORDER = (0, 1, 1, 4)
 
-# cpi_yoy should not reuse the CPI-index differencing tuned above. Selected by
-# `python -m src.models.sarima_order_search --holdout-quarters 20`, i.e. AIC
-# on development-only data (the series' final 20 quarters excluded), not the
-# full sample -- so the walk-forward test tail never informed this choice.
-# The raw development-only AIC winner, (2, 0, 1)x(0, 0, 2, 4) (AIC 167.38),
-# produces explosive forecasts (>1e20) when refit on the shortest actual
-# walk-forward training window (32 quarters) -- `enforce_stationarity=False`
-# lets a short sample identify unstable AR/seasonal-MA roots that a larger
-# sample masks. (2, 0, 2)x(0, 0, 2, 4) is statistically indistinguishable on
-# development AIC (168.42, delta 1.04) and confirmed stable (bounded, finite
-# forecasts) at every expanding-window size from 32 quarters up to the full
-# development sample. The old full-sample winner was (1, 0, 2)x(1, 0, 2, 4).
-DEFAULT_ORDER = (2, 0, 2)
-DEFAULT_SEASONAL_ORDER = (0, 0, 2, 4)
+# cpi_yoy should not reuse the CPI-index differencing tuned above. These
+# defaults are for the post-ETL ABS seasonally adjusted headline cpi_yoy basis.
+# Phase 1 reran development-only order selection excluding the most recent 20
+# quarters, then screened candidates across every expanding walk-forward window
+# from the shortest training sample through the full development sample. The old
+# NSA-basis default (2, 0, 2)x(0, 0, 2, 4) became unstable on the SA-sourced
+# series, producing explosive short-window forecasts. The chosen replacement is
+# documented in reports/model_refit_phase1_decisions.md.
+DEFAULT_ORDER = (1, 0, 2)
+DEFAULT_SEASONAL_ORDER = (1, 0, 2, 4)
+
+# Separate trimmed-mean CPI YoY specification from the headline defaults above.
+# Selected and stability-screened in reports/model_refit_phase1_decisions.md.
+TRIMMED_MEAN_DEFAULT_TARGET_COLUMN = "trimmed_mean_cpi_yoy"
+TRIMMED_MEAN_DEFAULT_ORDER = (1, 1, 1)
+TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER = (0, 0, 1, 4)
 
 
 def fit_sarima(

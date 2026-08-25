@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from src.models import evaluation, sarimax_order_search, tracking
-from src.models.sarima import fit_sarima as real_fit_sarima
+from src.models.sarima import DEFAULT_ORDER, fit_sarima as real_fit_sarima
 
 
 def _configure_tmp_mlflow(monkeypatch, tmp_path, experiment_name):
@@ -104,7 +104,7 @@ def test_sarima_orchestrator_logs_own_metrics_artifact_and_reloadable_model(
     assert len(runs) == 1
     run = runs[0]
     assert run.data.tags["model_family"] == "sarima"
-    assert json.loads(run.data.params["order"]) == [2, 0, 2]
+    assert json.loads(run.data.params["order"]) == list(DEFAULT_ORDER)
     assert json.loads(run.data.params["horizons"]) == [1, 2]
     assert run.data.metrics["rmse_h1"] == 1.0
     assert run.data.metrics["mae_h2"] == 2.0

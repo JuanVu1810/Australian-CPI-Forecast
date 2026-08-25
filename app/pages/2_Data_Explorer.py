@@ -55,9 +55,10 @@ default_columns = [
     column
     for column in [
         "quarter",
-        "cpi_index",
         "cpi_qoq",
         "cpi_yoy",
+        "trimmed_mean_cpi_qoq",
+        "trimmed_mean_cpi_yoy",
         "unemployment_rate",
         "cash_rate",
         "wpi_growth",

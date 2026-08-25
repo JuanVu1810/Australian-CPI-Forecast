@@ -23,6 +23,8 @@ VIF_PATH = REPORTS_DIR / "eda_vif.csv"
 STATIONARITY_COLUMNS = [
     "cpi_yoy",
     "cpi_qoq",
+    "trimmed_mean_cpi_yoy",
+    "trimmed_mean_cpi_qoq",
     "unemployment_rate",
     "cash_rate",
     "wpi_growth",
@@ -35,6 +37,8 @@ STATIONARITY_COLUMNS = [
     "inflation_expectations_business",
 ]
 CORRELATION_COLUMNS = [
+    "trimmed_mean_cpi_yoy",
+    "trimmed_mean_cpi_qoq",
     "unemployment_rate",
     "cash_rate",
     "wpi_growth",
@@ -50,6 +54,7 @@ CORRELATION_SAFE_LAG = 1
 VIF_COLUMNS = [
     "cpi_yoy_lag1",
     "cpi_yoy_lag4",
+    "trimmed_mean_cpi_yoy_lag1",
     "cash_rate_lag1",
     "unemployment_rate_lag1",
     "wpi_growth_lag1",

@@ -26,6 +26,7 @@ from src.features import (
     add_growth_rates,
     add_intervention_dummies,
     add_lag_features,
+    add_nonlinear_elastic_net_terms,
     order_feature_columns,
 )
 from src.platform_loads import load_bigquery, load_postgres_quality_report, write_duckdb
@@ -266,6 +267,7 @@ def main() -> int:
     curated = merge_quarterly_frames(frames)
     curated = add_growth_rates(curated)
     curated = add_lag_features(curated)
+    curated = add_nonlinear_elastic_net_terms(curated)
     curated = add_intervention_dummies(curated)
     curated = order_feature_columns(curated)
 

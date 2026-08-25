@@ -163,6 +163,33 @@ def test_compute_baseline_predictions_returns_shared_seasonal_naive_and_rba_grid
     np.testing.assert_allclose(rba["error"], [2.0, 2.0, 1.0])
 
 
+def test_compute_baseline_predictions_can_exclude_existing_rba_file(tmp_path):
+    series = pd.Series(
+        np.arange(1, 13, dtype=float),
+        index=pd.period_range("2020Q1", periods=12, freq="Q"),
+        name="cpi_yoy",
+    )
+    rba_path = tmp_path / "rba.csv"
+    pd.DataFrame(
+        {
+            "forecast_date": ["2021-03-31"],
+            "horizon_quarters": [1],
+            "rba_forecast_cpi_yoy": [4.0],
+        }
+    ).to_csv(rba_path, index=False)
+
+    baselines = compute_baseline_predictions(
+        series=series,
+        rba_path=rba_path,
+        initial_train_size=5,
+        horizons=(1, 2),
+        include_rba=False,
+    )
+
+    assert set(baselines["model"]) == {"seasonal_naive"}
+    assert len(baselines) == 12
+
+
 def test_compute_metric_table_returns_overall_and_horizon_rows():
     predictions = pd.DataFrame(
         {

@@ -14,13 +14,24 @@ from src.models import tracking
 
 
 REGISTERED_MODEL_NAME = "cpi_forecast_champion"
+TRIMMED_MEAN_REGISTERED_MODEL_NAME = "trimmed_mean_forecast_champion"
 CHAMPION_ALIAS = "champion"
 ELIGIBLE_FAMILIES = ("sarima", "elastic_net")
+TRIMMED_MEAN_ELIGIBLE_FAMILIES = ("sarima", "elastic_net")
 REPORT_PATHS = {
     "sarima": Path("reports/model_comparison_sarima.csv"),
     "elastic_net": Path("reports/model_comparison_elastic_net.csv"),
 }
 SHARED_GRID_REPORT_PATH = Path("reports/model_comparison_all.csv")
+TRIMMED_MEAN_SHARED_GRID_REPORT_PATH = Path("reports/model_comparison_trimmed_mean_all.csv")
+TRIMMED_MEAN_REPORT_PATHS = {
+    "sarima": Path("reports/model_comparison_sarima_trimmed_mean.csv"),
+    "elastic_net": Path("reports/model_comparison_elastic_net_trimmed_mean.csv"),
+}
+TRIMMED_MEAN_MODEL_FAMILY_TAGS = {
+    "sarima": "trimmed_mean_sarima",
+    "elastic_net": "trimmed_mean_elastic_net",
+}
 MetricSource = Literal["mlflow", "report", "shared_grid_report"]
 
 
@@ -55,10 +66,16 @@ def _client_and_experiment():
     return mlflow, client, experiment
 
 
-def _latest_run_candidate(client, experiment_id: str, family: str) -> Candidate | None:
+def _latest_run_candidate(
+    client,
+    experiment_id: str,
+    family: str,
+    model_family_tag: str | None = None,
+) -> Candidate | None:
+    model_family_tag = family if model_family_tag is None else model_family_tag
     runs = client.search_runs(
         [experiment_id],
-        filter_string=f"tags.model_family = '{family}'",
+        filter_string=f"tags.model_family = '{model_family_tag}'",
         order_by=["attributes.start_time DESC"],
         max_results=100,
     )
@@ -76,8 +93,12 @@ def _latest_run_candidate(client, experiment_id: str, family: str) -> Candidate 
     return None
 
 
-def _report_candidate(family: str) -> Candidate | None:
-    path = REPORT_PATHS[family]
+def _report_candidate(
+    family: str,
+    report_paths: dict[str, Path] | None = None,
+) -> Candidate | None:
+    report_paths = REPORT_PATHS if report_paths is None else report_paths
+    path = report_paths[family]
     if not path.exists():
         return None
     table = pd.read_csv(path)
@@ -169,14 +190,32 @@ def _ensure_shared_grid_report_fresh(
             )
 
 
-def _candidate_for_family(client, experiment_id: str, family: str) -> Candidate | None:
-    return _latest_run_candidate(client, experiment_id, family) or _report_candidate(family)
+def _candidate_for_family(
+    client,
+    experiment_id: str,
+    family: str,
+    report_paths: dict[str, Path] | None = None,
+    model_family_tags: dict[str, str] | None = None,
+) -> Candidate | None:
+    model_family_tag = None if model_family_tags is None else model_family_tags.get(family)
+    return _latest_run_candidate(
+        client,
+        experiment_id,
+        family,
+        model_family_tag=model_family_tag,
+    ) or _report_candidate(family, report_paths=report_paths)
 
 
-def _latest_model_run_id(client, experiment_id: str, family: str) -> str:
+def _latest_model_run_id(
+    client,
+    experiment_id: str,
+    family: str,
+    model_family_tag: str | None = None,
+) -> str:
+    model_family_tag = family if model_family_tag is None else model_family_tag
     runs = client.search_runs(
         [experiment_id],
-        filter_string=f"tags.model_family = '{family}'",
+        filter_string=f"tags.model_family = '{model_family_tag}'",
         order_by=["attributes.start_time DESC"],
         max_results=100,
     )
@@ -197,33 +236,45 @@ def _logged_model_uri(client, run_id: str) -> str:
     return f"runs:/{run_id}/model"
 
 
-def promote_champion() -> PromotionResult:
-    """Promote the best eligible full-horizon family to MLflow ``@champion``.
-
-    The shared-grid report comes from ``python -m src.models.model_comparison``; rerun
-    that comparison before promotion whenever SARIMA or Elastic Net specs change.
-    """
+def _promote_champion_for_config(
+    registered_model_name: str,
+    eligible_families: tuple[str, ...],
+    report_paths: dict[str, Path],
+    shared_grid_report_path: Path,
+    model_family_tags: dict[str, str] | None = None,
+) -> PromotionResult:
+    """Promote the best eligible full-horizon family to an MLflow alias."""
     mlflow, client, experiment = _client_and_experiment()
     candidates = [
         candidate
-        for family in ELIGIBLE_FAMILIES
-        if (candidate := _candidate_for_family(client, experiment.experiment_id, family))
+        for family in eligible_families
+        if (
+            candidate := _candidate_for_family(
+                client,
+                experiment.experiment_id,
+                family,
+                report_paths=report_paths,
+                model_family_tags=model_family_tags,
+            )
+        )
         is not None
     ]
     if not candidates:
         raise RuntimeError("No SARIMA or Elastic Net RMSE candidates found in MLflow or reports.")
 
-    _ensure_shared_grid_report_fresh(client, candidates)
-    winner = _rank_candidates_on_shared_grid(candidates)
+    _ensure_shared_grid_report_fresh(client, candidates, path=shared_grid_report_path)
+    winner = _rank_candidates_on_shared_grid(candidates, path=shared_grid_report_path)
+    model_family_tag = None if model_family_tags is None else model_family_tags.get(winner.family)
     run_id = winner.run_id or _latest_model_run_id(
         client,
         experiment.experiment_id,
         winner.family,
+        model_family_tag=model_family_tag,
     )
     model_uri = _logged_model_uri(client, run_id)
     version = mlflow.register_model(
         model_uri,
-        REGISTERED_MODEL_NAME,
+        registered_model_name,
         tags={
             "model_family": winner.family,
             "source_run_id": run_id,
@@ -233,18 +284,43 @@ def promote_champion() -> PromotionResult:
         },
     )
     client.set_registered_model_alias(
-        REGISTERED_MODEL_NAME,
+        registered_model_name,
         CHAMPION_ALIAS,
         version.version,
     )
     return PromotionResult(
-        registered_model_name=REGISTERED_MODEL_NAME,
+        registered_model_name=registered_model_name,
         alias=CHAMPION_ALIAS,
-        family=winner.family,
+        family=winner.family,  # type: ignore[arg-type]
         version=str(version.version),
         run_id=run_id,
         rmse_overall=winner.rmse_overall,
         metric_source=winner.metric_source,
+    )
+
+
+def promote_champion() -> PromotionResult:
+    """Promote the best eligible full-horizon family to MLflow ``@champion``.
+
+    The shared-grid report comes from ``python -m src.models.model_comparison``; rerun
+    that comparison before promotion whenever SARIMA or Elastic Net specs change.
+    """
+    return _promote_champion_for_config(
+        registered_model_name=REGISTERED_MODEL_NAME,
+        eligible_families=ELIGIBLE_FAMILIES,
+        report_paths=REPORT_PATHS,
+        shared_grid_report_path=SHARED_GRID_REPORT_PATH,
+    )
+
+
+def promote_trimmed_mean_champion() -> PromotionResult:
+    """Promote the best trimmed-mean eligible family to its separate MLflow model."""
+    return _promote_champion_for_config(
+        registered_model_name=TRIMMED_MEAN_REGISTERED_MODEL_NAME,
+        eligible_families=TRIMMED_MEAN_ELIGIBLE_FAMILIES,
+        report_paths=TRIMMED_MEAN_REPORT_PATHS,
+        shared_grid_report_path=TRIMMED_MEAN_SHARED_GRID_REPORT_PATH,
+        model_family_tags=TRIMMED_MEAN_MODEL_FAMILY_TAGS,
     )
 
 
