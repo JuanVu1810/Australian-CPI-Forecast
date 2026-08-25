@@ -80,14 +80,18 @@ def _log_run_without_model(family, rmse_overall):
         return run.info.run_id
 
 
-def _register_champion(run_id, family="sarima"):
+def _register_champion(
+    run_id,
+    family="sarima",
+    registered_model_name=registry.REGISTERED_MODEL_NAME,
+):
     version = mlflow.register_model(
         registry._logged_model_uri(MlflowClient(), run_id),
-        registry.REGISTERED_MODEL_NAME,
+        registered_model_name,
         tags={"model_family": family, "source_run_id": run_id},
     )
     MlflowClient().set_registered_model_alias(
-        registry.REGISTERED_MODEL_NAME,
+        registered_model_name,
         registry.CHAMPION_ALIAS,
         version.version,
     )
@@ -232,6 +236,32 @@ def test_sarima_forecast_labels_come_from_model_when_curated_data_is_ahead(
     assert forecast_payload["quarters"] == ["2022Q1", "2022Q2"]
 
 
+def test_trimmed_mean_forecast_uses_trimmed_champion_alias(monkeypatch, tmp_path):
+    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-api-trimmed-forecast")
+    curated_path = tmp_path / "curated.csv"
+    _write_curated_frame(curated_path, end_quarter="2021Q4")
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+    run_id = _log_run_with_model("trimmed_mean_sarima", 1.05)
+    version = _register_champion(
+        run_id,
+        family="sarima",
+        registered_model_name=registry.TRIMMED_MEAN_REGISTERED_MODEL_NAME,
+    )
+
+    forecast_payload = api_main.forecast_trimmed_mean(
+        api_main.ForecastRequest(horizon=3)
+    ).model_dump()
+
+    assert forecast_payload["model_name"] == registry.TRIMMED_MEAN_REGISTERED_MODEL_NAME
+    assert forecast_payload["model_family"] == "sarima"
+    assert forecast_payload["model_version"] == str(version.version)
+    assert forecast_payload["run_id"] == run_id
+    assert forecast_payload["horizon"] == 3
+    assert len(forecast_payload["forecast"]) == 3
+    assert forecast_payload["forecast_origin"] == "2021Q4"
+    assert forecast_payload["quarters"] == ["2022Q1", "2022Q2", "2022Q3"]
+
+
 def test_elastic_net_forecast_branch_uses_predict_next(monkeypatch):
     class FakeElasticNetFit:
         feature_columns = ("cpi_yoy_lag1",)
@@ -244,7 +274,7 @@ def test_elastic_net_forecast_branch_uses_predict_next(monkeypatch):
     monkeypatch.setattr(
         api_main,
         "_current_elastic_net_frame",
-        lambda: pd.DataFrame(
+        lambda **kwargs: pd.DataFrame(
             {"cpi_yoy_lag1": [1.0, 2.0]},
             index=pd.period_range("2022Q3", periods=2, freq="Q"),
         ),
@@ -274,7 +304,7 @@ def test_elastic_net_forecast_branch_rejects_horizon_beyond_fitted_horizons(monk
     monkeypatch.setattr(
         api_main,
         "_current_elastic_net_frame",
-        lambda: pd.DataFrame(
+        lambda **kwargs: pd.DataFrame(
             {"cpi_yoy_lag1": [1.0, 2.0]},
             index=pd.period_range("2022Q3", periods=2, freq="Q"),
         ),
@@ -316,6 +346,59 @@ def test_forecast_all_returns_registered_sarima_and_marks_missing_families(
     assert "No finished MLflow run found" in unavailable["ensemble"]
 
 
+def test_trimmed_mean_forecast_all_uses_trimmed_handlers_and_calibration(
+    monkeypatch,
+    tmp_path,
+):
+    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-trimmed-forecast-all")
+    curated_path = tmp_path / "curated.csv"
+    factors_path = tmp_path / "trimmed_calibration_factors.csv"
+    _write_curated_frame(curated_path, end_quarter="2021Q4")
+    _write_interval_calibration_factors(factors_path)
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+    monkeypatch.setattr(
+        api_main,
+        "TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH",
+        factors_path,
+    )
+    api_main._load_interval_calibration_factors.cache_clear()
+    run_id = _log_run_with_model("trimmed_mean_sarima", 1.05)
+
+    def fake_trimmed_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
+        return api_main.FamilyForecastData(
+            forecast=[10.0, 20.0],
+            draws=np.column_stack(
+                [
+                    np.linspace(9.0, 11.0, n_sims),
+                    np.linspace(18.0, 22.0, n_sims),
+                ]
+            ),
+            quarters=["2022Q1", "2022Q2"],
+            forecast_origin="2021Q4",
+            horizon_served=requested_horizon,
+            horizon_cap=None,
+        )
+
+    monkeypatch.setattr(
+        api_main,
+        "TRIMMED_MEAN_FAMILY_HANDLERS",
+        {"sarima": fake_trimmed_sarima_family_forecast},
+    )
+
+    payload = api_main.forecast_trimmed_mean_all(
+        api_main.AllForecastsRequest(horizon=2, n_sims=100)
+    ).model_dump()
+
+    assert payload["requested_horizon"] == 2
+    assert payload["unavailable"] == []
+    model = payload["models"][0]
+    assert model["model_family"] == "sarima"
+    assert model["run_id"] == run_id
+    assert model["forecast"] == [10.0, 20.0]
+    np.testing.assert_allclose(model["interval_lower"], [8.4, 19.2])
+    np.testing.assert_allclose(model["interval_upper"], [11.6, 20.8])
+
+
 def test_forecast_all_returns_sarima_and_elastic_net_with_draw_intervals(
     monkeypatch,
     tmp_path,
@@ -337,7 +420,7 @@ def test_forecast_all_returns_sarima_and_elastic_net_with_draw_intervals(
     monkeypatch.setattr(
         api_main,
         "_current_elastic_net_frame",
-        lambda: pd.DataFrame(
+        lambda **kwargs: pd.DataFrame(
             {"cpi_yoy_lag1": [1.0, 2.0]},
             index=pd.period_range("2022Q3", periods=2, freq="Q"),
         ),
@@ -733,7 +816,7 @@ def test_forecast_all_marks_elastic_net_horizon_mismatch_unavailable(
     monkeypatch.setattr(
         api_main,
         "_current_elastic_net_frame",
-        lambda: pd.DataFrame(
+        lambda **kwargs: pd.DataFrame(
             {"cpi_yoy_lag1": [1.0, 2.0]},
             index=pd.period_range("2022Q3", periods=2, freq="Q"),
         ),
@@ -872,6 +955,78 @@ def test_forecast_all_ensemble_uses_component_model_uris_without_own_model_artif
     )
     assert ensemble_run_id not in seen_component_uris["sarima"]
     assert ensemble_run_id not in seen_component_uris["elastic_net"]
+
+
+def test_trimmed_mean_ensemble_uses_trimmed_components_and_fixed_weights(
+    monkeypatch,
+    tmp_path,
+):
+    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-trimmed-ensemble-components")
+    sarima_run_id = _log_run_with_model("trimmed_mean_sarima", 1.25)
+    elastic_net_run_id = _log_run_with_model("trimmed_mean_elastic_net", 1.15)
+    seen_component_uris = {}
+
+    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
+        seen_component_uris["sarima"] = model_uri
+        return api_main.FamilyForecastData(
+            forecast=[1.0, 2.0, 3.0],
+            draws=np.tile(np.array([1.0, 2.0, 3.0]), (n_sims, 1)),
+            quarters=["2022Q1", "2022Q2", "2022Q3"],
+            forecast_origin="2021Q4",
+            horizon_served=requested_horizon,
+            horizon_cap=None,
+        )
+
+    def fake_elastic_net_family_forecast(
+        model_uri,
+        requested_horizon,
+        n_sims,
+        seed,
+        target_column,
+        feature_columns,
+    ):
+        seen_component_uris["elastic_net"] = model_uri
+        seen_component_uris["elastic_target"] = target_column
+        seen_component_uris["elastic_features"] = feature_columns
+        return api_main.FamilyForecastData(
+            forecast=[3.0, 4.0, 5.0],
+            draws=np.tile(np.array([3.0, 4.0, 5.0]), (n_sims, 1)),
+            quarters=["2022Q1", "2022Q2", "2022Q3"],
+            forecast_origin="2021Q4",
+            horizon_served=requested_horizon,
+            horizon_cap=None,
+        )
+
+    monkeypatch.setattr(api_main, "_sarima_family_forecast", fake_sarima_family_forecast)
+    monkeypatch.setattr(
+        api_main,
+        "_elastic_net_family_forecast",
+        fake_elastic_net_family_forecast,
+    )
+    monkeypatch.setattr(
+        api_main.ensemble,
+        "horizon_rmse_weights",
+        lambda horizons: pytest.fail("trimmed-mean ensemble should use fixed weights"),
+    )
+
+    result = api_main._ensemble_trimmed_mean_family_forecast(
+        "ignored",
+        requested_horizon=3,
+        n_sims=100,
+        seed=42,
+    )
+
+    assert result.forecast == [2.0, 3.0, 4.0]
+    assert result.quarters == ["2022Q1", "2022Q2", "2022Q3"]
+    assert result.horizon_cap is None
+    client = MlflowClient()
+    assert seen_component_uris["sarima"] == registry._logged_model_uri(client, sarima_run_id)
+    assert seen_component_uris["elastic_net"] == registry._logged_model_uri(
+        client,
+        elastic_net_run_id,
+    )
+    assert seen_component_uris["elastic_target"] == "trimmed_mean_cpi_yoy"
+    assert seen_component_uris["elastic_features"][0] == "trimmed_mean_cpi_yoy_lag1"
 
 
 def test_interval_from_paths_matches_numpy_percentile():

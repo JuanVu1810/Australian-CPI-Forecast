@@ -35,6 +35,7 @@ GROUP_D_FEATURE_COLUMNS = (
 GROUP_D_ORDER = (1, 0, 1)
 GROUP_D_SEASONAL_ORDER = (0, 0, 1, 4)
 GROUP_D_HORIZON_CAP_ERROR = "SARIMAX Group D is lag-safety capped at horizon 1"
+TRIMMED_MEAN_TARGET_COLUMN = "trimmed_mean_cpi_yoy"
 TRIMMED_MEAN_PRIMARY_FEATURE_COLUMNS = (
     "commodity_growth_lag1",
     "wti_growth_lag1",
@@ -42,6 +43,9 @@ TRIMMED_MEAN_PRIMARY_FEATURE_COLUMNS = (
 TRIMMED_MEAN_PRIMARY_ORDER = (1, 1, 1)
 TRIMMED_MEAN_PRIMARY_SEASONAL_ORDER = (0, 0, 1, 4)
 SARIMAX_COMPARISON_REPORT_PATH = PROJECT_ROOT / "reports/model_comparison_sarimax.csv"
+TRIMMED_MEAN_SARIMAX_COMPARISON_REPORT_PATH = (
+    PROJECT_ROOT / "reports/model_comparison_trimmed_mean_all.csv"
+)
 
 
 def _align_endog_exog(series: pd.Series, exog: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
@@ -206,6 +210,21 @@ def group_d_future_exog(curated_frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def trimmed_mean_primary_future_exog(curated_frame: pd.DataFrame) -> pd.DataFrame:
+    """One-row future exog for trimmed-mean primary-WTI horizon-1 forecasts."""
+    sorted_frame = pd.DataFrame(curated_frame).sort_index()
+    latest = sorted_frame.iloc[-1]
+    return pd.DataFrame(
+        [
+            {
+                "commodity_growth_lag1": latest["commodity_growth"],
+                "wti_growth_lag1": latest["wti_growth"],
+            }
+        ],
+        index=[sorted_frame.index[-1] + 1],
+    ).loc[:, list(TRIMMED_MEAN_PRIMARY_FEATURE_COLUMNS)]
+
+
 def _group_d_frame(series: pd.Series, exog: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(
         [pd.Series(series).rename(TARGET_COLUMN), pd.DataFrame(exog)],
@@ -286,6 +305,29 @@ def _load_existing_sarimax_d_metrics(path: Path = SARIMAX_COMPARISON_REPORT_PATH
     return rows
 
 
+def _load_existing_trimmed_mean_primary_metrics(
+    path: Path = TRIMMED_MEAN_SARIMAX_COMPARISON_REPORT_PATH,
+) -> pd.DataFrame:
+    """Load canonical trimmed-mean primary SARIMAX metrics from the all-model report."""
+    if not path.exists():
+        return pd.DataFrame()
+    report = pd.read_csv(path)
+    required_columns = {"group_id", "model", "horizon", "n", "rmse", "mae"}
+    if not required_columns.issubset(report.columns):
+        return pd.DataFrame()
+    rows = report.loc[
+        report["group_id"].eq("TRIMMED_MEAN_PRIMARY_WTI")
+        & report["model"].eq("sarimax")
+    ].copy()
+    if rows.empty:
+        return pd.DataFrame()
+    rows["sample_size_note"] = (
+        "Copied from reports/model_comparison_trimmed_mean_all.csv "
+        "TRIMMED_MEAN_PRIMARY_WTI rows; horizon-1-only trimmed-mean SARIMAX."
+    )
+    return rows
+
+
 def _load_group_d_training_exog(path: Path = CURATED_DATA_PATH) -> pd.DataFrame:
     """Load the narrow Group D exog matrix for full-sample fitting/registration."""
     df = pd.read_csv(path)
@@ -295,6 +337,19 @@ def _load_group_d_training_exog(path: Path = CURATED_DATA_PATH) -> pd.DataFrame:
         raise ValueError(f"{path} missing required Group D columns: {sorted(missing)}")
     df.index = pd.PeriodIndex(df.pop("quarter").astype(str), freq="Q")
     return df.loc[:, list(GROUP_D_FEATURE_COLUMNS)].sort_index()
+
+
+def _load_trimmed_mean_primary_training_exog(path: Path = CURATED_DATA_PATH) -> pd.DataFrame:
+    """Load the narrow trimmed-mean primary-WTI exog matrix for registration."""
+    df = pd.read_csv(path)
+    required_columns = {"quarter", *TRIMMED_MEAN_PRIMARY_FEATURE_COLUMNS}
+    missing = required_columns.difference(df.columns)
+    if missing:
+        raise ValueError(
+            f"{path} missing required trimmed-mean primary columns: {sorted(missing)}"
+        )
+    df.index = pd.PeriodIndex(df.pop("quarter").astype(str), freq="Q")
+    return df.loc[:, list(TRIMMED_MEAN_PRIMARY_FEATURE_COLUMNS)].sort_index()
 
 
 def run_sarimax_group_d_registration(
@@ -337,6 +392,57 @@ def run_sarimax_group_d_registration(
             "horizon_cap": "1",
         },
         artifact_paths=[SARIMAX_COMPARISON_REPORT_PATH],
+        model_logger=lambda: tracking.log_statsmodels_model(final_fit),
+    )
+
+
+def run_sarimax_trimmed_mean_primary_registration(
+    curated_path: Path = CURATED_DATA_PATH,
+    verbose: bool = False,
+) -> str:
+    """Log the full-sample trimmed-mean primary-WTI SARIMAX servable artifact."""
+    from src.models import tracking
+
+    series = load_target_series(curated_path, target_column=TRIMMED_MEAN_TARGET_COLUMN)
+    exog = _load_trimmed_mean_primary_training_exog(curated_path)
+    metrics = _load_existing_trimmed_mean_primary_metrics(
+        TRIMMED_MEAN_SARIMAX_COMPARISON_REPORT_PATH
+    )
+    if metrics.empty:
+        raise FileNotFoundError(
+            "Canonical trimmed-mean SARIMAX primary metrics were not found in "
+            f"{TRIMMED_MEAN_SARIMAX_COMPARISON_REPORT_PATH}."
+        )
+
+    if verbose:
+        print(
+            "Fitting final full-sample trimmed-mean SARIMAX primary-WTI for MLflow logging...",
+            flush=True,
+        )
+    final_fit = fit_sarimax(
+        series=series,
+        exog=exog,
+        order=TRIMMED_MEAN_PRIMARY_ORDER,
+        seasonal_order=TRIMMED_MEAN_PRIMARY_SEASONAL_ORDER,
+    )
+    return tracking.log_model_run(
+        run_name="sarimax_trimmed_mean_primary_registration",
+        model_name="sarimax",
+        metrics=metrics,
+        params={
+            "order": TRIMMED_MEAN_PRIMARY_ORDER,
+            "seasonal_order": TRIMMED_MEAN_PRIMARY_SEASONAL_ORDER,
+            "features": TRIMMED_MEAN_PRIMARY_FEATURE_COLUMNS,
+            "target_column": TRIMMED_MEAN_TARGET_COLUMN,
+            "horizon_cap": 1,
+        },
+        tags={
+            "model_family": "sarimax_trimmed_mean_primary",
+            "group_id": "TRIMMED_MEAN_PRIMARY_WTI",
+            "target_column": TRIMMED_MEAN_TARGET_COLUMN,
+            "horizon_cap": "1",
+        },
+        artifact_paths=[TRIMMED_MEAN_SARIMAX_COMPARISON_REPORT_PATH],
         model_logger=lambda: tracking.log_statsmodels_model(final_fit),
     )
 

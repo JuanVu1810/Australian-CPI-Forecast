@@ -16,6 +16,7 @@ from src.models.sarimax import (
     forecast_sarimax_group_d,
     group_d_future_exog,
     run_sarimax_group_d_registration,
+    run_sarimax_trimmed_mean_primary_registration,
     simulate_paths_from_fit,
     simulate_sarimax_group_d_paths,
     simulate_sarimax_paths,
@@ -214,6 +215,24 @@ def test_run_sarimax_group_d_registration_logs_against_real_report(tmp_path, mon
     monkeypatch.setenv("MLFLOW_EXPERIMENT_NAME", "pytest-sarimax-group-d")
 
     run_id = run_sarimax_group_d_registration(verbose=False)
+
+    assert isinstance(run_id, str)
+    assert run_id
+
+
+@pytest.mark.skipif(
+    not Path("reports/model_comparison_trimmed_mean_all.csv").exists(),
+    reason="requires the real trimmed-mean all-model comparison report",
+)
+def test_run_sarimax_trimmed_mean_primary_registration_logs_against_real_report(
+    tmp_path,
+    monkeypatch,
+):
+    pytest.importorskip("mlflow")
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", str(tmp_path / "mlruns"))
+    monkeypatch.setenv("MLFLOW_EXPERIMENT_NAME", "pytest-sarimax-trimmed-mean-primary")
+
+    run_id = run_sarimax_trimmed_mean_primary_registration(verbose=False)
 
     assert isinstance(run_id, str)
     assert run_id

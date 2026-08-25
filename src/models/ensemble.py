@@ -11,6 +11,8 @@ import pandas as pd
 from src.models.elastic_net import (
     ELASTIC_NET_FEATURE_COLUMNS,
     TARGET_COLUMN,
+    TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    TRIMMED_MEAN_TARGET_COLUMN,
     forecast_elastic_net_direct,
     load_elastic_net_feature_frame,
     simulate_elastic_net_paths,
@@ -30,6 +32,8 @@ from src.models.evaluation import (
 from src.models.sarima import (
     DEFAULT_ORDER as SARIMA_DEFAULT_ORDER,
     DEFAULT_SEASONAL_ORDER as SARIMA_DEFAULT_SEASONAL_ORDER,
+    TRIMMED_MEAN_DEFAULT_ORDER,
+    TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
     forecast_sarima,
     simulate_sarima_paths,
 )
@@ -40,6 +44,9 @@ DEFAULT_INITIAL_TRAIN_SIZE = 40
 DEFAULT_SEED = 42
 DYNAMIC_WEIGHTS_SOURCE_PATH = PROJECT_ROOT / "reports/model_comparison_elastic_net.csv"
 ENSEMBLE_COMPARISON_OUTPUT_PATH = PROJECT_ROOT / "reports/model_comparison_ensemble.csv"
+TRIMMED_MEAN_ENSEMBLE_COMPARISON_OUTPUT_PATH = (
+    PROJECT_ROOT / "reports/model_comparison_ensemble_trimmed_mean.csv"
+)
 
 
 def _validate_weights(weights: tuple[float, float]) -> tuple[float, float]:
@@ -353,6 +360,7 @@ def run_ensemble_comparison(
     elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
     include_rba: bool = True,
     run_name: str = "ensemble_comparison",
+    model_family_tag: str = "ensemble",
     verbose: bool = False,
 ) -> pd.DataFrame:
     """Run the ensemble comparison, write its report, and log an MLflow run."""
@@ -456,7 +464,7 @@ def run_ensemble_comparison(
             "horizons": requested_horizons,
         },
         tags={
-            "model_family": "ensemble",
+            "model_family": model_family_tag,
             "target_column": target_column,
             "component_families": "sarima;elastic_net",
             "run_role": "comparison_with_full_sample_model",
@@ -465,6 +473,36 @@ def run_ensemble_comparison(
         model_logger=lambda: _log_ensemble_config(weights),
     )
     return comparison
+
+
+def run_trimmed_mean_ensemble_comparison(
+    curated_path: Path = CURATED_DATA_PATH,
+    comparison_output_path: Path = TRIMMED_MEAN_ENSEMBLE_COMPARISON_OUTPUT_PATH,
+    initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
+    horizons: tuple[int, ...] = DEFAULT_HORIZONS,
+    seed: int = DEFAULT_SEED,
+    max_origins: int | None = None,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    """Run and log the trimmed-mean SARIMA + Elastic Net ensemble comparison."""
+    return run_ensemble_comparison(
+        curated_path=curated_path,
+        rba_path=RBA_FORECAST_PATH,
+        comparison_output_path=comparison_output_path,
+        initial_train_size=initial_train_size,
+        horizons=horizons,
+        weights=DEFAULT_WEIGHTS,
+        seed=seed,
+        max_origins=max_origins,
+        target_column=TRIMMED_MEAN_TARGET_COLUMN,
+        sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
+        sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
+        elastic_net_feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+        include_rba=False,
+        run_name="trimmed_mean_ensemble_comparison",
+        model_family_tag="trimmed_mean_ensemble",
+        verbose=verbose,
+    )
 
 
 def main(argv: list[str] | None = None) -> None:

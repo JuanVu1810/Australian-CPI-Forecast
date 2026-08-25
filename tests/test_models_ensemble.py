@@ -374,3 +374,23 @@ def test_run_ensemble_comparison_smoke_on_tiny_synthetic_frame(tmp_path, monkeyp
     assert logged["tags"]["model_family"] == "ensemble"
     assert logged["tags"]["component_families"] == "sarima;elastic_net"
     assert callable(logged["model_logger"])
+
+
+def test_run_trimmed_mean_ensemble_comparison_uses_trimmed_logging_config(monkeypatch):
+    calls = {}
+
+    def fake_run_ensemble_comparison(**kwargs):
+        calls.update(kwargs)
+        return pd.DataFrame({"model": ["ensemble"], "horizon": ["overall"]})
+
+    monkeypatch.setattr(ensemble, "run_ensemble_comparison", fake_run_ensemble_comparison)
+
+    result = ensemble.run_trimmed_mean_ensemble_comparison(verbose=True)
+
+    assert not result.empty
+    assert calls["target_column"] == "trimmed_mean_cpi_yoy"
+    assert calls["elastic_net_feature_columns"][0] == "trimmed_mean_cpi_yoy_lag1"
+    assert calls["include_rba"] is False
+    assert calls["weights"] == ensemble.DEFAULT_WEIGHTS
+    assert calls["run_name"] == "trimmed_mean_ensemble_comparison"
+    assert calls["model_family_tag"] == "trimmed_mean_ensemble"

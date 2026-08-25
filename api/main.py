@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
 
 import numpy as np
@@ -15,11 +15,17 @@ from mlflow.tracking import MlflowClient
 from pydantic import BaseModel, Field
 
 from src.models import elastic_net, ensemble, sarima, sarimax, tracking
-from src.models.elastic_net import load_elastic_net_feature_frame
+from src.models.elastic_net import (
+    TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    TRIMMED_MEAN_TARGET_COLUMN,
+    load_elastic_net_feature_frame,
+)
 from src.models.evaluation import TARGET_COLUMN, load_target_series
 from src.models.registry import (
     CHAMPION_ALIAS,
     REGISTERED_MODEL_NAME,
+    TRIMMED_MEAN_MODEL_FAMILY_TAGS,
+    TRIMMED_MEAN_REGISTERED_MODEL_NAME,
     _client_and_experiment,
     _latest_model_run_id,
     _logged_model_uri,
@@ -32,9 +38,23 @@ INTERVAL_CALIBRATION_FACTORS_PATH = Path("reports/model_interval_calibration_fac
 INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH = Path(
     "reports/model_interval_calibration_validation.csv"
 )
+TRIMMED_MEAN_INTERVAL_COVERAGE_REPORT_PATH = Path(
+    "reports/model_interval_coverage_trimmed_mean.csv"
+)
+TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH = Path(
+    "reports/model_interval_calibration_factors_trimmed_mean.csv"
+)
+TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH = Path(
+    "reports/model_interval_calibration_validation_trimmed_mean.csv"
+)
 MAX_FORECAST_HORIZON = 8
 VALIDATED_INTERVAL_LOWER = 0.1
 VALIDATED_INTERVAL_UPPER = 0.9
+TRIMMED_MEAN_FAMILY_RUN_TAGS = {
+    **TRIMMED_MEAN_MODEL_FAMILY_TAGS,
+    "sarimax_trimmed_mean_primary": "sarimax_trimmed_mean_primary",
+    "ensemble": "trimmed_mean_ensemble",
+}
 
 app = FastAPI(
     title="Australian CPI Forecast API",
@@ -133,20 +153,31 @@ def _mlflow_client() -> MlflowClient:
     return MlflowClient()
 
 
-def _champion_model_version(client: MlflowClient):
+def _champion_model_version(
+    client: MlflowClient,
+    registered_model_name: str = REGISTERED_MODEL_NAME,
+    champion_alias: str = CHAMPION_ALIAS,
+):
     try:
-        return client.get_model_version_by_alias(REGISTERED_MODEL_NAME, CHAMPION_ALIAS)
+        return client.get_model_version_by_alias(registered_model_name, champion_alias)
     except Exception as exc:  # pragma: no cover - MLflow exception classes vary by version
         raise HTTPException(
             status_code=503,
             detail=(
-                f"No MLflow champion alias found for {REGISTERED_MODEL_NAME!r}. "
+                f"No MLflow champion alias found for {registered_model_name!r}. "
                 "Run `python -m src.models.registry` after model orchestrators log runs."
             ),
         ) from exc
 
 
-def _model_family(client: MlflowClient, version) -> str:
+def _model_family(
+    client: MlflowClient,
+    version,
+    registered_model_name: str = REGISTERED_MODEL_NAME,
+    champion_alias: str = CHAMPION_ALIAS,
+) -> str:
+    del registered_model_name
+    del champion_alias
     tags = dict(getattr(version, "tags", {}) or {})
     if tags.get("model_family"):
         return str(tags["model_family"])
@@ -160,7 +191,13 @@ def _model_family(client: MlflowClient, version) -> str:
     )
 
 
-def _metric_payload(client: MlflowClient, version) -> dict[str, object]:
+def _metric_payload(
+    client: MlflowClient,
+    version,
+    registered_model_name: str = REGISTERED_MODEL_NAME,
+    champion_alias: str = CHAMPION_ALIAS,
+) -> dict[str, object]:
+    del champion_alias
     if not getattr(version, "run_id", None):
         raise HTTPException(
             status_code=503,
@@ -176,18 +213,28 @@ def _metric_payload(client: MlflowClient, version) -> dict[str, object]:
         or key.startswith("mae_h")
     }
     return {
-        "model_name": REGISTERED_MODEL_NAME,
+        "model_name": registered_model_name,
         "model_version": str(version.version),
-        "model_family": _model_family(client, version),
+        "model_family": _model_family(
+            client,
+            version,
+            registered_model_name=registered_model_name,
+        ),
         "run_id": version.run_id,
         "metrics": metrics,
     }
 
 
-def _current_elastic_net_frame() -> pd.DataFrame:
-    series = load_target_series(CURATED_DATA_PATH)
-    exog = load_elastic_net_feature_frame(CURATED_DATA_PATH)
-    return pd.concat([series.rename(TARGET_COLUMN), exog], axis=1)
+def _current_elastic_net_frame(
+    target_column: str = TARGET_COLUMN,
+    feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
+) -> pd.DataFrame:
+    series = load_target_series(CURATED_DATA_PATH, target_column=target_column)
+    exog = load_elastic_net_feature_frame(
+        CURATED_DATA_PATH,
+        feature_columns=feature_columns,
+    )
+    return pd.concat([series.rename(target_column), exog], axis=1)
 
 
 def _load_elastic_net_fit(model_uri: str):
@@ -253,23 +300,37 @@ def _parse_bool(value: object) -> bool:
 
 
 @lru_cache(maxsize=1)
-def _load_interval_coverage_report() -> dict[tuple[str, int], dict[str, object]]:
+def _load_interval_coverage_report(
+    interval_coverage_report_path: Path | None = None,
+    interval_calibration_validation_report_path: Path | None = None,
+) -> dict[tuple[str, int], dict[str, object]]:
     """Load non-circular interval diagnostics for the default served bounds."""
-    validation = _load_interval_calibration_validation_report()
+    interval_coverage_report_path = (
+        INTERVAL_COVERAGE_REPORT_PATH
+        if interval_coverage_report_path is None
+        else interval_coverage_report_path
+    )
+    interval_calibration_validation_report_path = (
+        INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH
+        if interval_calibration_validation_report_path is None
+        else interval_calibration_validation_report_path
+    )
+    validation = _load_interval_calibration_validation_report(
+        interval_calibration_validation_report_path
+    )
     if validation:
         return validation
-    return _load_full_sample_interval_coverage_report()
+    return _load_full_sample_interval_coverage_report(interval_coverage_report_path)
 
-
-def _load_interval_calibration_validation_report() -> dict[
-    tuple[str, int],
-    dict[str, object],
-]:
+def _load_interval_calibration_validation_report(
+    path: Path | None = None,
+) -> dict[tuple[str, int], dict[str, object]]:
     """Load held-out calibrated coverage diagnostics used for API disclosure."""
-    if not INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH.exists():
+    path = INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH if path is None else path
+    if not path.exists():
         return {}
     try:
-        report = pd.read_csv(INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH)
+        report = pd.read_csv(path)
     except (OSError, ValueError):
         return {}
 
@@ -317,12 +378,15 @@ def _load_interval_calibration_validation_report() -> dict[
     return coverage
 
 
-def _load_full_sample_interval_coverage_report() -> dict[tuple[str, int], dict[str, object]]:
+def _load_full_sample_interval_coverage_report(
+    path: Path | None = None,
+) -> dict[tuple[str, int], dict[str, object]]:
     """Fallback loader for legacy/raw coverage reports when validation is absent."""
-    if not INTERVAL_COVERAGE_REPORT_PATH.exists():
+    path = INTERVAL_COVERAGE_REPORT_PATH if path is None else path
+    if not path.exists():
         return {}
     try:
-        report = pd.read_csv(INTERVAL_COVERAGE_REPORT_PATH)
+        report = pd.read_csv(path)
     except (OSError, ValueError):
         return {}
 
@@ -373,6 +437,8 @@ def _coverage_fields_for_family(
     horizon_served: int,
     lower: float,
     upper: float,
+    interval_coverage_report_path: Path | None = None,
+    interval_calibration_validation_report_path: Path | None = None,
 ) -> tuple[list[float | None], list[int | None], list[bool | None]]:
     if not _validated_interval_bounds(lower, upper):
         return (
@@ -381,7 +447,10 @@ def _coverage_fields_for_family(
             [None] * horizon_served,
         )
 
-    coverage = _load_interval_coverage_report()
+    coverage = _load_interval_coverage_report(
+        interval_coverage_report_path,
+        interval_calibration_validation_report_path,
+    )
     requested_nominal = upper - lower
     empirical: list[float | None] = []
     sample_sizes: list[int | None] = []
@@ -404,12 +473,15 @@ def _coverage_fields_for_family(
 
 
 @lru_cache(maxsize=1)
-def _load_interval_calibration_factors() -> dict[tuple[str, int], dict[str, float]]:
+def _load_interval_calibration_factors(
+    path: Path | None = None,
+) -> dict[tuple[str, int], dict[str, float]]:
     """Load static interval scale factors for the default validated interval."""
-    if not INTERVAL_CALIBRATION_FACTORS_PATH.exists():
+    path = INTERVAL_CALIBRATION_FACTORS_PATH if path is None else path
+    if not path.exists():
         return {}
     try:
-        factors = pd.read_csv(INTERVAL_CALIBRATION_FACTORS_PATH)
+        factors = pd.read_csv(path)
     except (OSError, ValueError):
         return {}
 
@@ -443,11 +515,12 @@ def _calibrated_interval_bounds_for_family(
     interval_upper: list[float],
     lower: float,
     upper: float,
+    interval_calibration_factors_path: Path | None = None,
 ) -> tuple[list[float], list[float]]:
     if not _validated_interval_bounds(lower, upper):
         return interval_lower, interval_upper
 
-    factors = _load_interval_calibration_factors()
+    factors = _load_interval_calibration_factors(interval_calibration_factors_path)
     requested_nominal = upper - lower
     calibrated_lower: list[float] = []
     calibrated_upper: list[float] = []
@@ -503,9 +576,14 @@ def _elastic_net_family_forecast(
     requested_horizon: int,
     n_sims: int,
     seed: int,
+    target_column: str = TARGET_COLUMN,
+    feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
 ) -> FamilyForecastData:
     fitted = _load_elastic_net_fit(model_uri)
-    current_frame = _current_elastic_net_frame()
+    current_frame = _current_elastic_net_frame(
+        target_column=target_column,
+        feature_columns=feature_columns,
+    )
     horizon_to_value = dict(zip(fitted.horizons, fitted.predict_next(current_frame)))
     missing = [
         horizon
@@ -557,6 +635,43 @@ def _sarimax_group_d_family_forecast(
         raise RuntimeError(
             "SARIMAX Group D future exog could not be built; curated dataset "
             f"is missing required column {exc.args[0]!r}."
+        ) from exc
+    point = fitted.get_forecast(steps=1, exog=future).predicted_mean
+    draws = sarimax.simulate_paths_from_fit(
+        fitted,
+        future,
+        steps=1,
+        n_sims=n_sims,
+        seed=seed,
+    )
+    last_quarter = pd.Period(curated_frame.sort_index().index[-1], freq="Q")
+    return FamilyForecastData(
+        forecast=np.asarray(point, dtype=float).tolist(),
+        draws=draws,
+        quarters=next_quarters(str(last_quarter), 1),
+        forecast_origin=str(last_quarter),
+        horizon_served=1,
+        horizon_cap=1,
+    )
+
+
+def _sarimax_trimmed_mean_family_forecast(
+    model_uri: str,
+    requested_horizon: int,
+    n_sims: int,
+    seed: int,
+) -> FamilyForecastData:
+    del requested_horizon
+    import mlflow.statsmodels
+
+    curated_frame = _load_curated_frame_for_group_d()
+    fitted = mlflow.statsmodels.load_model(model_uri)
+    try:
+        future = sarimax.trimmed_mean_primary_future_exog(curated_frame)
+    except KeyError as exc:
+        raise RuntimeError(
+            "SARIMAX trimmed-mean primary future exog could not be built; "
+            f"curated dataset is missing required column {exc.args[0]!r}."
         ) from exc
     point = fitted.get_forecast(steps=1, exog=future).predicted_mean
     draws = sarimax.simulate_paths_from_fit(
@@ -640,11 +755,99 @@ def _ensemble_family_forecast(
     )
 
 
+def _ensemble_trimmed_mean_family_forecast(
+    model_uri: str,
+    requested_horizon: int,
+    n_sims: int,
+    seed: int,
+) -> FamilyForecastData:
+    del model_uri
+    _, client, experiment = _client_and_experiment()
+    sarima_uri = _logged_model_uri(
+        client,
+        _latest_model_run_id(
+            client,
+            experiment.experiment_id,
+            "sarima",
+            model_family_tag=TRIMMED_MEAN_MODEL_FAMILY_TAGS["sarima"],
+        ),
+    )
+    elastic_net_uri = _logged_model_uri(
+        client,
+        _latest_model_run_id(
+            client,
+            experiment.experiment_id,
+            "elastic_net",
+            model_family_tag=TRIMMED_MEAN_MODEL_FAMILY_TAGS["elastic_net"],
+        ),
+    )
+    sarima_result = _sarima_family_forecast(
+        sarima_uri,
+        requested_horizon,
+        n_sims,
+        seed,
+    )
+    elastic_net_result = _elastic_net_family_forecast(
+        elastic_net_uri,
+        requested_horizon,
+        n_sims,
+        seed + 1,
+        target_column=TRIMMED_MEAN_TARGET_COLUMN,
+        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    )
+    if sarima_result.horizon_served != requested_horizon:
+        raise RuntimeError(
+            "SARIMA component did not serve the requested trimmed-mean ensemble horizon."
+        )
+    if elastic_net_result.horizon_served != requested_horizon:
+        raise RuntimeError(
+            "Elastic Net component did not serve the requested trimmed-mean ensemble horizon."
+        )
+    if sarima_result.quarters != elastic_net_result.quarters:
+        raise RuntimeError("Trimmed-mean ensemble components returned different quarters.")
+    if sarima_result.forecast_origin != elastic_net_result.forecast_origin:
+        raise RuntimeError("Trimmed-mean ensemble components returned different origins.")
+
+    horizons = tuple(range(1, requested_horizon + 1))
+    weights = {horizon: ensemble.DEFAULT_WEIGHTS for horizon in horizons}
+    forecast = ensemble.combine_point_forecasts(
+        sarima_result.forecast,
+        elastic_net_result.forecast,
+        weights=weights,
+        horizons=horizons,
+    )
+    draws = ensemble.combine_paths(
+        sarima_result.draws,
+        elastic_net_result.draws,
+        weights=weights,
+        horizons=horizons,
+    )
+    return FamilyForecastData(
+        forecast=forecast.astype(float).tolist(),
+        draws=draws,
+        quarters=sarima_result.quarters,
+        forecast_origin=sarima_result.forecast_origin,
+        horizon_served=requested_horizon,
+        horizon_cap=None,
+    )
+
+
 FAMILY_HANDLERS: dict[str, Callable[[str, int, int, int], FamilyForecastData]] = {
     "sarima": _sarima_family_forecast,
     "elastic_net": _elastic_net_family_forecast,
     "sarimax_group_d": _sarimax_group_d_family_forecast,
     "ensemble": _ensemble_family_forecast,
+}
+
+TRIMMED_MEAN_FAMILY_HANDLERS: dict[str, Callable[[str, int, int, int], FamilyForecastData]] = {
+    "sarima": _sarima_family_forecast,
+    "elastic_net": partial(
+        _elastic_net_family_forecast,
+        target_column=TRIMMED_MEAN_TARGET_COLUMN,
+        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    ),
+    "sarimax_trimmed_mean_primary": _sarimax_trimmed_mean_family_forecast,
+    "ensemble": _ensemble_trimmed_mean_family_forecast,
 }
 
 
@@ -653,9 +856,13 @@ def _forecast_values(
     version,
     family: str,
     horizon: int,
+    registered_model_name: str = REGISTERED_MODEL_NAME,
+    champion_alias: str = CHAMPION_ALIAS,
+    target_column: str = TARGET_COLUMN,
+    feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
 ) -> ModelForecast:
-    model_uri = f"models:/{REGISTERED_MODEL_NAME}@{CHAMPION_ALIAS}"
-    if family == "sarima":
+    model_uri = f"models:/{registered_model_name}@{champion_alias}"
+    if family in {"sarima", TRIMMED_MEAN_MODEL_FAMILY_TAGS["sarima"]}:
         import mlflow.statsmodels
 
         model = mlflow.statsmodels.load_model(model_uri)
@@ -666,9 +873,12 @@ def _forecast_values(
             forecast_origin=forecast_origin,
             quarters=quarters,
         )
-    if family == "elastic_net":
+    if family in {"elastic_net", TRIMMED_MEAN_MODEL_FAMILY_TAGS["elastic_net"]}:
         fitted = _load_elastic_net_fit(model_uri)
-        current_frame = _current_elastic_net_frame()
+        current_frame = _current_elastic_net_frame(
+            target_column=target_column,
+            feature_columns=feature_columns,
+        )
         horizon_to_value = dict(zip(fitted.horizons, fitted.predict_next(current_frame)))
         missing = [h for h in range(1, horizon + 1) if h not in horizon_to_value]
         if missing:
@@ -767,8 +977,50 @@ def forecast(request: ForecastRequest) -> ForecastResponse:
     )
 
 
-@app.post("/forecast/all", response_model=AllForecastsResponse)
-def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
+@app.post("/forecast/trimmed-mean", response_model=ForecastResponse)
+def forecast_trimmed_mean(request: ForecastRequest) -> ForecastResponse:
+    load_curated_data()
+    client = _mlflow_client()
+    version = _champion_model_version(
+        client,
+        registered_model_name=TRIMMED_MEAN_REGISTERED_MODEL_NAME,
+        champion_alias=CHAMPION_ALIAS,
+    )
+    family = _model_family(
+        client,
+        version,
+        registered_model_name=TRIMMED_MEAN_REGISTERED_MODEL_NAME,
+    )
+    forecast_result = _forecast_values(
+        client,
+        version,
+        family,
+        request.horizon,
+        registered_model_name=TRIMMED_MEAN_REGISTERED_MODEL_NAME,
+        champion_alias=CHAMPION_ALIAS,
+        target_column=TRIMMED_MEAN_TARGET_COLUMN,
+        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    )
+    return ForecastResponse(
+        model_name=TRIMMED_MEAN_REGISTERED_MODEL_NAME,
+        model_version=str(version.version),
+        model_family=family,
+        run_id=version.run_id,
+        horizon=request.horizon,
+        forecast=[round(float(value), 4) for value in forecast_result.values],
+        quarters=forecast_result.quarters,
+        forecast_origin=forecast_result.forecast_origin,
+    )
+
+
+def _forecast_all_with_handlers(
+    request: AllForecastsRequest,
+    family_handlers: dict[str, Callable[[str, int, int, int], FamilyForecastData]],
+    model_family_tags: dict[str, str] | None = None,
+    interval_coverage_report_path: Path | None = None,
+    interval_calibration_factors_path: Path | None = None,
+    interval_calibration_validation_report_path: Path | None = None,
+) -> AllForecastsResponse:
     load_curated_data()
     client = _mlflow_client()
     try:
@@ -778,9 +1030,15 @@ def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
 
     models: list[FamilyForecast] = []
     unavailable: list[UnavailableFamily] = []
-    for family, handler in FAMILY_HANDLERS.items():
+    for family, handler in family_handlers.items():
         try:
-            run_id = _latest_model_run_id(client, experiment.experiment_id, family)
+            model_family_tag = None if model_family_tags is None else model_family_tags.get(family)
+            run_id = _latest_model_run_id(
+                client,
+                experiment.experiment_id,
+                family,
+                model_family_tag=model_family_tag,
+            )
             model_uri = _logged_model_uri(client, run_id)
             result = handler(model_uri, request.horizon, request.n_sims, seed=42)
         except (RuntimeError, MlflowException, OSError) as exc:
@@ -799,6 +1057,7 @@ def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
             interval_upper=interval_upper,
             lower=request.interval_lower,
             upper=request.interval_upper,
+            interval_calibration_factors_path=interval_calibration_factors_path,
         )
         empirical_coverage, coverage_n, significantly_miscalibrated = (
             _coverage_fields_for_family(
@@ -806,6 +1065,10 @@ def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
                 result.horizon_served,
                 request.interval_lower,
                 request.interval_upper,
+                interval_coverage_report_path=interval_coverage_report_path,
+                interval_calibration_validation_report_path=(
+                    interval_calibration_validation_report_path
+                ),
             )
         )
         models.append(
@@ -829,4 +1092,23 @@ def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
         requested_horizon=request.horizon,
         models=models,
         unavailable=unavailable,
+    )
+
+
+@app.post("/forecast/all", response_model=AllForecastsResponse)
+def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
+    return _forecast_all_with_handlers(request, FAMILY_HANDLERS)
+
+
+@app.post("/forecast/trimmed-mean/all", response_model=AllForecastsResponse)
+def forecast_trimmed_mean_all(request: AllForecastsRequest) -> AllForecastsResponse:
+    return _forecast_all_with_handlers(
+        request,
+        TRIMMED_MEAN_FAMILY_HANDLERS,
+        model_family_tags=TRIMMED_MEAN_FAMILY_RUN_TAGS,
+        interval_coverage_report_path=TRIMMED_MEAN_INTERVAL_COVERAGE_REPORT_PATH,
+        interval_calibration_factors_path=TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH,
+        interval_calibration_validation_report_path=(
+            TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH
+        ),
     )
