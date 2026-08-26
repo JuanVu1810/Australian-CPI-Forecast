@@ -836,13 +836,14 @@ def compute_conformal_scale_factors(
     clean = predictions.dropna(subset=["nonconformity_score"]).copy()
     for (model, horizon), group in clean.groupby(["model", "horizon"], sort=True):
         scores = group["nonconformity_score"].astype(float).to_numpy()
+        scale_factor = max(1.0, float(np.quantile(scores, target_coverage)))
         rows.append(
             {
                 "model": str(model),
                 "horizon": int(horizon),
                 "n": int(len(scores)),
                 "target_coverage": float(target_coverage),
-                "scale_factor": float(np.quantile(scores, target_coverage)),
+                "scale_factor": scale_factor,
             }
         )
 

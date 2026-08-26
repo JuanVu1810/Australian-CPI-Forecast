@@ -13,6 +13,7 @@ from src.models.evaluation import (
     walk_forward_backtest_direct_multihorizon,
     walk_forward_interval_coverage_backtest,
 )
+from src.models.interval_coverage import apply_interval_calibration
 
 
 def _comparison_prediction_frame(model: str, errors_by_horizon: dict[int, float]) -> pd.DataFrame:
@@ -275,6 +276,53 @@ def test_compute_conformal_scale_factors_returns_target_quantile_by_model_horizo
 
     b_h1 = factors.loc[(factors["model"].eq("b")) & (factors["horizon"].eq(1))].iloc[0]
     assert b_h1["scale_factor"] == 3.6
+
+
+def test_compute_conformal_scale_factors_floors_scale_at_one():
+    predictions = pd.DataFrame(
+        {
+            "model": ["a", "a", "b", "b"],
+            "horizon": [1, 1, 1, 1],
+            "nonconformity_score": [0.1, 0.2, 1.2, 1.4],
+        }
+    )
+
+    factors = compute_conformal_scale_factors(predictions, target_coverage=0.8)
+
+    assert factors["scale_factor"].ge(1.0).all()
+    a_h1 = factors.loc[(factors["model"].eq("a")) & (factors["horizon"].eq(1))].iloc[0]
+    assert a_h1["scale_factor"] == 1.0
+    b_h1 = factors.loc[(factors["model"].eq("b")) & (factors["horizon"].eq(1))].iloc[0]
+    assert np.isclose(b_h1["scale_factor"], 1.36)
+
+
+def test_apply_interval_calibration_preserves_asymmetric_bounds_at_scale_one():
+    predictions = pd.DataFrame(
+        {
+            "model": ["synthetic"],
+            "horizon": [1],
+            "actual": [11.0],
+            "point_forecast_proxy": [10.0],
+            "interval_lower": [8.0],
+            "interval_upper": [13.0],
+            "hit": [True],
+            "interval_width": [5.0],
+        }
+    )
+    factors = pd.DataFrame(
+        {
+            "model": ["synthetic"],
+            "horizon": [1],
+            "scale_factor": [1.0],
+        }
+    )
+
+    calibrated = apply_interval_calibration(predictions, factors)
+
+    assert calibrated["interval_lower"].iloc[0] == 8.0
+    assert calibrated["interval_upper"].iloc[0] == 13.0
+    assert calibrated["interval_width"].iloc[0] == 5.0
+    assert calibrated["hit"].iloc[0]
 
 
 def test_compute_interval_coverage_table_returns_overall_and_horizon_rows():

@@ -122,17 +122,15 @@ def apply_interval_calibration(
 
     scale = result["scale_factor"].astype(float)
     apply_mask = scale.notna() & np.isfinite(scale) & scale.ge(0)
-    raw_half_width = (
-        result["interval_upper"].astype(float) - result["interval_lower"].astype(float)
-    ) / 2.0
     center = result["point_forecast_proxy"].astype(float)
-    calibrated_half_width = raw_half_width * scale
+    lower_dist = center - result["interval_lower"].astype(float)
+    upper_dist = result["interval_upper"].astype(float) - center
 
     result.loc[apply_mask, "interval_lower"] = (
-        center.loc[apply_mask] - calibrated_half_width.loc[apply_mask]
+        center.loc[apply_mask] - lower_dist.loc[apply_mask] * scale.loc[apply_mask]
     )
     result.loc[apply_mask, "interval_upper"] = (
-        center.loc[apply_mask] + calibrated_half_width.loc[apply_mask]
+        center.loc[apply_mask] + upper_dist.loc[apply_mask] * scale.loc[apply_mask]
     )
     result.loc[apply_mask, "hit"] = (
         result.loc[apply_mask, "interval_lower"].astype(float)

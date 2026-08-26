@@ -234,3 +234,49 @@ size.
   bootstrap now correctly reflects out-of-sample uncertainty; the
   remaining gap is a genuine, currently-unresolved underdispersion in the
   base point-forecast model, not a bug in how residuals are sampled.
+
+## Adopted Fix: Identity-Preserving Interval Calibration (2026-08-27)
+
+After regenerating the trimmed-mean interval reports, the held-out validation
+slice exposed a separate calibration bug that was not specific to the
+trimmed-mean target and predated the Elastic Net residual-bootstrap fix:
+`apply_interval_calibration` rebuilt calibrated intervals symmetrically around
+the simulated-path median (`point_forecast_proxy`) using
+`median +/- raw_half_width * scale_factor`. Raw intervals, however, are the
+10th/90th percentiles of simulated paths, not necessarily symmetric around the
+median. For skewed path distributions, `scale_factor=1.0` was therefore not an
+identity operation and could move bounds even when calibration should have left
+the raw quantile interval unchanged. This made held-out calibrated coverage
+worse than raw for several model/horizon combinations, including
+trimmed-mean Elastic Net at all 8 horizons in the stale report and headline
+SARIMA at 6 of 8 horizons in the post-SARIMAX-removal report.
+
+The adopted fix scales each side of the raw interval separately around the same
+point forecast:
+
+- `lower_dist = point_forecast_proxy - interval_lower`
+- `upper_dist = interval_upper - point_forecast_proxy`
+- `calibrated_lower = point_forecast_proxy - lower_dist * scale_factor`
+- `calibrated_upper = point_forecast_proxy + upper_dist * scale_factor`
+
+Regression coverage now asserts that an asymmetric interval is unchanged when
+`scale_factor=1.0`. In addition, conformal scale factors are floored at `1.0`.
+This no-shrink rule is a conservative calibration policy for this project
+because all shipped raw interval families under-cover 80% nominal coverage;
+shrinking intervals fights that established out-of-sample evidence.
+
+All affected headline and trimmed-mean interval reports were regenerated after
+the fix. On the held-out validation reports, no model/horizon row now has
+calibrated coverage below raw coverage. Headline held-out overall coverage is:
+Elastic Net 33.6% raw -> 35.2% calibrated, Ensemble 31.2% -> 38.3%, SARIMA
+58.3% -> 58.3%. Trimmed-mean held-out overall coverage is: Elastic Net 46.1%
+-> 46.1%, Ensemble 35.9% -> 39.8%, SARIMA 57.8% -> 63.0%. These remain well
+below the 80% nominal target, so this is a bug fix and conservative guardrail,
+not a full interval-calibration resolution.
+
+Known simplification not resolved here: `nonconformity_score` is still
+`abs(actual - point_forecast_proxy) / half_width`, a symmetric half-width
+measure. It is not a proper asymmetric conformalized quantile regression
+score. Pooling calibration across nearby horizons, using a larger/rolling
+calibration window, or switching to a genuinely asymmetric conformal score are
+future work, not implemented.
