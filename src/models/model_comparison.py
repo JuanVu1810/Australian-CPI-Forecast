@@ -19,6 +19,7 @@ from src.models.elastic_net import (
     TRIMMED_MEAN_TARGET_COLUMN,
     forecast_elastic_net_direct,
     load_elastic_net_feature_frame,
+    run_elastic_net_comparison,
 )
 from src.models.ensemble import _ensemble_prediction_frame, horizon_rmse_weights
 from src.models.evaluation import (
@@ -30,6 +31,7 @@ from src.models.evaluation import (
     compute_metric_table,
     load_target_series,
     restrict_to_common_grid,
+    run_sarima_comparison,
     walk_forward_backtest,
     walk_forward_backtest_direct_multihorizon,
 )
@@ -46,6 +48,15 @@ TRIMMED_MEAN_COMPARISON_ALL_OUTPUT_PATH = (
 PREDICTIONS_OUTPUT_PATH = PROJECT_ROOT / "reports/backtest_predictions.csv"
 TRIMMED_MEAN_PREDICTIONS_OUTPUT_PATH = (
     PROJECT_ROOT / "reports/backtest_predictions_trimmed_mean.csv"
+)
+TRIMMED_MEAN_SARIMA_COMPARISON_OUTPUT_PATH = (
+    PROJECT_ROOT / "reports/model_comparison_sarima_trimmed_mean.csv"
+)
+TRIMMED_MEAN_ELASTIC_NET_COMPARISON_OUTPUT_PATH = (
+    PROJECT_ROOT / "reports/model_comparison_elastic_net_trimmed_mean.csv"
+)
+TRIMMED_MEAN_ELASTIC_NET_COEFFICIENT_OUTPUT_PATH = (
+    PROJECT_ROOT / "reports/elastic_net_coefficients_trimmed_mean.csv"
 )
 PREDICTIONS_COLUMNS = [
     "model",
@@ -303,6 +314,55 @@ def run_model_comparison_all(
     return comparison
 
 
+def refresh_trimmed_mean_served_model_runs(
+    curated_path: Path = CURATED_DATA_PATH,
+    initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
+    horizons: Iterable[int] = DEFAULT_HORIZONS,
+    seed: int = DEFAULT_SEED,
+    max_origins: int | None = None,
+    verbose: bool = False,
+) -> None:
+    """Log full-sample trimmed-mean model artifacts used by FastAPI serving."""
+    requested_horizons = tuple(int(horizon) for horizon in horizons)
+    if verbose:
+        print("Refreshing trimmed-mean SARIMA served MLflow run...", flush=True)
+    run_sarima_comparison(
+        curated_path=curated_path,
+        output_path=TRIMMED_MEAN_SARIMA_COMPARISON_OUTPUT_PATH,
+        initial_train_size=initial_train_size,
+        horizons=requested_horizons,
+        target_column=TRIMMED_MEAN_TARGET_COLUMN,
+        order=TRIMMED_MEAN_DEFAULT_ORDER,
+        seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
+        include_rba=False,
+        run_name="trimmed_mean_sarima_comparison",
+        model_family_tag="trimmed_mean_sarima",
+        selection_criterion="fixed_trimmed_mean_default",
+    )
+
+    if verbose:
+        print("Refreshing trimmed-mean Elastic Net served MLflow run...", flush=True)
+    run_elastic_net_comparison(
+        curated_path=curated_path,
+        rba_path=RBA_FORECAST_PATH,
+        comparison_output_path=TRIMMED_MEAN_ELASTIC_NET_COMPARISON_OUTPUT_PATH,
+        coefficient_output_path=TRIMMED_MEAN_ELASTIC_NET_COEFFICIENT_OUTPUT_PATH,
+        initial_train_size=initial_train_size,
+        horizons=requested_horizons,
+        seed=seed,
+        max_origins=max_origins,
+        target_column=TRIMMED_MEAN_TARGET_COLUMN,
+        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+        sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
+        sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
+        include_rba=False,
+        run_name="trimmed_mean_elastic_net_comparison",
+        model_family_tag="trimmed_mean_elastic_net",
+        feature_set_label="trimmed_mean_primary_wti",
+        verbose=verbose,
+    )
+
+
 def run_trimmed_mean_model_comparison_all(
     curated_path: Path = CURATED_DATA_PATH,
     output_path: Path = TRIMMED_MEAN_COMPARISON_ALL_OUTPUT_PATH,
@@ -314,7 +374,7 @@ def run_trimmed_mean_model_comparison_all(
     verbose: bool = False,
 ) -> pd.DataFrame:
     """Reproduce the Phase 3 trimmed-mean all-model comparison report."""
-    return run_model_comparison_all(
+    comparison = run_model_comparison_all(
         curated_path=curated_path,
         include_rba=False,
         output_path=output_path,
@@ -330,6 +390,15 @@ def run_trimmed_mean_model_comparison_all(
         sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
         verbose=verbose,
     )
+    refresh_trimmed_mean_served_model_runs(
+        curated_path=curated_path,
+        initial_train_size=initial_train_size,
+        horizons=horizons,
+        seed=seed,
+        max_origins=max_origins,
+        verbose=verbose,
+    )
+    return comparison
 
 
 def main(argv: list[str] | None = None) -> None:

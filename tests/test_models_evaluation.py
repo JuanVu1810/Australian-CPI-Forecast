@@ -426,6 +426,55 @@ def test_build_backtest_predictions_table_stacks_all_models_with_extras_preserve
     assert (other_model_rows["horizon_cap"] == 1).all()
 
 
+def test_trimmed_mean_model_comparison_refreshes_served_model_runs(monkeypatch, tmp_path):
+    calls = {}
+    expected = pd.DataFrame(
+        {
+            "model": ["elastic_net"],
+            "horizon": ["overall"],
+            "n": [1],
+            "rmse": [0.1],
+            "mae": [0.1],
+        }
+    )
+
+    def fake_joined(**kwargs):
+        calls["joined"] = kwargs
+        return expected
+
+    def fake_sarima(**kwargs):
+        calls["sarima"] = kwargs
+        return expected
+
+    def fake_elastic_net(**kwargs):
+        calls["elastic_net"] = kwargs
+        return expected, expected, 0.0
+
+    monkeypatch.setattr(model_comparison, "run_model_comparison_all", fake_joined)
+    monkeypatch.setattr(model_comparison, "run_sarima_comparison", fake_sarima)
+    monkeypatch.setattr(model_comparison, "run_elastic_net_comparison", fake_elastic_net)
+
+    result = model_comparison.run_trimmed_mean_model_comparison_all(
+        curated_path=tmp_path / "curated.csv",
+        initial_train_size=12,
+        horizons=(1, 2),
+        seed=123,
+        max_origins=3,
+        verbose=True,
+    )
+
+    assert result is expected
+    assert calls["joined"]["target_column"] == "trimmed_mean_cpi_yoy"
+    assert calls["joined"]["elastic_net_feature_columns"][0] == "trimmed_mean_cpi_yoy_lag1"
+    assert calls["sarima"]["model_family_tag"] == "trimmed_mean_sarima"
+    assert calls["sarima"]["target_column"] == "trimmed_mean_cpi_yoy"
+    assert calls["sarima"]["include_rba"] is False
+    assert calls["elastic_net"]["model_family_tag"] == "trimmed_mean_elastic_net"
+    assert calls["elastic_net"]["target_column"] == "trimmed_mean_cpi_yoy"
+    assert calls["elastic_net"]["feature_columns"][0] == "trimmed_mean_cpi_yoy_lag1"
+    assert calls["elastic_net"]["feature_set_label"] == "trimmed_mean_primary_wti"
+
+
 def test_skip_origins_produces_a_chronologically_disjoint_origin_set():
     series = pd.Series(
         np.arange(1, 26, dtype=float),

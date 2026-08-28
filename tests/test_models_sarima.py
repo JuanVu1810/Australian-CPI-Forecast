@@ -108,6 +108,23 @@ def test_simulate_sarima_paths_from_fit_reuses_fitted_model_without_state_leak()
     np.testing.assert_array_equal(paths, repeat)
 
 
+def test_simulate_paths_from_fit_uses_rng_for_new_statsmodels_signature():
+    class NewStatsmodelsFit:
+        def simulate(self, nsimulations, anchor, repetitions, rng=None, **kwargs):
+            assert anchor == "end"
+            assert "random_state" not in kwargs
+            assert rng is not None
+            return rng.normal(size=(nsimulations, repetitions))
+
+    paths = simulate_paths_from_fit(NewStatsmodelsFit(), steps=3, n_sims=5, seed=123)
+    repeat = simulate_paths_from_fit(NewStatsmodelsFit(), steps=3, n_sims=5, seed=123)
+    different = simulate_paths_from_fit(NewStatsmodelsFit(), steps=3, n_sims=5, seed=456)
+
+    assert paths.shape == (5, 3)
+    np.testing.assert_array_equal(paths, repeat)
+    assert not np.array_equal(paths, different)
+
+
 def test_simulate_sarima_paths_wrapper_matches_manual_fit_simulation():
     index = pd.period_range("2015Q1", periods=24, freq="Q")
     trend = np.linspace(2.0, 4.0, len(index))

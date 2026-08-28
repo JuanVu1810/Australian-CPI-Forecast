@@ -8,6 +8,7 @@ while still allowing callers to pass alternate specifications.
 
 from __future__ import annotations
 
+import inspect
 import warnings
 
 import numpy as np
@@ -100,6 +101,12 @@ def _simulation_result_to_paths(simulated, n_sims: int, steps: int) -> np.ndarra
     return paths
 
 
+def _simulation_seed_kwargs(fitted, seed: int) -> dict[str, object]:
+    if "rng" in inspect.signature(fitted.simulate).parameters:
+        return {"rng": np.random.default_rng(seed)}
+    return {"random_state": seed}
+
+
 def simulate_paths_from_fit(
     fitted,
     steps: int = 8,
@@ -129,7 +136,7 @@ def simulate_paths_from_fit(
         nsimulations=steps,
         anchor="end",
         repetitions=n_sims,
-        random_state=seed,
+        **_simulation_seed_kwargs(fitted, seed),
     )
     return _simulation_result_to_paths(simulated, n_sims=n_sims, steps=steps)
 

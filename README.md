@@ -64,7 +64,7 @@ demonstrated shallowly:
 |---|---|---|
 | Data Science | SARIMA vs Elastic Net vs Ensemble, walk-forward validated against seasonal naive **and** the RBA forecast, with Elastic Net coefficient interpretability | EDA notebook, feature engineering |
 | Data Engineering | Ingestion -> validation -> curated Parquet -> DuckDB, fully local and credential-free | BigQuery documented as target, not deployed |
-| ML Engineering | MLflow runs, local FastAPI serving every trained model family (no promoted champion), Docker, and a previously verified Cloud Run deployment that needs manual redeploy for the latest serving code | Postgres as the optional MLflow backend and run metadata store |
+| ML Engineering | MLflow runs, FastAPI serving every trained model family plus scenarios (no promoted champion), Docker, and a verified Cloud Run deployment that still needs manual redeploy after future serving changes | Postgres as the optional MLflow backend and run metadata store |
 
 ## What `cpi_forecast_V1.ipynb` Found
 
@@ -250,7 +250,7 @@ clear job is documented as a target rather than built.
 |---|---|
 | DuckDB is the built SQL/analytics layer; BigQuery is a documented target, not deployed | The curated dataset is ~125 quarterly rows read from a local Parquet file. A managed cloud warehouse adds real value at higher data volume or concurrency, neither of which applies yet. |
 | Supabase PostgreSQL holds MLflow backend and application run metadata, not a second copy of the curated dataset | Two databases holding the same data demonstrates nothing new. Postgres gets a distinct job: storing experiment/run metadata queryable from the dashboard, while artifacts stay in MLflow artifact storage. |
-| MLflow + FastAPI + Docker + Google Cloud Run is the flagship deployment path | This combination produces something clickable, not just partially-configured infrastructure -- a tracked local serving stack and a previously verified public Cloud Run URL (see Implementation Status). Cloud Run's usage-based free tier (scale-to-zero, configurable container memory) gives more headroom for statsmodels/sklearn dependencies than a fixed 512MB always-on free tier does. |
+| MLflow + FastAPI + Docker + Google Cloud Run is the flagship deployment path | This combination produces something clickable, not just partially-configured infrastructure -- a tracked serving stack and verified public Cloud Run URL (see Implementation Status). Cloud Run's usage-based free tier (scale-to-zero, configurable container memory) gives more headroom for statsmodels/sklearn dependencies than a fixed 512MB always-on free tier does. |
 | Kubernetes, Terraform, Spark, Kafka, Airflow are excluded | None solve a problem this project actually has: one small model, a handful of requests, no elastic-scaling requirement. |
 | A second benchmark (RBA's own published forecast) was added alongside seasonal naive | Beating seasonal naive is a low bar for an inflation model. Comparing against a real institutional forecaster is the bar that actually matters, and the project reports honestly if it isn't cleared. |
 
@@ -293,13 +293,13 @@ clear job is documented as a target rather than built.
 | RBA policy-action classifier | implemented locally; threshold baseline reportable, ordered models documented negative finding | | `src/models/rba_classifier.py`, `reports/rba_classifier_evaluation.md` |
 | MLflow | implemented locally: comparison runs log params, metrics, report artifacts, and full-sample model artifacts | **MLE flagship** | `src/models/tracking.py`, `mlruns/` (local, gitignored) |
 | FastAPI | implemented locally: `/health`, `/features`, `/forecast/all`, `/forecast/trimmed-mean/all`, and `/forecast/scenario`; the current local API serves every trained forecast family directly from latest MLflow runs, with no promoted champion or Model Registry alias | **MLE flagship** | `api/main.py`, `src/models/registry.py`, live deployment caveat below |
-| Docker / Google Cloud Run | deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs -- verified 2026-08-25 on image tag `redeploy-20260825-16a2f90`, serving `cpi_forecast_champion`/`trimmed_mean_forecast_champion` and all four families with calibrated intervals. That verified deployment predates the champion/registry removal below and still runs the `@champion`-based API; redeploy to pick up the current `/forecast/all`-only serving code | **MLE flagship** | `Dockerfile`, `.dockerignore` |
+| Docker / Google Cloud Run | deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs -- verified 2026-08-29 on image tag `redeploy-20260829-d3102c9`, serving `/forecast/all`, `/forecast/trimmed-mean/all`, and `/forecast/scenario` from baked local MLflow runs. The RBA classifier remains documented code/evaluation only and has no API endpoint. Future serving or model-artifact changes still require manual image rebuild, push, and redeploy | **MLE flagship** | `Dockerfile`, `.dockerignore` |
 | Streamlit | multipage dashboard implemented for overview, data exploration, static EDA summaries, and forecast display | supporting | `app/streamlit_app.py`, `app/pages/` |
 | GitHub Actions | CI + scheduled ETL scaffolded; no deploy-to-Cloud-Run step, so the live service above does not auto-update on push | supporting | `.github/workflows/` |
 
-FastAPI is implemented locally, and Google Cloud Run has a previously verified
-live deployment (see the row above); redeploying after code changes is
-currently a manual step, not automated.
+FastAPI is implemented locally and deployed on Google Cloud Run (see the row
+above); redeploying after code changes is currently a manual step, not
+automated.
 Supabase and BigQuery still require account setup, credentials, and
 deployment configuration and remain undeployed (see Architecture Decisions
 above). Nothing else in the repository should be described as deployed until
@@ -480,7 +480,7 @@ flowchart TD
     STREAMLIT["Streamlit dashboard"] --> API
 
     API --> DOCKER["Docker image"]
-    DOCKER --> CLOUDRUN["Google Cloud Run API hosting (previously verified, manual redeploy required)"]
+    DOCKER --> CLOUDRUN["Google Cloud Run API hosting (verified, manual redeploy required)"]
 
     GITHUB["GitHub"] --> ACTIONS["GitHub Actions"]
     ACTIONS --> TESTS["pytest"]
@@ -524,9 +524,12 @@ comparisons, residual diagnostics, permutation-importance/coefficient
 interpretability).
 
 Container deployment path: FastAPI -> Docker image -> Google Cloud Run. The
-most recently verified live URL is
-https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs, but that
-deployment predates the current local serving code and needs a manual redeploy.
+live URL was verified on 2026-08-29 with image tag
+`redeploy-20260829-d3102c9`:
+https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs. That
+deployment serves `/forecast/all`, `/forecast/trimmed-mean/all`, and
+`/forecast/scenario`; the RBA classifier remains documented code/evaluation
+only and has no API endpoint.
 Every trained model family's MLflow runs currently live in the local
 gitignored `mlruns/` file store, so the Docker image must be built from a
 local checkout that already has finished runs for each family:
@@ -641,14 +644,14 @@ other two flagship pillars, with dashboard polish last.
    impulse-response/scenario analysis, with the documented caveat that both
    SVAR systems still fail whiteness and normality diagnostics and are not
    forecast-accuracy competitors.
-2. **ML Engineering flagship (local API current; Cloud Run deployment verified
-   2026-08-25 and now stale):** every run (params, features, horizon, metrics,
+2. **ML Engineering flagship (API current; Cloud Run deployment verified
+   2026-08-29):** every run (params, features, horizon, metrics,
    and model settings) logs to MLflow; local FastAPI (`/health`, `/features`,
    `/forecast/all`, `/forecast/trimmed-mean/all`, `/forecast/scenario`) serves
    every trained forecast family directly from its latest MLflow run, with no
-   promoted champion or Model Registry step; containerised with Docker, with a
-   previously verified Cloud Run deployment that needs manual redeploy to pick
-   up the current serving code.
+   promoted champion or Model Registry step; containerised with Docker and
+   deployed to Cloud Run on image tag `redeploy-20260829-d3102c9`, with manual
+   redeploy still required after future serving or model-artifact changes.
 3. **Data Engineering flagship:** confirm DuckDB SQL examples against the
    regenerated curated dataset; add the Postgres run/metrics metadata store;
    confirm GitHub Actions CI and scheduled ETL after pushing.
