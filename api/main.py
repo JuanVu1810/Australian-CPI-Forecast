@@ -18,7 +18,7 @@ from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 from pydantic import BaseModel, Field
 
-from src.models import elastic_net, ensemble, sarima, tracking
+from src.models import elastic_net, ensemble, sarima, scenario, tracking
 from src.models.elastic_net import (
     TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
     TRIMMED_MEAN_TARGET_COLUMN,
@@ -94,6 +94,32 @@ class AllForecastsResponse(BaseModel):
     requested_horizon: int
     models: list[FamilyForecast]
     unavailable: list[UnavailableFamily]
+
+
+class ScenarioForecastRequest(BaseModel):
+    target: str = Field(default="headline")
+    shock_variable: str
+    shock_value: float
+    horizons: list[int] = Field(
+        default_factory=lambda: list(range(1, MAX_FORECAST_HORIZON + 1))
+    )
+    n_sims: int = Field(default=1000, ge=100, le=5000)
+    interval_lower: float = Field(default=VALIDATED_INTERVAL_LOWER, ge=0.0, lt=0.5)
+    interval_upper: float = Field(default=VALIDATED_INTERVAL_UPPER, gt=0.5, le=1.0)
+
+
+class ScenarioForecastResponse(BaseModel):
+    target: str
+    shock_variable: str
+    shock_value: float
+    shock_size: float
+    horizons: list[int]
+    forecast: list[float]
+    interval_lower: list[float]
+    interval_upper: list[float]
+    quarters: list[str]
+    forecast_origin: str
+    caveat: str
 
 
 @dataclass(frozen=True)
@@ -790,4 +816,37 @@ def forecast_trimmed_mean_all(request: AllForecastsRequest) -> AllForecastsRespo
         interval_calibration_validation_report_path=(
             TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH
         ),
+    )
+
+
+@app.post("/forecast/scenario", response_model=ScenarioForecastResponse)
+def forecast_scenario(request: ScenarioForecastRequest) -> ScenarioForecastResponse:
+    try:
+        result = scenario.run_scenario(
+            target=request.target,
+            shock_variable=request.shock_variable,
+            shock_value=request.shock_value,
+            horizons=tuple(request.horizons),
+            n_sims=request.n_sims,
+            lower_quantile=request.interval_lower,
+            upper_quantile=request.interval_upper,
+            curated_path=CURATED_DATA_PATH,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (RuntimeError, OSError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return ScenarioForecastResponse(
+        target=result.target,
+        shock_variable=result.shock_variable,
+        shock_value=result.shock_value,
+        shock_size=result.shock_size,
+        horizons=list(result.horizons),
+        forecast=result.forecast,
+        interval_lower=result.interval_lower,
+        interval_upper=result.interval_upper,
+        quarters=result.quarters,
+        forecast_origin=result.forecast_origin,
+        caveat=result.caveat,
     )
