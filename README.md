@@ -33,7 +33,7 @@ the primary forecasting models.
 | Primary 1 | SARIMA | univariate statistical | CPI history |
 | Primary 2 | Elastic Net | regularized multivariate linear | CPI autoregressive lags + a lag-safe macro block |
 | Combiner | Ensemble | SARIMA + Elastic Net combination | horizon-weighted blend of both point forecasts and simulated paths |
-| Structural (planned) | SVAR | structural vector autoregression | CPI + a small macro system, for impulse-response/scenario analysis |
+| Structural (implemented, documented caveats) | SVAR | structural vector autoregression | CPI + a small macro system, for impulse-response/scenario analysis |
 
 A multivariate statistical model (SARIMAX, extending SARIMA with a fixed
 macro feature block) was implemented, evaluated, and later **removed**: a
@@ -43,8 +43,8 @@ dedicated re-selection attempt, which validated worse out-of-sample RMSE
 than the original despite passing every classical diagnostic. See
 `reports/model_interval_calibration_remediation_decisions.md` for the
 evidence. The project now prioritises inference validity over adding a
-second unregularized multivariate statistical model, and SVAR is the planned
-replacement for scenario/sensitivity analysis specifically because its
+second unregularized multivariate statistical model, and SVAR is now
+implemented as the replacement for scenario/sensitivity analysis specifically because its
 identification restrictions give a more defensible causal reading than a
 plain regression coefficient does.
 
@@ -64,7 +64,7 @@ demonstrated shallowly:
 |---|---|---|
 | Data Science | SARIMA vs Elastic Net vs Ensemble, walk-forward validated against seasonal naive **and** the RBA forecast, with Elastic Net coefficient interpretability | EDA notebook, feature engineering |
 | Data Engineering | Ingestion -> validation -> curated Parquet -> DuckDB, fully local and credential-free | BigQuery documented as target, not deployed |
-| ML Engineering | MLflow runs, FastAPI serving every trained model family (no promoted champion), Docker, deployed and live on Google Cloud Run | Postgres as the optional MLflow backend and run metadata store |
+| ML Engineering | MLflow runs, local FastAPI serving every trained model family (no promoted champion), Docker, and a previously verified Cloud Run deployment that needs manual redeploy for the latest serving code | Postgres as the optional MLflow backend and run metadata store |
 
 ## What `cpi_forecast_V1.ipynb` Found
 
@@ -98,6 +98,31 @@ implemented (see [Models In Detail](#models-in-detail) and
 
 ## Models In Detail
 
+### Materiality
+
+SARIMA, Elastic Net, and the Ensemble are optimized and evaluated for
+forecast accuracy. Their walk-forward comparisons ask whether CPI history and
+lag-safe macro predictors improve headline and trimmed-mean CPI forecasts
+against simple and institutional benchmarks.
+
+SVAR is a different exercise. It is implemented for structural
+impulse-response and scenario analysis, not as an accuracy competitor to
+SARIMA, Elastic Net, or the Ensemble. Both SVAR systems are documented
+VAR(2)-in-levels specifications with recursive Cholesky identification and
+block-bootstrap IRF bands, but both still reject multivariate residual
+whiteness and multivariate normality after COVID exclusion/dummy checks and
+the block-bootstrap fix. Scenario outputs should therefore be read as
+illustrative structural sensitivities under an imperfect specification, not
+as validated causal estimates.
+
+The RBA classifier is separate again: it is a policy-action classification
+exercise using leakage-safe Ensemble horizon-1 headline and trimmed-mean CPI
+forecasts, not a CPI forecaster. Its transparent threshold baseline has the
+best macro-F1 point estimate (`0.775`) against ordered logit (`0.677`) and
+ordered probit (`0.643`), but paired-bootstrap 95% confidence intervals for
+both threshold-minus-ordered-model gaps cross zero, so the win is not
+statistically settled.
+
 ### SARIMA (implemented, baseline)
 
 The existing SARIMA model remains the univariate statistical baseline,
@@ -107,11 +132,11 @@ providing a clean reference for measuring the value external predictors add.
 
 A regularized direct multi-horizon Elastic Net is the project's multivariate
 model. Its coefficients are L1/L2-penalized and selected via `GridSearchCV`,
-which keeps them stable and well-behaved on a small sample -- the reason this
-model, not an unregularized multivariate statistical model, is the intended
-engine for exogenous-variable scenario/sensitivity analysis. It uses a
-lag-safe macro feature block, plus explicit `cpi_yoy` autoregressive lags (a
-linear model has no built-in AR structure the way SARIMA does), fitting one
+which keeps them stable and well-behaved on a small sample. It is a
+forecast-accuracy model, not the structural scenario engine; the built SVAR
+and scenario engine now fill that role. Elastic Net uses a lag-safe macro
+feature block, plus explicit `cpi_yoy` autoregressive lags (a linear model has
+no built-in AR structure the way SARIMA does), fitting one
 `StandardScaler -> ElasticNet` pipeline per horizon (1-8) with `alpha`/
 `l1_ratio` selected by `GridSearchCV` over chronological `TimeSeriesSplit`
 folds -- so the scaler is refit on each fold's training rows only, never once
@@ -125,6 +150,88 @@ adding unnecessary architecture complexity.
 Regularized coefficients are a conservative (shrunk-toward-zero) estimate of
 sensitivity, not a causal effect -- see the SVAR note above for the more
 rigorous version of that claim.
+
+### SVAR (implemented locally, documented specification caveats)
+
+The structural model is implemented as two five-variable systems using level
+columns from the curated quarterly dataset:
+
+- System A: `cpi_yoy`, `unemployment_rate`, `cash_rate`,
+  `commodity_growth`, and `inflation_expectations_business`.
+- System B: `trimmed_mean_cpi_yoy`, `unemployment_rate`, `cash_rate`,
+  `commodity_growth`, and `inflation_expectations_business`.
+
+Both systems use VAR lag order `p=2`, selected under the Phase 1a degrees-of-
+freedom cap. The Johansen trace tests returned full rank (`rank=5`) for both
+systems; under the corrected rank mapping, full rank maps to a levels VAR/SVAR
+rather than a VECM because it indicates the system is stationary in levels
+rather than partially cointegrated. That is a documented judgment call, not a
+resolved stationarity finding: ADF pretests still fail to reject unit roots
+for some series, and the Johansen full-rank result may be over-rejection in a
+short 123-observation, `det_order=0` specification.
+
+The fixed recursive Cholesky ordering places `commodity_growth` first,
+`unemployment_rate` second, the CPI target third, business inflation
+expectations fourth, and `cash_rate` last. This treats commodity shocks as the
+most externally driven same-quarter shock and allows the policy reaction to
+contemporaneously observe the macro block while policy shocks affect that
+block with a lag.
+
+Both systems receive full Phase 1b treatment. System B was primary by design;
+System A escalated from confirmatory IRFs-only because 80% block-bootstrap IRF
+bands did not overlap System B on the fixed shared-shock escalation check.
+The shipped IRF uncertainty uses 80% contiguous residual block-bootstrap bands
+for horizons 1-8. The diagnostic failures remain material: both full-sample
+systems reject multivariate whiteness and multivariate normality, and those
+core failures persist after excluding or dummying `2020Q2`/`2020Q3`. SVAR
+backtest RMSE is diagnostic only and is not directly comparable to the
+SARIMA, Elastic Net, or Ensemble comparison grids.
+
+### Scenario Engine (implemented locally)
+
+`POST /forecast/scenario` exposes SVAR-adjusted CPI scenarios for the
+headline and trimmed-mean targets. The engine starts from existing SARIMA +
+Elastic Net Ensemble predictive draws, fits the relevant Phase 1b SVAR
+system, and computes the user's shock as the surprise relative to the SVAR's
+horizon-1 macro forecast. Because the shock is realized at `t+1`, CPI horizon
+1 receives the contemporaneous IRF impact at index 0; horizon `h` receives
+IRF index `h - 1`.
+
+The scenario combination is additive and paired draw-by-draw: Ensemble draw
+`i` is combined with SVAR IRF draw `i`, multiplying the requested shock size
+by the CPI response to that shock and adding the contribution to the baseline
+forecast path. This avoids double-counting the expected macro path because
+the adjustment uses only the surprise over the SVAR's own horizon-1 forecast,
+not the full user-supplied macro value.
+
+The API returns the scenario caveat from `src/models/scenario.py` with each
+response: "Scenario IRFs come from Phase 1b VAR(2)-in-levels SVAR systems that
+still fail multivariate residual whiteness and normality diagnostics after
+COVID treatment checks and the block-bootstrap IRF fix; adjusted forecasts are
+illustrative under a documented, imperfect specification, not precise causal
+estimates."
+
+### RBA Classifier (implemented locally, documented negative finding)
+
+The RBA policy-action classifier is a Phase 3 classification exercise, not a
+CPI forecasting model. It joins the leakage-safe Ensemble horizon-1 headline
+and trimmed-mean CPI forecasts to actual cash-rate actions (`cut`, `hold`,
+`hike`) over 53 usable quarters from `2011Q1` to `2024Q1`.
+
+The selected expanding-window split uses `initial_train_size=12`, the first
+audited candidate at or above the 12-row fit-size floor with no missing
+policy classes in any training fold. On the shared 41-quarter test set, the
+threshold rule leads on macro-F1 (`0.775`) and accuracy (`0.756`), ahead of
+ordered logit and ordered probit. The macro-F1 gaps are not statistically
+settled: paired-bootstrap 95% confidence intervals are `[-0.060, 0.255]` for
+threshold minus ordered logit and `[-0.035, 0.315]` for threshold minus
+ordered probit.
+
+The reportable result is therefore the transparent threshold baseline,
+chosen despite non-significance because it has zero fitted parameters and
+correctly classifies all 8 of 8 hike quarters in the test set. Ordered logit
+and ordered probit are retained as documented negative findings and are not
+exposed through an API endpoint.
 
 A useful research framing:
 
@@ -143,7 +250,7 @@ clear job is documented as a target rather than built.
 |---|---|
 | DuckDB is the built SQL/analytics layer; BigQuery is a documented target, not deployed | The curated dataset is ~125 quarterly rows read from a local Parquet file. A managed cloud warehouse adds real value at higher data volume or concurrency, neither of which applies yet. |
 | Supabase PostgreSQL holds MLflow backend and application run metadata, not a second copy of the curated dataset | Two databases holding the same data demonstrates nothing new. Postgres gets a distinct job: storing experiment/run metadata queryable from the dashboard, while artifacts stay in MLflow artifact storage. |
-| MLflow + FastAPI + Docker + Google Cloud Run is the flagship deployment path | This combination produces something clickable, not just partially-configured infrastructure -- a tracked, served model live at a public URL (see Implementation Status). Cloud Run's usage-based free tier (scale-to-zero, configurable container memory) gives more headroom for statsmodels/sklearn dependencies than a fixed 512MB always-on free tier does. |
+| MLflow + FastAPI + Docker + Google Cloud Run is the flagship deployment path | This combination produces something clickable, not just partially-configured infrastructure -- a tracked local serving stack and a previously verified public Cloud Run URL (see Implementation Status). Cloud Run's usage-based free tier (scale-to-zero, configurable container memory) gives more headroom for statsmodels/sklearn dependencies than a fixed 512MB always-on free tier does. |
 | Kubernetes, Terraform, Spark, Kafka, Airflow are excluded | None solve a problem this project actually has: one small model, a handful of requests, no elastic-scaling requirement. |
 | A second benchmark (RBA's own published forecast) was added alongside seasonal naive | Beating seasonal naive is a low bar for an inflation model. Comparing against a real institutional forecaster is the bar that actually matters, and the project reports honestly if it isn't cleared. |
 
@@ -181,15 +288,18 @@ clear job is documented as a target rather than built.
 | Supabase PostgreSQL | schema scaffolded, scoped to MLflow backend + run metadata | supporting for MLE flagship | `sql/schema_app_metadata.sql`, `.env.example` |
 | SARIMA | implemented | **DS flagship** | `notebooks/cpi_forecast_V1.ipynb`, `src/models/sarima.py` |
 | Elastic Net comparison + RBA benchmark | implemented | **DS flagship** | `src/models/`, `reports/model_comparison_elastic_net.csv`, `reports/elastic_net_coefficients.csv` |
-| SVAR (structural, scenario/impulse-response) | planned, not yet built | | see [Core Question](#core-question) |
+| SVAR (structural, impulse-response) | implemented locally, documented specification caveats | | `src/models/svar.py`, `reports/svar_gate_decisions.md`, `reports/svar_five_variable_evidence_note.md` |
+| Scenario engine (`POST /forecast/scenario`) | implemented locally, illustrative under documented SVAR caveats | | `src/models/scenario.py`, `api/main.py` |
+| RBA policy-action classifier | implemented locally; threshold baseline reportable, ordered models documented negative finding | | `src/models/rba_classifier.py`, `reports/rba_classifier_evaluation.md` |
 | MLflow | implemented locally: comparison runs log params, metrics, report artifacts, and full-sample model artifacts | **MLE flagship** | `src/models/tracking.py`, `mlruns/` (local, gitignored) |
-| FastAPI | deployed: `/health`, `/features`, `/forecast/all`, and `/forecast/trimmed-mean/all` serve every trained model family directly from each family's latest MLflow run -- there is no promoted champion or Model Registry alias | **MLE flagship** | `api/main.py`, `src/models/registry.py`, live at the URL below |
+| FastAPI | implemented locally: `/health`, `/features`, `/forecast/all`, `/forecast/trimmed-mean/all`, and `/forecast/scenario`; the current local API serves every trained forecast family directly from latest MLflow runs, with no promoted champion or Model Registry alias | **MLE flagship** | `api/main.py`, `src/models/registry.py`, live deployment caveat below |
 | Docker / Google Cloud Run | deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs -- verified 2026-08-25 on image tag `redeploy-20260825-16a2f90`, serving `cpi_forecast_champion`/`trimmed_mean_forecast_champion` and all four families with calibrated intervals. That verified deployment predates the champion/registry removal below and still runs the `@champion`-based API; redeploy to pick up the current `/forecast/all`-only serving code | **MLE flagship** | `Dockerfile`, `.dockerignore` |
-| Streamlit | multipage dashboard implemented for overview, data exploration, and static EDA summaries | supporting | `app/streamlit_app.py`, `app/pages/` |
+| Streamlit | multipage dashboard implemented for overview, data exploration, static EDA summaries, and forecast display | supporting | `app/streamlit_app.py`, `app/pages/` |
 | GitHub Actions | CI + scheduled ETL scaffolded; no deploy-to-Cloud-Run step, so the live service above does not auto-update on push | supporting | `.github/workflows/` |
 
-FastAPI and Google Cloud Run are deployed and live (see the row above);
-redeploying after code changes is currently a manual step, not automated.
+FastAPI is implemented locally, and Google Cloud Run has a previously verified
+live deployment (see the row above); redeploying after code changes is
+currently a manual step, not automated.
 Supabase and BigQuery still require account setup, credentials, and
 deployment configuration and remain undeployed (see Architecture Decisions
 above). Nothing else in the repository should be described as deployed until
@@ -351,7 +461,7 @@ flowchart TD
 
     CURATED --> SARIMA["SARIMA (univariate CPI forecasting)"]
     CURATED --> ELASTIC["Elastic Net (regularized direct regression)"]
-    CURATED -. "planned, structural/scenario analysis" .-> SVAR["SVAR (CPI + macro system)"]
+    CURATED -. "implemented, documented diagnostic caveats" .-> SVAR["SVAR (CPI + macro system)"]
 
     SARIMA --> EVAL["Walk-forward evaluation<br/>vs seasonal naive + RBA forecasts"]
     ELASTIC --> EVAL
@@ -370,7 +480,7 @@ flowchart TD
     STREAMLIT["Streamlit dashboard"] --> API
 
     API --> DOCKER["Docker image"]
-    DOCKER --> CLOUDRUN["Google Cloud Run API hosting (deployed, live)"]
+    DOCKER --> CLOUDRUN["Google Cloud Run API hosting (previously verified, manual redeploy required)"]
 
     GITHUB["GitHub"] --> ACTIONS["GitHub Actions"]
     ACTIONS --> TESTS["pytest"]
@@ -408,13 +518,15 @@ nominal 80% coverage after calibration -- see
 `reports/model_interval_calibration_remediation_decisions.md` for what has
 been tried and why coverage remains under nominal.
 
-Implemented Streamlit pages: Overview, Data Explorer, EDA Dashboard. Planned
-Streamlit pages: Forecasting Interface (model/horizon/feature selection with
-confidence intervals), and Model Evaluation (RMSE/MAE/MSE, benchmark
-comparisons, residual diagnostics, permutation-importance/coefficient interpretability).
+Implemented Streamlit pages: Overview, Data Explorer, EDA Dashboard, and
+Forecasts. Planned Streamlit page: Model Evaluation (RMSE/MAE/MSE, benchmark
+comparisons, residual diagnostics, permutation-importance/coefficient
+interpretability).
 
-Container deployment path: FastAPI -> Docker image -> Google Cloud Run --
-deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs.
+Container deployment path: FastAPI -> Docker image -> Google Cloud Run. The
+most recently verified live URL is
+https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs, but that
+deployment predates the current local serving code and needs a manual redeploy.
 Every trained model family's MLflow runs currently live in the local
 gitignored `mlruns/` file store, so the Docker image must be built from a
 local checkout that already has finished runs for each family:
@@ -524,16 +636,19 @@ other two flagship pillars, with dashboard polish last.
    A multivariate SARIMAX model was implemented, evaluated, and removed
    after a full assumption audit found it did not survive out-of-sample
    validation despite passing every classical diagnostic -- see
-   `reports/model_interval_calibration_remediation_decisions.md`. An SVAR
-   is planned as the structural/scenario-analysis replacement.
-2. **ML Engineering flagship (deployed as of 2026-08-25, predates the
-   champion/registry removal below):** every run (params, features, horizon,
-   metrics, and model settings) logs to MLflow; FastAPI (`/health`,
-   `/features`, `/forecast/all`, `/forecast/trimmed-mean/all`) serves every
-   trained model family directly from its latest MLflow run, with no
-   promoted champion or Model Registry step; containerised with Docker and
-   live on Google Cloud Run (see Implementation Status for the URL and
-   redeploy caveat).
+   `reports/model_interval_calibration_remediation_decisions.md`. The SVAR
+   and scenario engine are now implemented locally for structural
+   impulse-response/scenario analysis, with the documented caveat that both
+   SVAR systems still fail whiteness and normality diagnostics and are not
+   forecast-accuracy competitors.
+2. **ML Engineering flagship (local API current; Cloud Run deployment verified
+   2026-08-25 and now stale):** every run (params, features, horizon, metrics,
+   and model settings) logs to MLflow; local FastAPI (`/health`, `/features`,
+   `/forecast/all`, `/forecast/trimmed-mean/all`, `/forecast/scenario`) serves
+   every trained forecast family directly from its latest MLflow run, with no
+   promoted champion or Model Registry step; containerised with Docker, with a
+   previously verified Cloud Run deployment that needs manual redeploy to pick
+   up the current serving code.
 3. **Data Engineering flagship:** confirm DuckDB SQL examples against the
    regenerated curated dataset; add the Postgres run/metrics metadata store;
    confirm GitHub Actions CI and scheduled ETL after pushing.
