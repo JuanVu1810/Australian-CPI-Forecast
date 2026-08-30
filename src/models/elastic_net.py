@@ -373,6 +373,7 @@ def simulate_paths_from_fit(
 
     point_forecast = fitted.predict_next(train_frame)[:steps]
     residual_matrix = _elastic_net_residual_matrix(fitted=fitted).loc[:, list(horizons)]
+    residual_matrix = residual_matrix - residual_matrix.median(axis=0)
 
     rng = np.random.default_rng(seed)
     origin_indices = rng.integers(0, len(residual_matrix), size=n_sims)

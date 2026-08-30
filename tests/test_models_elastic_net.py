@@ -75,6 +75,32 @@ def test_simulate_elastic_net_paths_from_fit_reuses_fitted_model_without_state_l
     np.testing.assert_array_equal(paths, repeat)
 
 
+def test_simulate_elastic_net_paths_from_fit_median_centers_residuals(monkeypatch):
+    class FakeFit:
+        horizons = (1,)
+
+        def predict_next(self, train_frame):
+            return np.asarray([100.0])
+
+    residuals = pd.DataFrame({1: [1.0, 2.0, 10.0]})
+    monkeypatch.setattr(
+        elastic_net,
+        "_elastic_net_residual_matrix",
+        lambda fitted: residuals,
+    )
+
+    paths = elastic_net.simulate_paths_from_fit(
+        FakeFit(),
+        pd.DataFrame({"cpi_yoy": [1.0]}),
+        steps=1,
+        n_sims=50,
+        seed=123,
+    )
+
+    assert set(np.unique(paths[:, 0])).issubset({99.0, 100.0, 108.0})
+    assert not set(np.unique(paths[:, 0])).issubset({101.0, 102.0, 110.0})
+
+
 def test_simulate_elastic_net_paths_wrapper_matches_manual_fit_simulation():
     frame = _synthetic_frame(n=40)
 

@@ -220,6 +220,7 @@ def run_scenario(
         sarima_order=config.sarima_order,
         sarima_seasonal_order=config.sarima_seasonal_order,
         elastic_net_feature_columns=config.elastic_net_feature_columns,
+        sarima_series=frame[config.target_column],
     )
     irf_draws = svar.bootstrap_orth_irf_draws(
         fitted_svar,

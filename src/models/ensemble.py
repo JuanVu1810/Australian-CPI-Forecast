@@ -246,13 +246,19 @@ def simulate_ensemble_paths(
     sarima_order: tuple[int, int, int] = SARIMA_DEFAULT_ORDER,
     sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
     elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
+    sarima_series: pd.Series | None = None,
 ) -> np.ndarray:
     """Fit both components on raw training data and combine their predictive draws."""
     requested_horizons = tuple(range(1, steps + 1))
     if weights is None:
         weights = horizon_rmse_weights(horizons=requested_horizons)
+    sarima_train = (
+        pd.Series(sarima_series).dropna().astype(float)
+        if sarima_series is not None
+        else train_frame[target_column]
+    )
     sarima_paths = simulate_sarima_paths(
-        train_frame[target_column],
+        sarima_train,
         steps=steps,
         n_sims=n_sims,
         order=sarima_order,

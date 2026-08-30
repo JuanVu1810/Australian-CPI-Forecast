@@ -321,6 +321,45 @@ def test_simulate_ensemble_paths_shape_seed_divergence_and_forecast_mean(monkeyp
     assert np.allclose(paths.mean(axis=0), forecast, atol=0.02)
 
 
+def test_simulate_ensemble_paths_accepts_full_sarima_series(monkeypatch):
+    frame = _synthetic_frame(n=4)
+    full_sarima_series = pd.Series(
+        [1.5, 1.6, 1.7, 1.8, 1.9],
+        index=pd.period_range("2017Q4", periods=5, freq="Q"),
+        name="cpi_yoy",
+    )
+    calls = {}
+
+    def fake_sarima_paths(series, steps, n_sims, seed, **kwargs):
+        calls["sarima_start"] = str(series.index[0])
+        calls["sarima_n"] = len(series)
+        return np.ones((n_sims, steps))
+
+    def fake_elastic_net_paths(train_frame, steps, n_sims, seed, **kwargs):
+        calls["elastic_net_start"] = str(train_frame.index[0])
+        calls["elastic_net_n"] = len(train_frame)
+        return np.ones((n_sims, steps)) * 3.0
+
+    monkeypatch.setattr(ensemble, "simulate_sarima_paths", fake_sarima_paths)
+    monkeypatch.setattr(ensemble, "simulate_elastic_net_paths", fake_elastic_net_paths)
+
+    ensemble.simulate_ensemble_paths(
+        frame,
+        steps=1,
+        n_sims=2,
+        weights=(0.5, 0.5),
+        seed=123,
+        sarima_series=full_sarima_series,
+    )
+
+    assert calls == {
+        "sarima_start": "2017Q4",
+        "sarima_n": 5,
+        "elastic_net_start": "2018Q1",
+        "elastic_net_n": 4,
+    }
+
+
 def test_run_ensemble_comparison_smoke_on_tiny_synthetic_frame(tmp_path, monkeypatch):
     frame = _synthetic_frame(n=16)
     curated_path = tmp_path / "curated.csv"

@@ -118,10 +118,11 @@ as validated causal estimates.
 The RBA classifier is separate again: it is a policy-action classification
 exercise using leakage-safe Ensemble horizon-1 headline and trimmed-mean CPI
 forecasts, not a CPI forecaster. Its transparent threshold baseline has the
-best macro-F1 point estimate (`0.775`) against ordered logit (`0.677`) and
-ordered probit (`0.643`), but paired-bootstrap 95% confidence intervals for
-both threshold-minus-ordered-model gaps cross zero, so the win is not
-statistically settled.
+best macro-F1 point estimate (`0.775`), just ahead of a deterministic
+majority-vote ensemble (`0.769`) over threshold, estimated Taylor rule,
+ordered logit, and ordered probit. The paired-bootstrap 95% interval for
+threshold minus majority_vote_ensemble (`[-0.129, 0.131]`) crosses zero, so
+the threshold lead is not statistically settled.
 
 ### SARIMA (implemented, baseline)
 
@@ -211,7 +212,7 @@ COVID treatment checks and the block-bootstrap IRF fix; adjusted forecasts are
 illustrative under a documented, imperfect specification, not precise causal
 estimates."
 
-### RBA Classifier (implemented locally, documented negative finding)
+### RBA Classifier (implemented locally, documented classifier comparison)
 
 The RBA policy-action classifier is a Phase 3 classification exercise, not a
 CPI forecasting model. It joins the leakage-safe Ensemble horizon-1 headline
@@ -220,18 +221,35 @@ and trimmed-mean CPI forecasts to actual cash-rate actions (`cut`, `hold`,
 
 The selected expanding-window split uses `initial_train_size=12`, the first
 audited candidate at or above the 12-row fit-size floor with no missing
-policy classes in any training fold. On the shared 41-quarter test set, the
-threshold rule leads on macro-F1 (`0.775`) and accuracy (`0.756`), ahead of
-ordered logit and ordered probit. The macro-F1 gaps are not statistically
-settled: paired-bootstrap 95% confidence intervals are `[-0.060, 0.255]` for
-threshold minus ordered logit and `[-0.035, 0.315]` for threshold minus
-ordered probit.
+policy classes or Frank-Hall binary outcomes in any training fold. On the
+shared 41-quarter test set, the threshold rule leads on macro-F1 (`0.775`)
+and accuracy (`0.756`), narrowly ahead of `majority_vote_ensemble`
+(`0.769`, accuracy `0.732`), the walk-forward estimated Taylor rule
+(`0.769`), ordered logit (`0.715`), ordered probit (`0.696`), the fixed
+Taylor-rule baseline (`0.365`), and Frank-Hall XGBoost (`0.274`). The
+majority-vote ensemble is not fitted: it combines the already-computed
+threshold, estimated Taylor-rule, ordered-logit, and ordered-probit
+predictions, excludes the weaker fixed Taylor rule and Frank-Hall XGBoost,
+and uses threshold as the pre-set tie-breaker. The tie-break fired in 4 of
+41 test quarters.
+
+The macro-F1 gaps against the estimated Taylor rule, ordered models, and
+majority-vote ensemble are not statistically settled: paired-bootstrap 95%
+confidence intervals are `[-0.152, 0.168]` for threshold minus estimated
+Taylor rule, `[-0.091, 0.223]` for threshold minus ordered logit,
+`[-0.079, 0.251]` for threshold minus ordered probit, and `[-0.129, 0.131]`
+for threshold minus majority_vote_ensemble. Threshold's gaps over fixed
+Taylor rule and Frank-Hall XGBoost are strictly positive, with intervals
+`[0.283, 0.538]` and `[0.342, 0.640]`, respectively.
 
 The reportable result is therefore the transparent threshold baseline,
-chosen despite non-significance because it has zero fitted parameters and
-correctly classifies all 8 of 8 hike quarters in the test set. Ordered logit
-and ordered probit are retained as documented negative findings and are not
-exposed through an API endpoint.
+chosen despite unsettled challenger gaps because it has zero fitted
+parameters and correctly classifies all 8 of 8 hike quarters in the test
+set. The majority-vote ensemble is the best-performing non-threshold
+alternative on the unrounded macro-F1 point estimate, fractionally ahead of
+the estimated Taylor rule, but it does not beat threshold. These classifiers
+are retained as documented comparison results and are not exposed through an
+API endpoint.
 
 A useful research framing:
 
@@ -290,7 +308,7 @@ clear job is documented as a target rather than built.
 | Elastic Net comparison + RBA benchmark | implemented | **DS flagship** | `src/models/`, `reports/model_comparison_elastic_net.csv`, `reports/elastic_net_coefficients.csv` |
 | SVAR (structural, impulse-response) | implemented locally, documented specification caveats | | `src/models/svar.py`, `reports/svar_gate_decisions.md`, `reports/svar_five_variable_evidence_note.md` |
 | Scenario engine (`POST /forecast/scenario`) | implemented locally, illustrative under documented SVAR caveats | | `src/models/scenario.py`, `api/main.py` |
-| RBA policy-action classifier | implemented locally; threshold baseline reportable, ordered models documented negative finding | | `src/models/rba_classifier.py`, `reports/rba_classifier_evaluation.md` |
+| RBA policy-action classifier | implemented locally; threshold baseline reportable, deterministic majority-vote ensemble and Taylor/ordered/XGBoost alternatives documented as classifier comparison results | | `src/models/rba_classifier.py`, `reports/rba_classifier_evaluation.md` |
 | MLflow | implemented locally: comparison runs log params, metrics, report artifacts, and full-sample model artifacts | **MLE flagship** | `src/models/tracking.py`, `mlruns/` (local, gitignored) |
 | FastAPI | implemented locally: `/health`, `/features`, `/forecast/all`, `/forecast/trimmed-mean/all`, and `/forecast/scenario`; the current local API serves every trained forecast family directly from latest MLflow runs, with no promoted champion or Model Registry alias | **MLE flagship** | `api/main.py`, `src/models/registry.py`, live deployment caveat below |
 | Docker / Google Cloud Run | deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs -- verified 2026-08-29 on image tag `redeploy-20260829-d3102c9`, serving `/forecast/all`, `/forecast/trimmed-mean/all`, and `/forecast/scenario` from baked local MLflow runs. The RBA classifier remains documented code/evaluation only and has no API endpoint. Future serving or model-artifact changes still require manual image rebuild, push, and redeploy | **MLE flagship** | `Dockerfile`, `.dockerignore` |

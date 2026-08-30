@@ -240,8 +240,11 @@ def run_family_interval_backtests(
             walk_forward_interval_coverage_backtest(
                 series=series,
                 exog=elastic_net_exog,
-                simulate_func=lambda train_frame, steps, n_sims, seed: simulate_ensemble_paths(
-                    train_frame,
+                simulate_func=lambda train_series, train_exog, steps, n_sims, seed: simulate_ensemble_paths(
+                    pd.concat(
+                        [train_series.rename(target_column), train_exog],
+                        axis=1,
+                    ).dropna(),
                     steps=steps,
                     n_sims=n_sims,
                     weights=weights,
@@ -250,6 +253,7 @@ def run_family_interval_backtests(
                     sarima_order=sarima_order,
                     sarima_seasonal_order=sarima_seasonal_order,
                     elastic_net_feature_columns=elastic_net_feature_columns,
+                    sarima_series=train_series,
                 ),
                 initial_train_size=initial_train_size,
                 horizons=requested_horizons,
@@ -258,7 +262,7 @@ def run_family_interval_backtests(
                 upper_quantile=upper_quantile,
                 n_sims=n_sims,
                 seed=seed + 30_000,
-                training_data="frame",
+                training_data="series_exog",
                 target_column=target_column,
                 max_origins=max_origins,
                 skip_origins=skip_origins,
