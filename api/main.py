@@ -18,7 +18,7 @@ from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 from pydantic import BaseModel, Field
 
-from src.models import elastic_net, ensemble, sarima, scenario, tracking
+from src.models import elastic_net, ensemble, rba_classifier, sarima, scenario, tracking
 from src.models.elastic_net import (
     TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
     TRIMMED_MEAN_TARGET_COLUMN,
@@ -55,6 +55,12 @@ TRIMMED_MEAN_FAMILY_RUN_TAGS = {
     **TRIMMED_MEAN_MODEL_FAMILY_TAGS,
     "ensemble": "trimmed_mean_ensemble",
 }
+RBA_ACTION_CAVEAT = (
+    "RBA action classifications are a documented comparison exercise, not a "
+    "validated policy predictor. The threshold baseline is the reportable result, "
+    "but no classifier is statistically shown to beat it because paired-bootstrap "
+    "confidence intervals cross zero in reports/rba_classifier_evaluation.md."
+)
 
 app = FastAPI(
     title="Australian CPI Forecast API",
@@ -94,6 +100,28 @@ class AllForecastsResponse(BaseModel):
     requested_horizon: int
     models: list[FamilyForecast]
     unavailable: list[UnavailableFamily]
+
+
+class RbaActionModelPrediction(BaseModel):
+    model: str
+    predicted_action: str
+    confidence: float | None
+    p_cut: float | None
+    p_hold: float | None
+    p_hike: float | None
+    reportable: bool
+    majority_vote_tie_break: bool
+
+
+class RbaActionResponse(BaseModel):
+    target_quarter: str
+    forecast_origin: str
+    reportable_model: str
+    reportable_action: str
+    headline_forecast: float
+    trimmed_mean_forecast: float
+    models: list[RbaActionModelPrediction]
+    caveat: str
 
 
 class ScenarioForecastRequest(BaseModel):
@@ -150,6 +178,12 @@ def load_curated_data() -> pd.DataFrame:
 def next_quarters(last_quarter: str, horizon: int) -> list[str]:
     start = pd.Period(last_quarter, freq="Q") + 1
     return [str(start + offset) for offset in range(horizon)]
+
+
+def _optional_float(value: object) -> float | None:
+    if pd.isna(value):
+        return None
+    return float(value)
 
 
 def _mlflow_client() -> MlflowClient:
@@ -681,6 +715,101 @@ def _ensemble_trimmed_mean_family_forecast(
     )
 
 
+def _build_live_rba_action_row(n_sims: int, seed: int) -> pd.DataFrame:
+    curated = load_curated_data()
+    required_columns = {
+        "quarter",
+        "cash_rate",
+        "cash_rate_lag1",
+        "unemployment_rate_change_lag1",
+    }
+    missing_columns = sorted(required_columns.difference(curated.columns))
+    if missing_columns:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Curated dataset is missing RBA action input columns: "
+                f"{', '.join(missing_columns)}."
+            ),
+        )
+
+    latest = curated.iloc[-1]
+    null_columns = [
+        column
+        for column in sorted(required_columns)
+        if pd.isna(latest[column])
+    ]
+    if null_columns:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Latest curated macro row is missing RBA action inputs: "
+                f"{', '.join(null_columns)}."
+            ),
+        )
+
+    forecast_origin = str(latest["quarter"])
+    target_quarter = next_quarters(forecast_origin, 1)[0]
+    headline = _ensemble_family_forecast(
+        "ignored",
+        requested_horizon=1,
+        n_sims=n_sims,
+        seed=seed,
+    )
+    trimmed_mean = _ensemble_trimmed_mean_family_forecast(
+        "ignored",
+        requested_horizon=1,
+        n_sims=n_sims,
+        seed=seed + 2,
+    )
+    if headline.quarters[0] != target_quarter or trimmed_mean.quarters[0] != target_quarter:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Live RBA action forecasts do not align with the next curated quarter "
+                f"{target_quarter}: headline={headline.quarters[0]}, "
+                f"trimmed_mean={trimmed_mean.quarters[0]}."
+            ),
+        )
+
+    return pd.DataFrame(
+        [
+            {
+                "target_quarter": target_quarter,
+                "headline_forecast": float(headline.forecast[0]),
+                "trimmed_mean_forecast": float(trimmed_mean.forecast[0]),
+                "cash_rate": float(latest["cash_rate"]),
+                "cash_rate_lag1": float(latest["cash_rate_lag1"]),
+                "unemployment_rate_change_lag1": float(
+                    latest["unemployment_rate_change_lag1"]
+                ),
+            }
+        ]
+    )
+
+
+def _rba_action_model_predictions(predictions: pd.DataFrame) -> list[RbaActionModelPrediction]:
+    rows = []
+    for model in rba_classifier.MODEL_ORDER:
+        model_rows = predictions.loc[predictions["model"].eq(model)]
+        if model_rows.empty:
+            continue
+        row = model_rows.iloc[0]
+        rows.append(
+            RbaActionModelPrediction(
+                model=model,
+                predicted_action=str(row["predicted_action"]),
+                confidence=_optional_float(row["confidence"]),
+                p_cut=_optional_float(row["p_cut"]),
+                p_hold=_optional_float(row["p_hold"]),
+                p_hike=_optional_float(row["p_hike"]),
+                reportable=model == "threshold",
+                majority_vote_tie_break=bool(row["majority_vote_tie_break"]),
+            )
+        )
+    return rows
+
+
 FAMILY_HANDLERS: dict[str, Callable[[str, int, int, int], FamilyForecastData]] = {
     "sarima": _sarima_family_forecast,
     "elastic_net": _elastic_net_family_forecast,
@@ -816,6 +945,44 @@ def forecast_trimmed_mean_all(request: AllForecastsRequest) -> AllForecastsRespo
         interval_calibration_validation_report_path=(
             TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH
         ),
+    )
+
+
+@app.get("/rba-action", response_model=RbaActionResponse)
+def rba_action() -> RbaActionResponse:
+    n_sims = rba_classifier.DEFAULT_N_SIMS
+    seed = rba_classifier.DEFAULT_SEED
+    try:
+        train = rba_classifier.assemble_policy_sample()
+        live_row = _build_live_rba_action_row(n_sims=n_sims, seed=seed)
+        threshold_simulation_frame = rba_classifier._load_threshold_simulation_frame(
+            curated_path=CURATED_DATA_PATH
+        )
+        predictions = rba_classifier.predict_single_quarter(
+            train,
+            live_row,
+            threshold_simulation_frame=threshold_simulation_frame,
+            threshold_n_sims=n_sims,
+            threshold_seed=seed,
+            sarima_series=load_target_series(CURATED_DATA_PATH, target_column=TARGET_COLUMN),
+        )
+    except HTTPException:
+        raise
+    except (ImportError, RuntimeError, MlflowException, OSError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    threshold = predictions.loc[predictions["model"].eq("threshold")].iloc[0]
+    return RbaActionResponse(
+        target_quarter=str(live_row.iloc[0]["target_quarter"]),
+        forecast_origin=str(
+            pd.Period(str(live_row.iloc[0]["target_quarter"]), freq="Q") - 1
+        ),
+        reportable_model="threshold",
+        reportable_action=str(threshold["predicted_action"]),
+        headline_forecast=float(live_row.iloc[0]["headline_forecast"]),
+        trimmed_mean_forecast=float(live_row.iloc[0]["trimmed_mean_forecast"]),
+        models=_rba_action_model_predictions(predictions),
+        caveat=RBA_ACTION_CAVEAT,
     )
 
 

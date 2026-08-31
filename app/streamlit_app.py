@@ -16,5 +16,9 @@ st.markdown(
     - Data Explorer
     - EDA Dashboard
     - Forecasts
+    - Scenario Explorer
+    - RBA Policy
+    - Methodology
+    - Diagnostics
     """
 )

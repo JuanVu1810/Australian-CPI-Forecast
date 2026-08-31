@@ -248,8 +248,13 @@ parameters and correctly classifies all 8 of 8 hike quarters in the test
 set. The majority-vote ensemble is the best-performing non-threshold
 alternative on the unrounded macro-F1 point estimate, fractionally ahead of
 the estimated Taylor rule, but it does not beat threshold. These classifiers
-are retained as documented comparison results and are not exposed through an
-API endpoint.
+are retained as documented comparison results; `GET /rba-action` is
+implemented locally in `api/main.py` and serves `threshold`, `taylor_rule`,
+`taylor_rule_estimated`, `ordered_logit`, `ordered_probit`,
+`frank_hall_xgboost`, and `majority_vote_ensemble`, with `threshold` marked
+as the reportable model. The fitted alternatives are not statistically shown
+to beat threshold because the paired-bootstrap CIs cross zero in
+`reports/rba_classifier_evaluation.md`.
 
 A useful research framing:
 
@@ -308,11 +313,11 @@ clear job is documented as a target rather than built.
 | Elastic Net comparison + RBA benchmark | implemented | **DS flagship** | `src/models/`, `reports/model_comparison_elastic_net.csv`, `reports/elastic_net_coefficients.csv` |
 | SVAR (structural, impulse-response) | implemented locally, documented specification caveats | | `src/models/svar.py`, `reports/svar_gate_decisions.md`, `reports/svar_five_variable_evidence_note.md` |
 | Scenario engine (`POST /forecast/scenario`) | implemented locally, illustrative under documented SVAR caveats | | `src/models/scenario.py`, `api/main.py` |
-| RBA policy-action classifier | implemented locally; threshold baseline reportable, deterministic majority-vote ensemble and Taylor/ordered/XGBoost alternatives documented as classifier comparison results | | `src/models/rba_classifier.py`, `reports/rba_classifier_evaluation.md` |
+| RBA policy-action classifier | implemented locally; `GET /rba-action` in `api/main.py` serves `threshold`, `taylor_rule`, `taylor_rule_estimated`, `ordered_logit`, `ordered_probit`, `frank_hall_xgboost`, and `majority_vote_ensemble`, with `threshold` marked reportable; fitted alternatives are not statistically shown to beat threshold | | `src/models/rba_classifier.py`, `api/main.py`, `reports/rba_classifier_evaluation.md` |
 | MLflow | implemented locally: comparison runs log params, metrics, report artifacts, and full-sample model artifacts | **MLE flagship** | `src/models/tracking.py`, `mlruns/` (local, gitignored) |
-| FastAPI | implemented locally: `/health`, `/features`, `/forecast/all`, `/forecast/trimmed-mean/all`, and `/forecast/scenario`; the current local API serves every trained forecast family directly from latest MLflow runs, with no promoted champion or Model Registry alias | **MLE flagship** | `api/main.py`, `src/models/registry.py`, live deployment caveat below |
-| Docker / Google Cloud Run | deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs -- verified 2026-08-29 on image tag `redeploy-20260829-d3102c9`, serving `/forecast/all`, `/forecast/trimmed-mean/all`, and `/forecast/scenario` from baked local MLflow runs. The RBA classifier remains documented code/evaluation only and has no API endpoint. Future serving or model-artifact changes still require manual image rebuild, push, and redeploy | **MLE flagship** | `Dockerfile`, `.dockerignore` |
-| Streamlit | multipage dashboard implemented for overview, data exploration, static EDA summaries, and forecast display | supporting | `app/streamlit_app.py`, `app/pages/` |
+| FastAPI | implemented locally: `/health`, `/features`, `/forecast/all`, `/forecast/trimmed-mean/all`, `/forecast/scenario`, and `/rba-action`; the current local API serves every trained forecast family directly from latest MLflow runs, with no promoted champion or Model Registry alias | **MLE flagship** | `api/main.py`, `src/models/registry.py`, live deployment caveat below |
+| Docker / Google Cloud Run | deployed and live: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs -- verified 2026-08-29 on image tag `redeploy-20260829-d3102c9`, serving `/forecast/all`, `/forecast/trimmed-mean/all`, and `/forecast/scenario` from baked local MLflow runs. `GET /rba-action` is implemented locally after that verified image and is not claimed deployed. Future serving or model-artifact changes still require manual image rebuild, push, and redeploy | **MLE flagship** | `Dockerfile`, `.dockerignore` |
+| Streamlit | implemented locally: Overview, Data Explorer, EDA Dashboard, Forecasts with headline/trimmed-mean toggle, Scenario Explorer, RBA Policy, Methodology, and Diagnostics; pages call FastAPI live or read local reports rather than fitting models in-process | supporting | `app/streamlit_app.py`, `app/pages/` |
 | GitHub Actions | CI + scheduled ETL scaffolded; no deploy-to-Cloud-Run step, so the live service above does not auto-update on push | supporting | `.github/workflows/` |
 
 FastAPI is implemented locally and deployed on Google Cloud Run (see the row
@@ -536,18 +541,20 @@ nominal 80% coverage after calibration -- see
 `reports/model_interval_calibration_remediation_decisions.md` for what has
 been tried and why coverage remains under nominal.
 
-Implemented Streamlit pages: Overview, Data Explorer, EDA Dashboard, and
-Forecasts. Planned Streamlit page: Model Evaluation (RMSE/MAE/MSE, benchmark
-comparisons, residual diagnostics, permutation-importance/coefficient
-interpretability).
+Implemented Streamlit pages: Overview, Data Explorer, EDA Dashboard, Forecasts
+with headline/trimmed-mean toggle, Scenario Explorer, RBA Policy, Methodology,
+and Diagnostics. Diagnostics now covers RMSE/MAE-by-horizon, benchmark
+comparisons, interval coverage, and forecast-vs-actual walk-forward backtests.
+Residual diagnostics and permutation-importance/coefficient interpretability
+are still not built in Streamlit.
 
 Container deployment path: FastAPI -> Docker image -> Google Cloud Run. The
 live URL was verified on 2026-08-29 with image tag
 `redeploy-20260829-d3102c9`:
 https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs. That
 deployment serves `/forecast/all`, `/forecast/trimmed-mean/all`, and
-`/forecast/scenario`; the RBA classifier remains documented code/evaluation
-only and has no API endpoint.
+`/forecast/scenario`; `GET /rba-action` is implemented locally in
+`api/main.py` after that verified image and is not claimed deployed.
 Every trained model family's MLflow runs currently live in the local
 gitignored `mlruns/` file store, so the Docker image must be built from a
 local checkout that already has finished runs for each family:
@@ -647,8 +654,8 @@ streamlit run app/streamlit_app.py
 
 ## Roadmap
 
-The Data Science flagship (item 1) is done; the project now moves into the
-other two flagship pillars, with dashboard polish last.
+The Data Science flagship (item 1) and dashboard polish (item 4) are done; the
+project now moves into the other two flagship pillars.
 
 1. **Data Science flagship (done):** SARIMA and a regularized direct
    multi-horizon Elastic Net (per-horizon coefficients) are walk-forward
@@ -665,7 +672,8 @@ other two flagship pillars, with dashboard polish last.
 2. **ML Engineering flagship (API current; Cloud Run deployment verified
    2026-08-29):** every run (params, features, horizon, metrics,
    and model settings) logs to MLflow; local FastAPI (`/health`, `/features`,
-   `/forecast/all`, `/forecast/trimmed-mean/all`, `/forecast/scenario`) serves
+   `/forecast/all`, `/forecast/trimmed-mean/all`, `/forecast/scenario`,
+   `/rba-action`) serves
    every trained forecast family directly from its latest MLflow run, with no
    promoted champion or Model Registry step; containerised with Docker and
    deployed to Cloud Run on image tag `redeploy-20260829-d3102c9`, with manual
@@ -673,8 +681,10 @@ other two flagship pillars, with dashboard polish last.
 3. **Data Engineering flagship:** confirm DuckDB SQL examples against the
    regenerated curated dataset; add the Postgres run/metrics metadata store;
    confirm GitHub Actions CI and scheduled ETL after pushing.
-4. **Supporting polish:** build out the Streamlit EDA/forecast/comparison
-   pages, calling the FastAPI endpoint rather than fitting models in the UI.
+4. **Supporting polish (done):** Streamlit now includes Overview, Data
+   Explorer, EDA Dashboard, Forecasts with headline/trimmed-mean toggle,
+   Scenario Explorer, RBA Policy, Methodology, and Diagnostics; pages call
+   FastAPI live or read local reports rather than fitting models in the UI.
 
 The result should read as a coherent, intentionally-scoped platform: a
 university SARIMA assignment extended into reproducible ingestion (including

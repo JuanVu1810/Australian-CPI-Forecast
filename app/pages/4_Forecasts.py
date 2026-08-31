@@ -1,7 +1,7 @@
 """Forecast dashboard: model selector, calibrated interval bands, and
 forecast-vs-actual accuracy once snapshotted quarters publish.
 
-Calls the FastAPI service's ``POST /forecast/all`` over HTTP rather than
+Calls the FastAPI service's all-forecasts endpoints over HTTP rather than
 loading or fitting models in-process, per this project's Streamlit/FastAPI
 split. The accuracy section reads ``reports/forecast_snapshot_accuracy.csv``
 directly, the same way every other report in this app is read, rather than
@@ -25,6 +25,22 @@ ACCURACY_REPORT_PATH = PROJECT_ROOT / "reports/forecast_snapshot_accuracy.csv"
 DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 MAX_FORECAST_HORIZON = 8
 HISTORY_QUARTERS_SHOWN = 16
+TARGET_CONFIG = {
+    "Headline (cpi_yoy)": {
+        "endpoint": "/forecast/all",
+        "history_column": "cpi_yoy",
+        "display_name": "CPI YoY",
+        "axis_title": "CPI YoY (%)",
+        "coverage_report": "reports/model_interval_coverage.csv",
+    },
+    "Trimmed mean (trimmed_mean_cpi_yoy)": {
+        "endpoint": "/forecast/trimmed-mean/all",
+        "history_column": "trimmed_mean_cpi_yoy",
+        "display_name": "Trimmed Mean CPI YoY",
+        "axis_title": "Trimmed Mean CPI YoY (%)",
+        "coverage_report": "reports/model_interval_coverage_trimmed_mean.csv",
+    },
+}
 
 # Blue/orange pair from this project's categorical palette (slots 1-2), which
 # already clears the adjacent colorblind-safety gate in both light and dark
@@ -72,7 +88,20 @@ def _forecast_frame(family_forecast: dict, anchor_quarter_date, anchor_value: fl
     return pd.concat([bridge, rows], ignore_index=True)
 
 
-def build_forecast_chart(history: pd.DataFrame, forecast: pd.DataFrame, theme_type: str) -> alt.LayerChart:
+def _request_error_detail(exc: requests.RequestException) -> str | None:
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    try:
+        detail = response.json().get("detail")
+    except ValueError:
+        return None
+    return str(detail) if detail else None
+
+
+def build_forecast_chart(
+    history: pd.DataFrame, forecast: pd.DataFrame, theme_type: str, y_axis_title: str
+) -> alt.LayerChart:
     colors = PALETTE[theme_type]
     color_scale = alt.Scale(
         domain=["Actual", "Forecast"], range=[colors["actual"], colors["forecast"]]
@@ -84,7 +113,7 @@ def build_forecast_chart(history: pd.DataFrame, forecast: pd.DataFrame, theme_ty
         .mark_area(opacity=0.18, color=colors["forecast"])
         .encode(
             x=alt.X("quarter_date:T", title="Quarter"),
-            y=alt.Y("lower_ci:Q", title="CPI YoY (%)"),
+            y=alt.Y("lower_ci:Q", title=y_axis_title),
             y2="upper_ci:Q",
         )
     )
@@ -93,7 +122,7 @@ def build_forecast_chart(history: pd.DataFrame, forecast: pd.DataFrame, theme_ty
         .mark_line(strokeWidth=2)
         .encode(
             x="quarter_date:T",
-            y=alt.Y("value:Q", title="CPI YoY (%)"),
+            y=alt.Y("value:Q", title=y_axis_title),
             color=alt.Color(
                 "series:N", scale=color_scale, title=None, legend=alt.Legend(orient="bottom")
             ),
@@ -129,8 +158,9 @@ def build_forecast_chart(history: pd.DataFrame, forecast: pd.DataFrame, theme_ty
 st.set_page_config(page_title="Forecasts | Australian CPI Forecast", layout="wide")
 st.title("Forecasts")
 st.caption(
-    "Served live from `POST /forecast/all` on the FastAPI service -- this page "
-    "calls the API rather than loading or fitting models directly."
+    "Served live from `POST /forecast/all` and `POST /forecast/trimmed-mean/all` "
+    "on the FastAPI service -- this page calls the API rather than loading or "
+    "fitting models directly."
 )
 
 if not CURATED_DATA_PATH.exists():
@@ -140,21 +170,25 @@ if not CURATED_DATA_PATH.exists():
 with st.sidebar:
     st.subheader("API connection")
     api_base_url = st.text_input("API base URL", value=DEFAULT_API_BASE_URL).rstrip("/")
+    target_label = st.radio("Target", options=list(TARGET_CONFIG))
     horizon = st.slider("Forecast horizon (quarters)", min_value=1, max_value=MAX_FORECAST_HORIZON, value=MAX_FORECAST_HORIZON)
 
 curated = load_curated_data()
+target = TARGET_CONFIG[target_label]
 
 try:
     response = requests.post(
-        f"{api_base_url}/forecast/all",
+        f"{api_base_url}{target['endpoint']}",
         json={"horizon": horizon},
         timeout=60,
     )
     response.raise_for_status()
     payload = response.json()
 except requests.RequestException as exc:
+    detail = _request_error_detail(exc)
+    detail_text = f"\n\nAPI detail: {detail}" if detail else ""
     st.error(
-        f"Could not reach the FastAPI service at `{api_base_url}`: {exc}\n\n"
+        f"Could not reach the FastAPI service at `{api_base_url}`: {exc}{detail_text}\n\n"
         "Start it locally with `uvicorn api.main:app --reload`, or point the "
         "API base URL in the sidebar at a running deployment."
     )
@@ -164,7 +198,7 @@ models = payload.get("models", [])
 unavailable = payload.get("unavailable", [])
 
 if not models:
-    st.warning("No model families are currently servable by `/forecast/all`.")
+    st.warning(f"No model families are currently servable by `{target['endpoint']}`.")
 else:
     family_names = [model["model_family"] for model in models]
     selected_family = st.selectbox("Model family", options=family_names)
@@ -182,12 +216,12 @@ else:
     if any(family_forecast.get("significantly_miscalibrated") or []):
         st.warning(
             f"`{selected_family}`'s forecast interval is significantly miscalibrated at one or "
-            "more horizons per `reports/model_interval_coverage.csv` -- treat the shaded band "
+            f"more horizons per `{target['coverage_report']}` -- treat the shaded band "
             "as indicative, not a validated confidence interval."
         )
 
-    history = curated.tail(HISTORY_QUARTERS_SHOWN)[["quarter_date", "cpi_yoy"]].rename(
-        columns={"cpi_yoy": "value"}
+    history = curated.tail(HISTORY_QUARTERS_SHOWN)[["quarter_date", target["history_column"]]].rename(
+        columns={target["history_column"]: "value"}
     )
     history["series"] = "Actual"
     anchor_quarter_date = (
@@ -195,12 +229,16 @@ else:
         .to_timestamp(how="end")
         .normalize()[0]
     )
-    anchor_value = float(curated.set_index("quarter")["cpi_yoy"].get(family_forecast["forecast_origin"], history["value"].iloc[-1]))
+    anchor_value = float(
+        curated.set_index("quarter")[target["history_column"]].get(
+            family_forecast["forecast_origin"], history["value"].iloc[-1]
+        )
+    )
     forecast_frame = _forecast_frame(family_forecast, anchor_quarter_date, anchor_value)
 
-    st.subheader(f"{selected_family}: actual vs. forecast CPI YoY")
+    st.subheader(f"{selected_family}: actual vs. forecast {target['display_name']}")
     st.altair_chart(
-        build_forecast_chart(history, forecast_frame, _current_theme()),
+        build_forecast_chart(history, forecast_frame, _current_theme(), target["axis_title"]),
         width="stretch",
     )
 

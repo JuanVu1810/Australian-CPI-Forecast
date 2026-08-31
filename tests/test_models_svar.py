@@ -186,6 +186,28 @@ def test_recursive_cholesky_period_zero_last_ordered_shock_has_no_earlier_effect
     )
 
 
+def test_simulate_paths_from_fit_slices_presample_and_returns_stochastic_first_step():
+    rng = np.random.default_rng(808)
+    values = np.zeros((140, 3))
+    coefficient_lag1 = np.diag([0.30, 0.25, 0.20])
+    coefficient_lag2 = np.diag([0.10, 0.08, 0.06])
+    innovations = rng.normal(scale=0.25, size=values.shape)
+    for index in range(2, len(values)):
+        values[index] = (
+            coefficient_lag1 @ values[index - 1]
+            + coefficient_lag2 @ values[index - 2]
+            + innovations[index]
+        )
+    data = pd.DataFrame(values, columns=["commodity_growth", "cpi_yoy", "cash_rate"])
+    fitted = svar.fit_svar(data, lag_order=2)
+
+    paths = svar.simulate_paths_from_fit(fitted, steps=4, n_sims=12, seed=123)
+
+    assert paths.shape == (12, 4, 3)
+    assert (np.var(paths[:, 0, :], axis=0) > 0).all()
+    assert not np.allclose(paths[:, 0, :], paths[0, 0, :])
+
+
 def test_draw_contiguous_residual_blocks_preserves_residual_runs():
     residuals = np.arange(24, dtype=float).reshape(12, 2)
     rng = np.random.default_rng(42)

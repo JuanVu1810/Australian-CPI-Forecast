@@ -728,6 +728,210 @@ def _predict_frank_hall_xgboost(train: pd.DataFrame, test: pd.DataFrame) -> pd.S
     )
 
 
+def predict_single_quarter(
+    train: pd.DataFrame,
+    test: pd.DataFrame,
+    *,
+    r_star: float | None = None,
+    threshold_simulation_frame: pd.DataFrame | None = None,
+    threshold_n_sims: int = DEFAULT_N_SIMS,
+    threshold_seed: int = DEFAULT_SEED,
+    sarima_series: pd.Series | None = None,
+) -> pd.DataFrame:
+    """Return all policy-classifier predictions for one target quarter."""
+    if len(test) != 1:
+        raise ValueError("predict_single_quarter expects exactly one test row.")
+    if r_star is None:
+        r_star = calibrate_taylor_r_star(train)
+    if threshold_simulation_frame is None:
+        threshold_simulation_frame = _load_threshold_simulation_frame()
+    if sarima_series is None:
+        sarima_series = load_target_series(CURATED_DATA_PATH, target_column=TARGET_COLUMN)
+
+    train = train.copy()
+    test = test.copy()
+    for frame in (train, test):
+        frame[TAYLOR_IMPLIED_CHANGE_COLUMN] = taylor_rule_implied_change(
+            frame["headline_forecast"],
+            frame["unemployment_rate_change_lag1"],
+            frame["cash_rate_lag1"],
+            r_star=r_star,
+        ).to_numpy()
+
+    quarter = str(test.iloc[0]["target_quarter"])
+    actual_action = (
+        str(test.iloc[0]["policy_action"])
+        if "policy_action" in test.columns and pd.notna(test.iloc[0]["policy_action"])
+        else None
+    )
+    threshold_prediction = threshold_baseline_predict(test["headline_forecast"]).reset_index(
+        drop=True
+    )
+    threshold_probabilities, threshold_diagnostics = _predict_threshold_confidence(
+        test,
+        threshold_simulation_frame,
+        sarima_series=sarima_series,
+        n_sims=threshold_n_sims,
+        seed=threshold_seed,
+        weights=horizon_rmse_weights(horizons=(1,)),
+    )
+    (
+        estimated_taylor_prediction,
+        estimated_taylor_probabilities,
+        estimated_taylor_diagnostics,
+    ) = _predict_estimated_taylor_rule(train, test)
+    (
+        logit_prediction,
+        logit_probabilities,
+        logit_warnings,
+        logit_diagnostics,
+    ) = _predict_ordered_model(
+        train,
+        test,
+        link="logit",
+    )
+    (
+        probit_prediction,
+        probit_probabilities,
+        probit_warnings,
+        probit_diagnostics,
+    ) = _predict_ordered_model(
+        train,
+        test,
+        link="probit",
+    )
+    model_predictions = {
+        "threshold": threshold_prediction,
+        "taylor_rule": taylor_rule_baseline_predict(
+            test["headline_forecast"],
+            test["unemployment_rate_change_lag1"],
+            test["cash_rate_lag1"],
+            r_star=r_star,
+        ).reset_index(drop=True),
+        "taylor_rule_estimated": estimated_taylor_prediction.reset_index(drop=True),
+        "ordered_logit": logit_prediction.reset_index(drop=True),
+        "ordered_probit": probit_prediction.reset_index(drop=True),
+        "frank_hall_xgboost": _predict_frank_hall_xgboost(train, test).reset_index(drop=True),
+    }
+    ensemble_prediction, ensemble_tie_break = majority_vote_ensemble_predict(
+        {
+            model: model_predictions[model]
+            for model in MAJORITY_VOTE_ENSEMBLE_MODELS
+        }
+    )
+    model_predictions["majority_vote_ensemble"] = ensemble_prediction.reset_index(drop=True)
+    warning_by_model = {
+        "ordered_logit": "; ".join(logit_warnings),
+        "ordered_probit": "; ".join(probit_warnings),
+    }
+    ordered_diagnostics_by_model = {
+        "ordered_logit": logit_diagnostics,
+        "ordered_probit": probit_diagnostics,
+    }
+    probabilities_by_model = {
+        "threshold": threshold_probabilities.reset_index(drop=True),
+        "taylor_rule_estimated": estimated_taylor_probabilities.reset_index(drop=True),
+        "ordered_logit": logit_probabilities.reset_index(drop=True),
+        "ordered_probit": probit_probabilities.reset_index(drop=True),
+    }
+
+    rows = []
+    for model, prediction in model_predictions.items():
+        ordered_diagnostics = ordered_diagnostics_by_model.get(model, {})
+        probabilities = probabilities_by_model.get(model)
+        probability_values = (
+            probabilities.iloc[0].to_dict()
+            if probabilities is not None
+            else {column: np.nan for column in PROBABILITY_COLUMNS}
+        )
+        predicted_action = str(prediction.iloc[0])
+        rows.append(
+            {
+                "model": model,
+                "target_quarter": quarter,
+                "actual_action": actual_action,
+                "predicted_action": predicted_action,
+                **probability_values,
+                "confidence": (
+                    float(probability_values[f"p_{predicted_action}"])
+                    if model in CONFIDENCE_MODELS
+                    else np.nan
+                ),
+                "majority_vote_tie_break": (
+                    bool(ensemble_tie_break.iloc[0])
+                    if model == "majority_vote_ensemble"
+                    else False
+                ),
+                "headline_forecast": float(test.iloc[0]["headline_forecast"]),
+                "trimmed_mean_forecast": float(test.iloc[0]["trimmed_mean_forecast"]),
+                "unemployment_rate_change_lag1": float(
+                    test.iloc[0]["unemployment_rate_change_lag1"]
+                ),
+                TAYLOR_IMPLIED_CHANGE_COLUMN: float(
+                    test.iloc[0][TAYLOR_IMPLIED_CHANGE_COLUMN]
+                ),
+                "fit_warnings": warning_by_model.get(model, ""),
+                "estimated_taylor_intercept": (
+                    estimated_taylor_diagnostics["intercept"]
+                    if model == "taylor_rule_estimated"
+                    else np.nan
+                ),
+                "estimated_taylor_coef_inflation_gap": (
+                    estimated_taylor_diagnostics["coef_inflation_gap"]
+                    if model == "taylor_rule_estimated"
+                    else np.nan
+                ),
+                "estimated_taylor_coef_unemployment_change": (
+                    estimated_taylor_diagnostics["coef_unemployment_rate_change_lag1"]
+                    if model == "taylor_rule_estimated"
+                    else np.nan
+                ),
+                "estimated_taylor_predicted_change": (
+                    estimated_taylor_diagnostics["predicted_change"]
+                    if model == "taylor_rule_estimated"
+                    else np.nan
+                ),
+                "estimated_taylor_unstable_coefficients": (
+                    estimated_taylor_diagnostics["unstable_coefficients"]
+                    if model == "taylor_rule_estimated"
+                    else ""
+                ),
+                "threshold_forecast_origin": (
+                    threshold_diagnostics["threshold_forecast_origin"]
+                    if model == "threshold"
+                    else ""
+                ),
+                "threshold_simulated_median": (
+                    threshold_diagnostics["threshold_simulated_median"]
+                    if model == "threshold"
+                    else np.nan
+                ),
+                "threshold_simulated_action": (
+                    threshold_diagnostics["threshold_simulated_action"]
+                    if model == "threshold"
+                    else ""
+                ),
+                **{
+                    f"ordered_beta_{feature}": ordered_diagnostics.get(
+                        f"ordered_beta_{feature}",
+                        np.nan,
+                    )
+                    for feature in ORDINAL_FEATURE_COLUMNS
+                },
+                "ordered_alpha_cut_hold": ordered_diagnostics.get(
+                    "ordered_alpha_cut_hold",
+                    np.nan,
+                ),
+                "ordered_alpha_hold_hike": ordered_diagnostics.get(
+                    "ordered_alpha_hold_hike",
+                    np.nan,
+                ),
+                "ordered_train_rows": ordered_diagnostics.get("train_rows", np.nan),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def walk_forward_predictions(
     sample: pd.DataFrame,
     initial_train_size: int,
@@ -739,193 +943,24 @@ def walk_forward_predictions(
 ) -> pd.DataFrame:
     """Evaluate all policy classifiers on identical expanding-window test rows."""
     rows = []
-    labels = sample["policy_action"].astype(ACTION_DTYPE)
     if r_star is None:
         r_star = calibrate_taylor_r_star(sample)
     if threshold_simulation_frame is None:
         threshold_simulation_frame = _load_threshold_simulation_frame()
     threshold_sarima_series = load_target_series(CURATED_DATA_PATH, target_column=TARGET_COLUMN)
-    threshold_weights = horizon_rmse_weights(horizons=(1,))
     for fold_position, (train_index, test_index) in enumerate(
         expanding_walk_forward_splits(sample, initial_train_size)
     ):
-        train = sample.iloc[train_index].copy()
-        test = sample.iloc[test_index].copy()
-        for frame in (train, test):
-            frame[TAYLOR_IMPLIED_CHANGE_COLUMN] = taylor_rule_implied_change(
-                frame["headline_forecast"],
-                frame["unemployment_rate_change_lag1"],
-                frame["cash_rate_lag1"],
-                r_star=r_star,
-            ).to_numpy()
-        actual = labels.iloc[test_index].reset_index(drop=True)
-        quarter = str(test.iloc[0]["target_quarter"])
-
-        threshold_prediction = threshold_baseline_predict(test["headline_forecast"]).reset_index(
-            drop=True
-        )
-        threshold_probabilities, threshold_diagnostics = _predict_threshold_confidence(
-            test,
-            threshold_simulation_frame,
+        fold_rows = predict_single_quarter(
+            sample.iloc[train_index],
+            sample.iloc[test_index],
+            r_star=r_star,
+            threshold_simulation_frame=threshold_simulation_frame,
+            threshold_n_sims=threshold_n_sims,
+            threshold_seed=threshold_seed + fold_position,
             sarima_series=threshold_sarima_series,
-            n_sims=threshold_n_sims,
-            seed=threshold_seed + fold_position,
-            weights=threshold_weights,
         )
-        (
-            estimated_taylor_prediction,
-            estimated_taylor_probabilities,
-            estimated_taylor_diagnostics,
-        ) = (
-            _predict_estimated_taylor_rule(train, test)
-        )
-        (
-            logit_prediction,
-            logit_probabilities,
-            logit_warnings,
-            logit_diagnostics,
-        ) = _predict_ordered_model(
-            train,
-            test,
-            link="logit",
-        )
-        (
-            probit_prediction,
-            probit_probabilities,
-            probit_warnings,
-            probit_diagnostics,
-        ) = _predict_ordered_model(
-            train,
-            test,
-            link="probit",
-        )
-        model_predictions = {
-            "threshold": threshold_prediction,
-            "taylor_rule": taylor_rule_baseline_predict(
-                test["headline_forecast"],
-                test["unemployment_rate_change_lag1"],
-                test["cash_rate_lag1"],
-                r_star=r_star,
-            ).reset_index(drop=True),
-            "taylor_rule_estimated": estimated_taylor_prediction.reset_index(drop=True),
-            "ordered_logit": logit_prediction.reset_index(drop=True),
-            "ordered_probit": probit_prediction.reset_index(drop=True),
-            "frank_hall_xgboost": _predict_frank_hall_xgboost(train, test).reset_index(drop=True),
-        }
-        ensemble_prediction, ensemble_tie_break = majority_vote_ensemble_predict(
-            {
-                model: model_predictions[model]
-                for model in MAJORITY_VOTE_ENSEMBLE_MODELS
-            }
-        )
-        model_predictions["majority_vote_ensemble"] = ensemble_prediction.reset_index(drop=True)
-        warning_by_model = {
-            "ordered_logit": "; ".join(logit_warnings),
-            "ordered_probit": "; ".join(probit_warnings),
-        }
-        ordered_diagnostics_by_model = {
-            "ordered_logit": logit_diagnostics,
-            "ordered_probit": probit_diagnostics,
-        }
-        probabilities_by_model = {
-            "threshold": threshold_probabilities.reset_index(drop=True),
-            "taylor_rule_estimated": estimated_taylor_probabilities.reset_index(drop=True),
-            "ordered_logit": logit_probabilities.reset_index(drop=True),
-            "ordered_probit": probit_probabilities.reset_index(drop=True),
-        }
-        for model, prediction in model_predictions.items():
-            ordered_diagnostics = ordered_diagnostics_by_model.get(model, {})
-            probabilities = probabilities_by_model.get(model)
-            probability_values = (
-                probabilities.iloc[0].to_dict()
-                if probabilities is not None
-                else {column: np.nan for column in PROBABILITY_COLUMNS}
-            )
-            predicted_action = str(prediction.iloc[0])
-            rows.append(
-                {
-                    "model": model,
-                    "target_quarter": quarter,
-                    "actual_action": str(actual.iloc[0]),
-                    "predicted_action": predicted_action,
-                    **probability_values,
-                    "confidence": (
-                        float(probability_values[f"p_{predicted_action}"])
-                        if model in CONFIDENCE_MODELS
-                        else np.nan
-                    ),
-                    "majority_vote_tie_break": (
-                        bool(ensemble_tie_break.iloc[0])
-                        if model == "majority_vote_ensemble"
-                        else False
-                    ),
-                    "headline_forecast": float(test.iloc[0]["headline_forecast"]),
-                    "trimmed_mean_forecast": float(test.iloc[0]["trimmed_mean_forecast"]),
-                    "unemployment_rate_change_lag1": float(
-                        test.iloc[0]["unemployment_rate_change_lag1"]
-                    ),
-                    TAYLOR_IMPLIED_CHANGE_COLUMN: float(
-                        test.iloc[0][TAYLOR_IMPLIED_CHANGE_COLUMN]
-                    ),
-                    "fit_warnings": warning_by_model.get(model, ""),
-                    "estimated_taylor_intercept": (
-                        estimated_taylor_diagnostics["intercept"]
-                        if model == "taylor_rule_estimated"
-                        else np.nan
-                    ),
-                    "estimated_taylor_coef_inflation_gap": (
-                        estimated_taylor_diagnostics["coef_inflation_gap"]
-                        if model == "taylor_rule_estimated"
-                        else np.nan
-                    ),
-                    "estimated_taylor_coef_unemployment_change": (
-                        estimated_taylor_diagnostics["coef_unemployment_rate_change_lag1"]
-                        if model == "taylor_rule_estimated"
-                        else np.nan
-                    ),
-                    "estimated_taylor_predicted_change": (
-                        estimated_taylor_diagnostics["predicted_change"]
-                        if model == "taylor_rule_estimated"
-                        else np.nan
-                    ),
-                    "estimated_taylor_unstable_coefficients": (
-                        estimated_taylor_diagnostics["unstable_coefficients"]
-                        if model == "taylor_rule_estimated"
-                        else ""
-                    ),
-                    "threshold_forecast_origin": (
-                        threshold_diagnostics["threshold_forecast_origin"]
-                        if model == "threshold"
-                        else ""
-                    ),
-                    "threshold_simulated_median": (
-                        threshold_diagnostics["threshold_simulated_median"]
-                        if model == "threshold"
-                        else np.nan
-                    ),
-                    "threshold_simulated_action": (
-                        threshold_diagnostics["threshold_simulated_action"]
-                        if model == "threshold"
-                        else ""
-                    ),
-                    **{
-                        f"ordered_beta_{feature}": ordered_diagnostics.get(
-                            f"ordered_beta_{feature}",
-                            np.nan,
-                        )
-                        for feature in ORDINAL_FEATURE_COLUMNS
-                    },
-                    "ordered_alpha_cut_hold": ordered_diagnostics.get(
-                        "ordered_alpha_cut_hold",
-                        np.nan,
-                    ),
-                    "ordered_alpha_hold_hike": ordered_diagnostics.get(
-                        "ordered_alpha_hold_hike",
-                        np.nan,
-                    ),
-                    "ordered_train_rows": ordered_diagnostics.get("train_rows", np.nan),
-                }
-            )
+        rows.extend(fold_rows.to_dict("records"))
     return pd.DataFrame(rows)
 
 

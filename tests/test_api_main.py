@@ -89,6 +89,23 @@ def _write_curated_frame(path, end_quarter="2021Q4"):
     ).to_csv(path, index=False)
 
 
+def _write_rba_action_curated_frame(path, end_quarter="2021Q4"):
+    quarters = pd.period_range(
+        end=pd.Period(end_quarter, freq="Q"),
+        periods=4,
+        freq="Q",
+    )
+    pd.DataFrame(
+        {
+            "quarter": quarters.astype(str),
+            "cpi_yoy": np.linspace(2.0, 3.0, len(quarters)),
+            "cash_rate": [2.5, 2.75, 3.0, 3.25],
+            "cash_rate_lag1": [2.25, 2.5, 2.75, 3.0],
+            "unemployment_rate_change_lag1": [0.1, -0.1, 0.0, 0.2],
+        }
+    ).to_csv(path, index=False)
+
+
 def _write_interval_coverage_report(path, nominal_coverage=0.8):
     pd.DataFrame(
         {
@@ -213,6 +230,129 @@ def test_trimmed_mean_forecast_all_uses_trimmed_handlers_and_calibration(
     assert model["forecast"] == [10.0, 20.0]
     np.testing.assert_allclose(model["interval_lower"], [8.4, 19.2])
     np.testing.assert_allclose(model["interval_upper"], [11.6, 20.8])
+
+
+def test_rba_action_returns_live_policy_breakdown_and_marks_threshold(
+    monkeypatch,
+    tmp_path,
+):
+    curated_path = tmp_path / "curated.csv"
+    _write_rba_action_curated_frame(curated_path, end_quarter="2021Q4")
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+    monkeypatch.setattr(
+        api_main.rba_classifier,
+        "assemble_policy_sample",
+        lambda: pd.DataFrame({"policy_action": ["cut", "hold", "hike"]}),
+    )
+    monkeypatch.setattr(
+        api_main.rba_classifier,
+        "_load_threshold_simulation_frame",
+        lambda curated_path: pd.DataFrame({"cpi_yoy": [2.0]}),
+    )
+
+    def fake_headline_ensemble(model_uri, requested_horizon, n_sims, seed):
+        return api_main.FamilyForecastData(
+            forecast=[3.2],
+            draws=np.zeros((n_sims, 1)),
+            quarters=["2022Q1"],
+            forecast_origin="2021Q4",
+            horizon_served=requested_horizon,
+            horizon_cap=None,
+        )
+
+    def fake_trimmed_ensemble(model_uri, requested_horizon, n_sims, seed):
+        return api_main.FamilyForecastData(
+            forecast=[2.7],
+            draws=np.zeros((n_sims, 1)),
+            quarters=["2022Q1"],
+            forecast_origin="2021Q4",
+            horizon_served=requested_horizon,
+            horizon_cap=None,
+        )
+
+    def fake_predict_single_quarter(train, test, **kwargs):
+        assert test.iloc[0]["target_quarter"] == "2022Q1"
+        assert test.iloc[0]["headline_forecast"] == pytest.approx(3.2)
+        assert test.iloc[0]["trimmed_mean_forecast"] == pytest.approx(2.7)
+        assert test.iloc[0]["cash_rate"] == pytest.approx(3.25)
+        return pd.DataFrame(
+            {
+                "model": list(api_main.rba_classifier.MODEL_ORDER),
+                "predicted_action": [
+                    "hike",
+                    "hold",
+                    "hike",
+                    "hold",
+                    "hike",
+                    "hold",
+                    "hike",
+                ],
+                "confidence": [0.7, np.nan, 0.6, 0.5, 0.8, np.nan, np.nan],
+                "p_cut": [0.1, np.nan, 0.1, 0.2, 0.1, np.nan, np.nan],
+                "p_hold": [0.2, np.nan, 0.3, 0.5, 0.1, np.nan, np.nan],
+                "p_hike": [0.7, np.nan, 0.6, 0.3, 0.8, np.nan, np.nan],
+                "majority_vote_tie_break": [
+                    False,
+                    False,
+                    False,
+                    False,
+                    False,
+                    False,
+                    True,
+                ],
+            }
+        )
+
+    monkeypatch.setattr(api_main, "_ensemble_family_forecast", fake_headline_ensemble)
+    monkeypatch.setattr(
+        api_main,
+        "_ensemble_trimmed_mean_family_forecast",
+        fake_trimmed_ensemble,
+    )
+    monkeypatch.setattr(
+        api_main.rba_classifier,
+        "predict_single_quarter",
+        fake_predict_single_quarter,
+    )
+
+    payload = api_main.rba_action().model_dump()
+
+    assert payload["target_quarter"] == "2022Q1"
+    assert payload["forecast_origin"] == "2021Q4"
+    assert payload["reportable_model"] == "threshold"
+    assert payload["reportable_action"] == "hike"
+    assert payload["headline_forecast"] == pytest.approx(3.2)
+    assert payload["trimmed_mean_forecast"] == pytest.approx(2.7)
+    assert len(payload["models"]) == 7
+    threshold = payload["models"][0]
+    assert threshold["model"] == "threshold"
+    assert threshold["reportable"] is True
+    assert threshold["confidence"] == pytest.approx(0.7)
+    assert payload["models"][1]["confidence"] is None
+    assert payload["models"][-1]["majority_vote_tie_break"] is True
+    assert "documented comparison exercise" in payload["caveat"]
+
+
+def test_rba_action_converts_mlflow_errors_to_503(monkeypatch, tmp_path):
+    curated_path = tmp_path / "curated.csv"
+    _write_rba_action_curated_frame(curated_path, end_quarter="2021Q4")
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+    monkeypatch.setattr(
+        api_main.rba_classifier,
+        "assemble_policy_sample",
+        lambda: pd.DataFrame({"policy_action": ["cut", "hold", "hike"]}),
+    )
+
+    def raise_mlflow_exception(model_uri, requested_horizon, n_sims, seed):
+        raise api_main.MlflowException("No finished MLflow run found.")
+
+    monkeypatch.setattr(api_main, "_ensemble_family_forecast", raise_mlflow_exception)
+
+    with pytest.raises(api_main.HTTPException) as exc_info:
+        api_main.rba_action()
+
+    assert exc_info.value.status_code == 503
+    assert "No finished MLflow run found" in exc_info.value.detail
 
 
 def test_forecast_all_returns_sarima_and_elastic_net_with_draw_intervals(

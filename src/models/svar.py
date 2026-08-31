@@ -362,17 +362,18 @@ def simulate_paths_from_fit(
         raise ValueError("n_sims must be at least 1.")
 
     paths = fitted.simulate_var(
-        steps=steps,
+        steps=steps + fitted.k_ar,
         nsimulations=n_sims,
         seed=seed,
         initial_values=np.asarray(fitted.endog, dtype=float)[-fitted.k_ar :],
     )
+    paths = np.asarray(paths, dtype=float)[:, fitted.k_ar :, :]
     expected_shape = (n_sims, steps, len(fitted.names))
-    if np.asarray(paths).shape != expected_shape:
+    if paths.shape != expected_shape:
         raise ValueError(
-            f"simulation paths have shape {np.asarray(paths).shape}, expected {expected_shape}."
+            f"simulation paths have shape {paths.shape}, expected {expected_shape}."
         )
-    return np.asarray(paths, dtype=float)
+    return paths
 
 
 def simulate_svar_paths(
