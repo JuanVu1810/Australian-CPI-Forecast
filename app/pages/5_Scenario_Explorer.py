@@ -21,6 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CURATED_DATA_PATH = PROJECT_ROOT / "data/curated/quarterly_macro_features.csv"
 DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 MAX_FORECAST_HORIZON = 8
+INTERVAL_LABEL = "calibrated simulation interval (80% nominal target)"
 SHOCK_VARIABLES = (
     "unemployment_rate",
     "cash_rate",
@@ -30,19 +31,35 @@ SHOCK_VARIABLES = (
 TARGET_CONFIG = {
     "Headline (cpi_yoy)": {
         "request_value": "headline",
+        "baseline_endpoint": "/forecast/all",
         "history_column": "cpi_yoy",
         "axis_title": "CPI YoY (%)",
     },
     "Trimmed mean (trimmed_mean_cpi_yoy)": {
         "request_value": "trimmed_mean",
+        "baseline_endpoint": "/forecast/trimmed-mean/all",
         "history_column": "trimmed_mean_cpi_yoy",
         "axis_title": "Trimmed Mean CPI YoY (%)",
     },
 }
 
 PALETTE = {
-    "light": {"forecast": "#eb6834", "muted": "#898781", "grid": "#e1e0d9"},
-    "dark": {"forecast": "#d95926", "muted": "#898781", "grid": "#2c2c2a"},
+    "light": {
+        "scenario": "#eb6834",
+        "baseline": "#2a78d6",
+        "target": "#2f8f5b",
+        "midpoint": "#4d6b57",
+        "muted": "#898781",
+        "grid": "#e1e0d9",
+    },
+    "dark": {
+        "scenario": "#d95926",
+        "baseline": "#3987e5",
+        "target": "#61b983",
+        "midpoint": "#8eb89b",
+        "muted": "#898781",
+        "grid": "#2c2c2a",
+    },
 }
 
 
@@ -76,11 +93,12 @@ def _anchor_value(curated: pd.DataFrame, target_column: str, forecast_origin: st
     return float(target.iloc[-1])
 
 
-def _scenario_frame(payload: dict, anchor_quarter_date, anchor_value: float) -> pd.DataFrame:
+def _scenario_frame(payload: dict, anchor_quarter_date, anchor_value: float, series: str) -> pd.DataFrame:
     quarters = pd.PeriodIndex(payload["quarters"], freq="Q").to_timestamp(how="end").normalize()
     rows = pd.DataFrame(
         {
             "quarter_date": quarters,
+            "series": series,
             "forecast": payload["forecast"],
             "lower_ci": payload["interval_lower"],
             "upper_ci": payload["interval_upper"],
@@ -89,6 +107,7 @@ def _scenario_frame(payload: dict, anchor_quarter_date, anchor_value: float) -> 
     bridge = pd.DataFrame(
         {
             "quarter_date": [anchor_quarter_date],
+            "series": [series],
             "forecast": [anchor_value],
             "lower_ci": [anchor_value],
             "upper_ci": [anchor_value],
@@ -97,21 +116,72 @@ def _scenario_frame(payload: dict, anchor_quarter_date, anchor_value: float) -> 
     return pd.concat([bridge, rows], ignore_index=True)
 
 
+def _baseline_ensemble(payload: dict) -> dict | None:
+    for model in payload.get("models", []):
+        if model.get("model_family") == "ensemble":
+            return model
+    return None
+
+
 def build_scenario_chart(forecast: pd.DataFrame, theme_type: str, y_axis_title: str) -> alt.LayerChart:
     colors = PALETTE[theme_type]
+    color_scale = alt.Scale(
+        domain=["Ensemble baseline", "SVAR shock scenario"],
+        range=[colors["baseline"], colors["scenario"]],
+    )
+    dash_scale = alt.Scale(
+        domain=["Ensemble baseline", "SVAR shock scenario"],
+        range=[[5, 3], [1, 0]],
+    )
+    start = forecast["quarter_date"].min()
+    end = forecast["quarter_date"].max()
+    rba_band = pd.DataFrame({"start": [start], "end": [end], "lower": [2.0], "upper": [3.0]})
+    midpoint = pd.DataFrame({"midpoint": [2.5]})
+    target_band = (
+        alt.Chart(rba_band)
+        .mark_rect(opacity=0.08, color=colors["target"])
+        .encode(
+            x=alt.X("start:T", title="Quarter"),
+            x2="end:T",
+            y=alt.Y("lower:Q", title=y_axis_title),
+            y2="upper:Q",
+        )
+    )
+    midpoint_rule = (
+        alt.Chart(midpoint)
+        .mark_rule(color=colors["midpoint"], strokeDash=[6, 3], strokeWidth=1.4)
+        .encode(y="midpoint:Q")
+    )
     band = (
         alt.Chart(forecast)
-        .mark_area(opacity=0.18, color=colors["forecast"])
+        .mark_area(opacity=0.14)
         .encode(
             x=alt.X("quarter_date:T", title="Quarter"),
             y=alt.Y("lower_ci:Q", title=y_axis_title),
             y2="upper_ci:Q",
+            color=alt.Color("series:N", scale=color_scale, title=None),
+            tooltip=[
+                "series:N",
+                "quarter_date:T",
+                alt.Tooltip("lower_ci:Q", title=f"Lower {INTERVAL_LABEL}", format=".2f"),
+                alt.Tooltip("upper_ci:Q", title=f"Upper {INTERVAL_LABEL}", format=".2f"),
+            ],
         )
     )
     forecast_line = (
         alt.Chart(forecast)
-        .mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=45), color=colors["forecast"])
-        .encode(x="quarter_date:T", y=alt.Y("forecast:Q", title=y_axis_title))
+        .mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=45))
+        .encode(
+            x="quarter_date:T",
+            y=alt.Y("forecast:Q", title=y_axis_title),
+            color=alt.Color("series:N", scale=color_scale, title=None, legend=alt.Legend(orient="bottom")),
+            strokeDash=alt.StrokeDash("series:N", scale=dash_scale, legend=None),
+            tooltip=[
+                "series:N",
+                "quarter_date:T",
+                alt.Tooltip("forecast:Q", title="Forecast", format=".2f"),
+            ],
+        )
     )
     origin_rule = (
         alt.Chart(forecast.iloc[[0]])
@@ -119,7 +189,7 @@ def build_scenario_chart(forecast: pd.DataFrame, theme_type: str, y_axis_title: 
         .encode(x="quarter_date:T")
     )
     return (
-        (band + forecast_line + origin_rule)
+        (target_band + midpoint_rule + band + forecast_line + origin_rule)
         .properties(height=360)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
@@ -171,6 +241,13 @@ try:
     )
     response.raise_for_status()
     payload = response.json()
+    baseline_response = requests.post(
+        f"{api_base_url}{target['baseline_endpoint']}",
+        json={"horizon": max_horizon},
+        timeout=60,
+    )
+    baseline_response.raise_for_status()
+    baseline_payload = baseline_response.json()
 except requests.RequestException as exc:
     detail = _request_error_detail(exc)
     detail_text = f"\n\nAPI detail: {detail}" if detail else ""
@@ -191,8 +268,35 @@ anchor_quarter_date = (
     pd.PeriodIndex([payload["forecast_origin"]], freq="Q").to_timestamp(how="end").normalize()[0]
 )
 anchor_value = _anchor_value(curated, target["history_column"], payload["forecast_origin"])
-forecast_frame = _scenario_frame(payload, anchor_quarter_date, anchor_value)
+scenario_frame = _scenario_frame(payload, anchor_quarter_date, anchor_value, "SVAR shock scenario")
+baseline_ensemble = _baseline_ensemble(baseline_payload)
+if baseline_ensemble is not None:
+    baseline_anchor_quarter_date = (
+        pd.PeriodIndex([baseline_ensemble["forecast_origin"]], freq="Q")
+        .to_timestamp(how="end")
+        .normalize()[0]
+    )
+    baseline_anchor_value = _anchor_value(
+        curated,
+        target["history_column"],
+        baseline_ensemble["forecast_origin"],
+    )
+    baseline_frame = _scenario_frame(
+        baseline_ensemble,
+        baseline_anchor_quarter_date,
+        baseline_anchor_value,
+        "Ensemble baseline",
+    )
+    forecast_frame = pd.concat([baseline_frame, scenario_frame], ignore_index=True)
+else:
+    forecast_frame = scenario_frame
+    st.info("The Ensemble baseline is unavailable, so the chart shows only the SVAR shock scenario.")
 
+st.caption(
+    "Read-only overlay: the dashed Ensemble baseline is SARIMA + Elastic Net only; "
+    "the solid line is the scenario endpoint's SVAR-adjusted Ensemble draw. "
+    f"Both bands are shown as a shaded {INTERVAL_LABEL}."
+)
 st.altair_chart(
     build_scenario_chart(forecast_frame, _current_theme(), target["axis_title"]),
     width="stretch",
@@ -205,8 +309,8 @@ with st.expander("Scenario forecast table"):
             "horizon": payload["horizons"],
             "quarter": payload["quarters"],
             "forecast": payload["forecast"],
-            "lower_ci": payload["interval_lower"],
-            "upper_ci": payload["interval_upper"],
+            f"lower {INTERVAL_LABEL}": payload["interval_lower"],
+            f"upper {INTERVAL_LABEL}": payload["interval_upper"],
         }
     ).round(4)
     st.dataframe(table, width="stretch")

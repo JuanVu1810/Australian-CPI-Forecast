@@ -1,5 +1,4 @@
-"""Forecast dashboard: model selector, calibrated interval bands, and
-forecast-vs-actual accuracy once snapshotted quarters publish.
+"""Forecast dashboard: macro inputs, Step 1 controls, and CPI forecast bands.
 
 Calls the FastAPI service's all-forecasts endpoints over HTTP rather than
 loading or fitting models in-process, per this project's Streamlit/FastAPI
@@ -25,29 +24,53 @@ ACCURACY_REPORT_PATH = PROJECT_ROOT / "reports/forecast_snapshot_accuracy.csv"
 DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 MAX_FORECAST_HORIZON = 8
 HISTORY_QUARTERS_SHOWN = 16
+INTERVAL_LABEL = "calibrated simulation interval (80% nominal target)"
 TARGET_CONFIG = {
-    "Headline (cpi_yoy)": {
+    "Headline": {
         "endpoint": "/forecast/all",
         "history_column": "cpi_yoy",
-        "display_name": "CPI YoY",
-        "axis_title": "CPI YoY (%)",
+        "display_name": "Headline CPI YoY",
         "coverage_report": "reports/model_interval_coverage.csv",
     },
-    "Trimmed mean (trimmed_mean_cpi_yoy)": {
+    "Trimmed mean": {
         "endpoint": "/forecast/trimmed-mean/all",
         "history_column": "trimmed_mean_cpi_yoy",
         "display_name": "Trimmed Mean CPI YoY",
-        "axis_title": "Trimmed Mean CPI YoY (%)",
         "coverage_report": "reports/model_interval_coverage_trimmed_mean.csv",
     },
 }
+MODEL_LABELS = {
+    "ensemble": "Ensemble (SARIMA + Elastic Net)",
+    "sarima": "SARIMA",
+    "elastic_net": "Elastic Net",
+}
+MODEL_ORDER = ("ensemble", "sarima", "elastic_net")
+MACRO_INPUT_COLUMNS = {
+    "cpi_yoy": "Headline CPI YoY",
+    "trimmed_mean_cpi_yoy": "Trimmed Mean CPI YoY",
+    "unemployment_rate": "Unemployment Rate",
+    "cash_rate": "Cash Rate",
+    "commodity_growth": "Commodity Growth",
+    "inflation_expectations_business": "Business Inflation Expectations",
+}
 
-# Blue/orange pair from this project's categorical palette (slots 1-2), which
-# already clears the adjacent colorblind-safety gate in both light and dark
-# mode, so no separate validation pass is needed for a two-series chart.
 PALETTE = {
-    "light": {"actual": "#2a78d6", "forecast": "#eb6834", "muted": "#898781", "grid": "#e1e0d9"},
-    "dark": {"actual": "#3987e5", "forecast": "#d95926", "muted": "#898781", "grid": "#2c2c2a"},
+    "light": {
+        "headline": "#2a78d6",
+        "trimmed": "#eb6834",
+        "target": "#2f8f5b",
+        "midpoint": "#4d6b57",
+        "muted": "#898781",
+        "grid": "#e1e0d9",
+    },
+    "dark": {
+        "headline": "#3987e5",
+        "trimmed": "#d95926",
+        "target": "#61b983",
+        "midpoint": "#8eb89b",
+        "muted": "#898781",
+        "grid": "#2c2c2a",
+    },
 }
 
 
@@ -65,29 +88,6 @@ def _current_theme() -> str:
         return "light"
 
 
-def _forecast_frame(family_forecast: dict, anchor_quarter_date, anchor_value: float) -> pd.DataFrame:
-    quarters = pd.PeriodIndex(family_forecast["quarters"], freq="Q").to_timestamp(how="end").normalize()
-    rows = pd.DataFrame(
-        {
-            "quarter_date": quarters,
-            "series": "Forecast",
-            "forecast": family_forecast["forecast"],
-            "lower_ci": family_forecast["interval_lower"],
-            "upper_ci": family_forecast["interval_upper"],
-        }
-    )
-    bridge = pd.DataFrame(
-        {
-            "quarter_date": [anchor_quarter_date],
-            "series": ["Forecast"],
-            "forecast": [anchor_value],
-            "lower_ci": [anchor_value],
-            "upper_ci": [anchor_value],
-        }
-    )
-    return pd.concat([bridge, rows], ignore_index=True)
-
-
 def _request_error_detail(exc: requests.RequestException) -> str | None:
     response = getattr(exc, "response", None)
     if response is None:
@@ -99,22 +99,137 @@ def _request_error_detail(exc: requests.RequestException) -> str | None:
     return str(detail) if detail else None
 
 
-def build_forecast_chart(
-    history: pd.DataFrame, forecast: pd.DataFrame, theme_type: str, y_axis_title: str
-) -> alt.LayerChart:
+def _family_map(payload: dict) -> dict[str, dict]:
+    return {model["model_family"]: model for model in payload.get("models", [])}
+
+
+def _ordered_families(families: set[str]) -> list[str]:
+    ordered = [family for family in MODEL_ORDER if family in families]
+    return ordered + sorted(families.difference(ordered))
+
+
+def _model_label(model_family: str) -> str:
+    return MODEL_LABELS.get(model_family, model_family.replace("_", " ").title())
+
+
+def _latest_macro_inputs(curated: pd.DataFrame) -> pd.Series:
+    available_columns = [column for column in MACRO_INPUT_COLUMNS if column in curated.columns]
+    rows = curated.dropna(subset=available_columns, how="all")
+    return rows.iloc[-1]
+
+
+def _history_frame(curated: pd.DataFrame) -> pd.DataFrame:
+    frames = []
+    recent = curated.tail(HISTORY_QUARTERS_SHOWN)
+    for target_label, config in TARGET_CONFIG.items():
+        frame = recent[["quarter_date", config["history_column"]]].rename(
+            columns={config["history_column"]: "value"}
+        )
+        frame["target"] = target_label
+        frame["series"] = "Actual"
+        frames.append(frame)
+    return pd.concat(frames, ignore_index=True)
+
+
+def _anchor_value(curated: pd.DataFrame, target_column: str, forecast_origin: str, fallback: float) -> float:
+    target = curated.set_index("quarter")[target_column].dropna()
+    if forecast_origin in target.index:
+        return float(target.loc[forecast_origin])
+    return fallback
+
+
+def _forecast_frame(
+    family_forecast: dict,
+    target_label: str,
+    anchor_quarter_date,
+    anchor_value: float,
+) -> pd.DataFrame:
+    quarters = pd.PeriodIndex(family_forecast["quarters"], freq="Q").to_timestamp(how="end").normalize()
+    rows = pd.DataFrame(
+        {
+            "quarter_date": quarters,
+            "series": "Forecast",
+            "target": target_label,
+            "forecast": family_forecast["forecast"],
+            "lower_ci": family_forecast["interval_lower"],
+            "upper_ci": family_forecast["interval_upper"],
+        }
+    )
+    bridge = pd.DataFrame(
+        {
+            "quarter_date": [anchor_quarter_date],
+            "series": ["Forecast"],
+            "target": [target_label],
+            "forecast": [anchor_value],
+            "lower_ci": [anchor_value],
+            "upper_ci": [anchor_value],
+        }
+    )
+    return pd.concat([bridge, rows], ignore_index=True)
+
+
+def _combined_forecast_frame(
+    curated: pd.DataFrame,
+    selected_family: str,
+    payloads_by_target: dict[str, dict],
+    family_maps_by_target: dict[str, dict[str, dict]],
+) -> pd.DataFrame:
+    frames = []
+    for target_label, payload in payloads_by_target.items():
+        family_forecast = family_maps_by_target[target_label][selected_family]
+        anchor_quarter_date = (
+            pd.PeriodIndex([family_forecast["forecast_origin"]], freq="Q")
+            .to_timestamp(how="end")
+            .normalize()[0]
+        )
+        target_column = TARGET_CONFIG[target_label]["history_column"]
+        fallback = float(curated[target_column].dropna().iloc[-1])
+        anchor_value = _anchor_value(curated, target_column, family_forecast["forecast_origin"], fallback)
+        frames.append(_forecast_frame(family_forecast, target_label, anchor_quarter_date, anchor_value))
+    return pd.concat(frames, ignore_index=True)
+
+
+def build_forecast_chart(history: pd.DataFrame, forecast: pd.DataFrame, theme_type: str) -> alt.LayerChart:
     colors = PALETTE[theme_type]
     color_scale = alt.Scale(
-        domain=["Actual", "Forecast"], range=[colors["actual"], colors["forecast"]]
+        domain=["Headline", "Trimmed mean"], range=[colors["headline"], colors["trimmed"]]
     )
     dash_scale = alt.Scale(domain=["Actual", "Forecast"], range=[[1, 0], [6, 3]])
+    start = min(history["quarter_date"].min(), forecast["quarter_date"].min())
+    end = max(history["quarter_date"].max(), forecast["quarter_date"].max())
+    rba_band = pd.DataFrame({"start": [start], "end": [end], "lower": [2.0], "upper": [3.0]})
+    midpoint = pd.DataFrame({"midpoint": [2.5]})
+
+    target_band = (
+        alt.Chart(rba_band)
+        .mark_rect(opacity=0.08, color=colors["target"])
+        .encode(
+            x=alt.X("start:T", title="Quarter"),
+            x2="end:T",
+            y=alt.Y("lower:Q", title="CPI YoY (%)"),
+            y2="upper:Q",
+        )
+    )
+    midpoint_rule = (
+        alt.Chart(midpoint)
+        .mark_rule(color=colors["midpoint"], strokeDash=[6, 3], strokeWidth=1.4)
+        .encode(y="midpoint:Q")
+    )
 
     band = (
         alt.Chart(forecast)
-        .mark_area(opacity=0.18, color=colors["forecast"])
+        .mark_area(opacity=0.16)
         .encode(
             x=alt.X("quarter_date:T", title="Quarter"),
-            y=alt.Y("lower_ci:Q", title=y_axis_title),
+            y=alt.Y("lower_ci:Q", title="CPI YoY (%)"),
             y2="upper_ci:Q",
+            color=alt.Color("target:N", scale=color_scale, title="Series"),
+            tooltip=[
+                "target:N",
+                "quarter_date:T",
+                alt.Tooltip("lower_ci:Q", title=f"Lower {INTERVAL_LABEL}", format=".2f"),
+                alt.Tooltip("upper_ci:Q", title=f"Upper {INTERVAL_LABEL}", format=".2f"),
+            ],
         )
     )
     actual_line = (
@@ -122,11 +237,10 @@ def build_forecast_chart(
         .mark_line(strokeWidth=2)
         .encode(
             x="quarter_date:T",
-            y=alt.Y("value:Q", title=y_axis_title),
-            color=alt.Color(
-                "series:N", scale=color_scale, title=None, legend=alt.Legend(orient="bottom")
-            ),
+            y=alt.Y("value:Q", title="CPI YoY (%)"),
+            color=alt.Color("target:N", scale=color_scale, title="Series"),
             strokeDash=alt.StrokeDash("series:N", scale=dash_scale, legend=None),
+            tooltip=["target:N", "series:N", "quarter_date:T", alt.Tooltip("value:Q", format=".2f")],
         )
     )
     forecast_line = (
@@ -135,20 +249,24 @@ def build_forecast_chart(
         .encode(
             x="quarter_date:T",
             y="forecast:Q",
-            color=alt.Color(
-                "series:N", scale=color_scale, title=None, legend=alt.Legend(orient="bottom")
-            ),
+            color=alt.Color("target:N", scale=color_scale, title="Series", legend=alt.Legend(orient="bottom")),
             strokeDash=alt.StrokeDash("series:N", scale=dash_scale, legend=None),
+            tooltip=[
+                "target:N",
+                "series:N",
+                "quarter_date:T",
+                alt.Tooltip("forecast:Q", title="Forecast", format=".2f"),
+            ],
         )
     )
     origin_rule = (
-        alt.Chart(forecast.iloc[[0]])
+        alt.Chart(forecast.sort_values("quarter_date").iloc[[0]])
         .mark_rule(color=colors["muted"], strokeDash=[2, 2])
         .encode(x="quarter_date:T")
     )
 
     return (
-        (band + actual_line + forecast_line + origin_rule)
+        (target_band + midpoint_rule + band + actual_line + forecast_line + origin_rule)
         .properties(height=360)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
@@ -156,7 +274,7 @@ def build_forecast_chart(
 
 
 st.set_page_config(page_title="Forecasts | Australian CPI Forecast", layout="wide")
-st.title("Forecasts")
+st.title("Executive Forecast Dashboard")
 st.caption(
     "Served live from `POST /forecast/all` and `POST /forecast/trimmed-mean/all` "
     "on the FastAPI service -- this page calls the API rather than loading or "
@@ -167,23 +285,43 @@ if not CURATED_DATA_PATH.exists():
     st.error("Curated dataset not found. Run `python -m src.build_curated_dataset` first.")
     st.stop()
 
+curated = load_curated_data()
+latest_inputs = _latest_macro_inputs(curated)
+
 with st.sidebar:
     st.subheader("API connection")
     api_base_url = st.text_input("API base URL", value=DEFAULT_API_BASE_URL).rstrip("/")
-    target_label = st.radio("Target", options=list(TARGET_CONFIG))
-    horizon = st.slider("Forecast horizon (quarters)", min_value=1, max_value=MAX_FORECAST_HORIZON, value=MAX_FORECAST_HORIZON)
 
-curated = load_curated_data()
-target = TARGET_CONFIG[target_label]
+st.subheader("Raw macro inputs")
+st.caption(f"Latest curated quarter: `{latest_inputs['quarter']}`.")
+input_cols = st.columns(3)
+for index, (column, label) in enumerate(MACRO_INPUT_COLUMNS.items()):
+    value = latest_inputs.get(column)
+    display = "n/a" if pd.isna(value) else f"{float(value):.2f}"
+    input_cols[index % 3].metric(label, display)
+
+st.subheader("Step 1 forecast controls")
+control_cols = st.columns(2)
+with control_cols[0]:
+    target_label = st.radio("Target detail", options=list(TARGET_CONFIG), horizontal=True)
+with control_cols[1]:
+    horizon = st.slider(
+        "Forecast horizon (quarters)",
+        min_value=1,
+        max_value=MAX_FORECAST_HORIZON,
+        value=MAX_FORECAST_HORIZON,
+    )
 
 try:
-    response = requests.post(
-        f"{api_base_url}{target['endpoint']}",
-        json={"horizon": horizon},
-        timeout=60,
-    )
-    response.raise_for_status()
-    payload = response.json()
+    payloads_by_target = {}
+    for label, config in TARGET_CONFIG.items():
+        response = requests.post(
+            f"{api_base_url}{config['endpoint']}",
+            json={"horizon": horizon},
+            timeout=60,
+        )
+        response.raise_for_status()
+        payloads_by_target[label] = response.json()
 except requests.RequestException as exc:
     detail = _request_error_detail(exc)
     detail_text = f"\n\nAPI detail: {detail}" if detail else ""
@@ -194,61 +332,77 @@ except requests.RequestException as exc:
     )
     st.stop()
 
-models = payload.get("models", [])
-unavailable = payload.get("unavailable", [])
+family_maps_by_target = {
+    label: _family_map(payload) for label, payload in payloads_by_target.items()
+}
+common_families = set.intersection(
+    *(set(family_map) for family_map in family_maps_by_target.values())
+)
+unavailable = [
+    {"target": label, **item}
+    for label, payload in payloads_by_target.items()
+    for item in payload.get("unavailable", [])
+]
 
-if not models:
-    st.warning(f"No model families are currently servable by `{target['endpoint']}`.")
+if not common_families:
+    st.warning("No model family is currently servable for both headline and trimmed-mean targets.")
 else:
-    family_names = [model["model_family"] for model in models]
-    selected_family = st.selectbox("Model family", options=family_names)
-    family_forecast = next(model for model in models if model["model_family"] == selected_family)
+    family_names = _ordered_families(common_families)
+    selected_family = st.selectbox(
+        "Model family",
+        options=family_names,
+        format_func=_model_label,
+        index=0,
+    )
 
+    selected_target_config = TARGET_CONFIG[target_label]
+    family_forecast = family_maps_by_target[target_label][selected_family]
     origin_cols = st.columns(4)
     origin_cols[0].metric("Forecast origin", family_forecast["forecast_origin"])
     origin_cols[1].metric("Horizon served", family_forecast["horizon"])
-    origin_cols[2].metric("Next quarter forecast", f"{family_forecast['forecast'][0]:.2f}%")
+    origin_cols[2].metric(f"Next quarter {target_label.lower()}", f"{family_forecast['forecast'][0]:.2f}%")
     origin_cols[3].metric(
-        "Next quarter interval",
+        f"Next quarter {INTERVAL_LABEL}",
         f"[{family_forecast['interval_lower'][0]:.2f}, {family_forecast['interval_upper'][0]:.2f}]",
     )
 
     if any(family_forecast.get("significantly_miscalibrated") or []):
         st.warning(
-            f"`{selected_family}`'s forecast interval is significantly miscalibrated at one or "
-            f"more horizons per `{target['coverage_report']}` -- treat the shaded band "
-            "as indicative, not a validated confidence interval."
+            f"`{_model_label(selected_family)}` has at least one significantly miscalibrated "
+            f"horizon for `{target_label}` per `{selected_target_config['coverage_report']}`. "
+            "Treat the shaded band as an indicative calibrated simulation interval, not a "
+            "validated probability guarantee."
         )
 
-    history = curated.tail(HISTORY_QUARTERS_SHOWN)[["quarter_date", target["history_column"]]].rename(
-        columns={target["history_column"]: "value"}
+    history = _history_frame(curated)
+    forecast_frame = _combined_forecast_frame(
+        curated,
+        selected_family,
+        payloads_by_target,
+        family_maps_by_target,
     )
-    history["series"] = "Actual"
-    anchor_quarter_date = (
-        pd.PeriodIndex([family_forecast["forecast_origin"]], freq="Q")
-        .to_timestamp(how="end")
-        .normalize()[0]
-    )
-    anchor_value = float(
-        curated.set_index("quarter")[target["history_column"]].get(
-            family_forecast["forecast_origin"], history["value"].iloc[-1]
-        )
-    )
-    forecast_frame = _forecast_frame(family_forecast, anchor_quarter_date, anchor_value)
 
-    st.subheader(f"{selected_family}: actual vs. forecast {target['display_name']}")
+    st.subheader(f"{_model_label(selected_family)}: headline and trimmed-mean CPI")
+    st.caption(
+        "The RBA target band is fixed at 2.0-3.0% with a dashed 2.5% midpoint. "
+        f"Forecast uncertainty is shown as a shaded {INTERVAL_LABEL}."
+    )
     st.altair_chart(
-        build_forecast_chart(history, forecast_frame, _current_theme(), target["axis_title"]),
+        build_forecast_chart(history, forecast_frame, _current_theme()),
         width="stretch",
     )
+    st.caption(
+        "Ensemble combines SARIMA and Elastic Net forecasts only. SVAR is kept separate as "
+        "structural scenario evidence and is not blended into this combiner."
+    )
 
-    with st.expander("Forecast table"):
+    with st.expander(f"{target_label} forecast table"):
         table = pd.DataFrame(
             {
                 "quarter": family_forecast["quarters"],
                 "forecast": family_forecast["forecast"],
-                "lower_ci": family_forecast["interval_lower"],
-                "upper_ci": family_forecast["interval_upper"],
+                f"lower {INTERVAL_LABEL}": family_forecast["interval_lower"],
+                f"upper {INTERVAL_LABEL}": family_forecast["interval_upper"],
             }
         ).round(4)
         st.dataframe(table, width="stretch")
@@ -256,7 +410,7 @@ else:
 if unavailable:
     with st.expander(f"Unavailable families ({len(unavailable)})"):
         for item in unavailable:
-            st.write(f"**{item['model_family']}**: {item['reason']}")
+            st.write(f"**{item['target']} / {item['model_family']}**: {item['reason']}")
 
 st.divider()
 st.subheader("Forecast vs. actual (published quarters)")
@@ -282,7 +436,7 @@ else:
     accuracy_cols[0].metric("Snapshots observed", f"{int(observed.sum())}")
     accuracy_cols[1].metric("Snapshots pending", f"{int((~observed).sum())}")
     accuracy_cols[2].metric(
-        "Interval hit rate",
+        "Simulation interval hit rate",
         f"{hit_mask.mean() * 100:.0f}%" if len(hit_mask) else "n/a",
     )
 
