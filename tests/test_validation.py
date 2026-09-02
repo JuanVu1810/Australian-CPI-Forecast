@@ -1,6 +1,12 @@
+from datetime import date
+
 import pandas as pd
 
-from src.validation import validate_curated_dataset, validate_time_series
+from src.validation import (
+    validate_credit_quality_quarterly,
+    validate_curated_dataset,
+    validate_time_series,
+)
 
 
 def test_validate_time_series_flags_duplicate_dates():
@@ -44,3 +50,25 @@ def test_validate_curated_dataset_does_not_require_cpi_index():
     assert curated_record.status == "PASS"
     assert trimmed_record.status == "PASS"
     assert trimmed_record.missing_values == 1
+
+
+def test_validate_credit_quality_quarterly_flags_future_and_range_errors():
+    future_quarter = f"{date.today().year + 1}Q1"
+    source = pd.DataFrame(
+        {
+            "quarter": ["2020Q1", future_quarter],
+            "credit_quality_ratio_percent": [0.8, 101.0],
+        }
+    )
+
+    result = validate_credit_quality_quarterly(
+        source,
+        dataset="credit_quality_quarterly",
+        date_col="quarter",
+        value_cols=["credit_quality_ratio_percent"],
+        min_rows=1,
+    )
+
+    assert result.status == "FAIL"
+    assert "future date values" in result.notes
+    assert "outside 0-100 percent" in result.notes

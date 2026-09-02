@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache, partial
+from inspect import signature
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +19,16 @@ from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 from pydantic import BaseModel, Field
 
-from src.models import elastic_net, ensemble, rba_classifier, sarima, scenario, tracking
+from src.models import (
+    credit_stress,
+    elastic_net,
+    ensemble,
+    rba_classifier,
+    sarima,
+    scenario,
+    svar,
+    tracking,
+)
 from src.models.elastic_net import (
     TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
     TRIMMED_MEAN_TARGET_COLUMN,
@@ -61,6 +71,9 @@ RBA_ACTION_CAVEAT = (
     "but no classifier is statistically shown to beat it because paired-bootstrap "
     "confidence intervals cross zero in reports/rba_classifier_evaluation.md."
 )
+CREDIT_STRESS_DEFAULT_HORIZON = signature(
+    svar.forecast_cumulative_unemployment_change
+).parameters["horizon"].default
 
 app = FastAPI(
     title="Australian CPI Forecast API",
@@ -121,6 +134,22 @@ class RbaActionResponse(BaseModel):
     headline_forecast: float
     trimmed_mean_forecast: float
     models: list[RbaActionModelPrediction]
+    caveat: str
+
+
+class CreditStressSegmentResult(BaseModel):
+    segment: str
+    pd_base: float
+    ur_sensitivity: float
+    pd_stressed: float
+
+
+class CreditRiskStressTestResponse(BaseModel):
+    forecast_origin: str
+    target_quarter: str
+    horizon: int
+    delta_unemployment_cumulative: float
+    segments: list[CreditStressSegmentResult]
     caveat: str
 
 
@@ -983,6 +1012,42 @@ def rba_action() -> RbaActionResponse:
         trimmed_mean_forecast=float(live_row.iloc[0]["trimmed_mean_forecast"]),
         models=_rba_action_model_predictions(predictions),
         caveat=RBA_ACTION_CAVEAT,
+    )
+
+
+@app.get("/credit-risk/stress-test", response_model=CreditRiskStressTestResponse)
+def credit_risk_stress_test(
+    horizon: int = CREDIT_STRESS_DEFAULT_HORIZON,
+) -> CreditRiskStressTestResponse:
+    try:
+        curated = load_curated_data()
+        forecast_origin = str(curated.iloc[-1]["quarter"])
+        target_quarter = next_quarters(forecast_origin, horizon)[-1]
+        delta = svar.forecast_cumulative_unemployment_change(horizon=horizon)
+        stress_frame = credit_stress.run_credit_stress_test(
+            delta_unemployment_cumulative=delta
+        )
+    except HTTPException:
+        raise
+    except (RuntimeError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    segments = [
+        CreditStressSegmentResult(
+            segment=str(row["segment"]),
+            pd_base=float(row["pd_base"]),
+            ur_sensitivity=float(row["ur_sensitivity"]),
+            pd_stressed=float(row["pd_stressed"]),
+        )
+        for _, row in stress_frame.iterrows()
+    ]
+    return CreditRiskStressTestResponse(
+        forecast_origin=forecast_origin,
+        target_quarter=target_quarter,
+        horizon=int(horizon),
+        delta_unemployment_cumulative=float(delta),
+        segments=segments,
+        caveat=credit_stress.CREDIT_STRESS_CAVEAT,
     )
 
 

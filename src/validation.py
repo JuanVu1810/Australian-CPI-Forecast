@@ -137,6 +137,63 @@ def validate_time_series(
     )
 
 
+def validate_credit_quality_quarterly(
+    df: pd.DataFrame,
+    dataset: str,
+    date_col: str,
+    value_cols: Iterable[str],
+    min_rows: int = 1,
+) -> QualityRecord:
+    """Validate APRA's quarterly credit-quality ratio output."""
+    base = validate_time_series(
+        df=df,
+        dataset=dataset,
+        date_col=date_col,
+        value_cols=value_cols,
+        min_rows=min_rows,
+    )
+    status = base.status
+    notes = [] if base.notes == "ok" else [base.notes]
+
+    if date_col in df.columns:
+        dates = parse_temporal_values(df[date_col])
+        valid_dates = dates.dropna()
+        if not valid_dates.empty:
+            quarters = valid_dates.dt.to_period("Q")
+            full_range = pd.period_range(quarters.min(), quarters.max(), freq="Q")
+            missing_quarters = len(full_range.difference(quarters))
+            if missing_quarters:
+                status = "WARNING" if status == "PASS" else status
+                notes.append(f"{missing_quarters} missing quarters in date range")
+
+            today = pd.Timestamp.today().normalize()
+            future_dates = int((valid_dates > today).sum())
+            if future_dates:
+                status = "FAIL"
+                notes.append(f"{future_dates} future date values")
+
+    for column in value_cols:
+        if column not in df.columns:
+            continue
+        numeric = pd.to_numeric(df[column], errors="coerce")
+        out_of_range = int(((numeric < 0) | (numeric > 100)).sum())
+        if out_of_range:
+            status = "FAIL"
+            notes.append(f"{column} has {out_of_range} values outside 0-100 percent")
+
+    return QualityRecord(
+        dataset=base.dataset,
+        status=status,
+        rows=base.rows,
+        columns=base.columns,
+        start_date=base.start_date,
+        end_date=base.end_date,
+        missing_values=base.missing_values,
+        duplicate_dates=base.duplicate_dates,
+        notes="; ".join(notes) if notes else "ok",
+    )
+
+
 def validate_curated_dataset(
     df: pd.DataFrame,
     min_rows: int = 80,

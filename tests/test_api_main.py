@@ -355,6 +355,82 @@ def test_rba_action_converts_mlflow_errors_to_503(monkeypatch, tmp_path):
     assert "No finished MLflow run found" in exc_info.value.detail
 
 
+def test_credit_risk_stress_test_returns_svar_pd_segments(monkeypatch, tmp_path):
+    curated_path = tmp_path / "curated.csv"
+    _write_curated_frame(curated_path, end_quarter="2021Q4")
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+
+    def fake_unemployment_change(horizon):
+        assert horizon == 2
+        return 2.0
+
+    monkeypatch.setattr(
+        api_main.svar,
+        "forecast_cumulative_unemployment_change",
+        fake_unemployment_change,
+    )
+
+    payload = api_main.credit_risk_stress_test(horizon=2).model_dump()
+
+    assert payload["forecast_origin"] == "2021Q4"
+    assert payload["target_quarter"] == "2022Q2"
+    assert payload["horizon"] == 2
+    assert payload["delta_unemployment_cumulative"] == pytest.approx(2.0)
+    assert payload["caveat"] == api_main.credit_stress.CREDIT_STRESS_CAVEAT
+    assert payload["segments"] == [
+        {
+            "segment": "personal_loans",
+            "pd_base": pytest.approx(0.03),
+            "ur_sensitivity": pytest.approx(0.4),
+            "pd_stressed": pytest.approx(0.038),
+        },
+        {
+            "segment": "mortgages",
+            "pd_base": pytest.approx(0.005),
+            "ur_sensitivity": pytest.approx(0.6),
+            "pd_stressed": pytest.approx(0.017),
+        },
+    ]
+
+
+def test_credit_risk_stress_test_converts_value_errors_to_503(monkeypatch, tmp_path):
+    curated_path = tmp_path / "curated.csv"
+    _write_curated_frame(curated_path, end_quarter="2021Q4")
+    bad_pd_base_path = tmp_path / "pd_base_assumptions.csv"
+    pd.DataFrame(
+        {
+            "segment": ["personal_loans", "mortgages"],
+            "pd_base": [0.03, 0.005],
+        }
+    ).to_csv(bad_pd_base_path, index=False)
+    real_run_credit_stress_test = api_main.credit_stress.run_credit_stress_test
+
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+    monkeypatch.setattr(
+        api_main.svar,
+        "forecast_cumulative_unemployment_change",
+        lambda horizon: 1.0,
+    )
+
+    def run_with_malformed_assumptions(delta_unemployment_cumulative):
+        return real_run_credit_stress_test(
+            delta_unemployment_cumulative=delta_unemployment_cumulative,
+            pd_base_path=bad_pd_base_path,
+        )
+
+    monkeypatch.setattr(
+        api_main.credit_stress,
+        "run_credit_stress_test",
+        run_with_malformed_assumptions,
+    )
+
+    with pytest.raises(api_main.HTTPException) as exc_info:
+        api_main.credit_risk_stress_test()
+
+    assert exc_info.value.status_code == 503
+    assert "missing required columns" in exc_info.value.detail
+
+
 def test_forecast_all_returns_sarima_and_elastic_net_with_draw_intervals(
     monkeypatch,
     tmp_path,

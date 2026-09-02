@@ -1,0 +1,3 @@
+segment,pd_base,ur_sensitivity,pd_stressed,forecast_origin,target_quarter,horizon,delta_unemployment_cumulative
+personal_loans,0.03,0.4,0.030896668096513764,2025Q4,2026Q4,4,0.22416702412844103
+mortgages,0.005,0.6,0.006345002144770646,2025Q4,2026Q4,4,0.22416702412844103

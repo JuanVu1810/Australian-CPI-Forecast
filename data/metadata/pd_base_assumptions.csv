@@ -1,0 +1,3 @@
+segment,pd_base,note
+personal_loans,0.03,"Illustrative annual probability-of-default assumption for unsecured consumer lending; it is not calibrated to any real portfolio, including NAB's."
+mortgages,0.005,"Illustrative annual probability-of-default assumption for well-secured mortgage lending; it is not calibrated to any real portfolio, including NAB's."

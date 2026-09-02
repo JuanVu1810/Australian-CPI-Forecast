@@ -27,6 +27,8 @@ import readabs as ra
 import yfinance as yf
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
 # Exact ABS series are used so the script does not download and save every
 # series in each catalogue. These identify the intended Australia-wide series.
 ABS_SERIES: dict[str, dict[str, str]] = {
@@ -147,6 +149,22 @@ YFINANCE_TICKERS: dict[str, dict[str, str]] = {
 RBA_HISTORICAL_FORECASTS: dict[str, str] = {
     "cpi_by_horizon": "https://www.rba.gov.au/statistics/xls/cpi-by-horizon.xls",
 }
+
+APRA_QADIP_SOURCE_PAGE = (
+    "https://www.apra.gov.au/news-and-publications/"
+    "quarterly-authorised-deposit-taking-institution-statistics"
+)
+APRA_QADIP_WORKBOOK_URL = (
+    "https://www.apra.gov.au/system/files/2026-06/"
+    "Quarterly%20authorised%20deposit-taking%20institution%20performance-"
+    "September%202004%20to%20March%202026.xlsx"
+)
+APRA_QADIP_RATIO_SHEET = "Tab 1g"
+APRA_QADIP_RATIO_ROWS = (
+    "Impaired facilities to loans and advances",
+    "Non-performing to loans and advances",
+)
+APRA_CREDIT_QUALITY_START = pd.Period("2004Q3", freq="Q")
 
 
 def parse_args() -> argparse.Namespace:
@@ -367,6 +385,217 @@ def parse_rba_cpi_by_horizon_workbook(path: Path) -> pd.DataFrame:
             "rba_forecast_error_cpi_yoy",
         ]
     ]
+
+
+def parse_apra_credit_quality_workbook(path: Path) -> pd.DataFrame:
+    """Return APRA's aggregate ADI credit-quality ratio as a quarterly series."""
+
+    def parse_quarter_header(value: Any) -> pd.Timestamp:
+        if pd.isna(value):
+            return pd.NaT
+        if isinstance(value, (datetime, pd.Timestamp)):
+            return pd.Timestamp(value)
+        return pd.to_datetime(str(value).strip(), format="%b %Y", errors="coerce")
+
+    raw = pd.read_excel(path, sheet_name=APRA_QADIP_RATIO_SHEET, header=None)
+    quarter_header_matches = raw.index[
+        raw.iloc[:, 1].astype(str).str.strip().str.lower().eq("quarter end")
+    ]
+    if quarter_header_matches.empty:
+        raise ValueError(
+            f"Could not find 'Quarter end' header in {APRA_QADIP_RATIO_SHEET}."
+        )
+
+    date_row = int(quarter_header_matches[0]) + 1
+    quarter_dates = raw.iloc[date_row, 1:].map(parse_quarter_header)
+    if quarter_dates.isna().all():
+        raise ValueError(
+            f"Could not parse quarter dates in {APRA_QADIP_RATIO_SHEET}."
+        )
+
+    row_labels = raw.iloc[:, 0].astype(str).str.strip()
+    frames: list[pd.DataFrame] = []
+    for label in APRA_QADIP_RATIO_ROWS:
+        row_matches = row_labels.str.lower().eq(label.lower())
+        match_count = int(row_matches.sum())
+        if not match_count:
+            raise ValueError(
+                f"Could not find '{label}' row in {APRA_QADIP_RATIO_SHEET}."
+            )
+        if match_count > 1:
+            raise ValueError(
+                f"Found {match_count} '{label}' rows in {APRA_QADIP_RATIO_SHEET}; "
+                "expected a unique aggregate ADI ratio row."
+            )
+
+        row_number = int(row_matches[row_matches].index[0])
+        values = pd.to_numeric(raw.iloc[row_number, 1:], errors="coerce")
+        frame = pd.DataFrame(
+            {
+                "quarter_date": quarter_dates,
+                "credit_quality_ratio_percent": values.to_numpy() * 100,
+                "source_measure": label,
+                "source_sheet": APRA_QADIP_RATIO_SHEET,
+            }
+        ).dropna(subset=["quarter_date", "credit_quality_ratio_percent"])
+        frames.append(frame)
+
+    tidy = pd.concat(frames, ignore_index=True)
+    tidy["quarter_period"] = tidy["quarter_date"].dt.to_period("Q")
+    tidy = tidy.loc[tidy["quarter_period"] >= APRA_CREDIT_QUALITY_START].copy()
+    tidy["quarter"] = tidy["quarter_period"].astype(str)
+    tidy["measurement_basis"] = tidy["source_measure"].map(
+        {
+            "Impaired facilities to loans and advances": (
+                "impaired facilities to loans and advances"
+            ),
+            "Non-performing to loans and advances": (
+                "non-performing exposures to loans and advances"
+            ),
+        }
+    )
+    tidy["measurement_note"] = tidy["source_measure"].map(
+        {
+            "Impaired facilities to loans and advances": (
+                "APRA impaired-facilities measure used before the March 2022 "
+                "APS 220 publication update."
+            ),
+            "Non-performing to loans and advances": (
+                "APRA non-performing measure used from the March 2022 APS 220 "
+                "publication update; compare with earlier impaired-facilities "
+                "values with care."
+            ),
+        }
+    )
+    tidy = tidy.sort_values(["quarter_period", "source_measure"]).reset_index(
+        drop=True
+    )
+    duplicate_quarters = tidy["quarter"].duplicated(keep=False)
+    if duplicate_quarters.any():
+        duplicated = ", ".join(tidy.loc[duplicate_quarters, "quarter"].unique())
+        raise ValueError(f"Multiple APRA credit-quality measures for: {duplicated}.")
+
+    return tidy[
+        [
+            "quarter",
+            "credit_quality_ratio_percent",
+            "source_measure",
+            "measurement_basis",
+            "measurement_note",
+            "source_sheet",
+        ]
+    ]
+
+
+def describe_apra_credit_quality_breaks(tidy: pd.DataFrame) -> pd.DataFrame:
+    """Create plain-language metadata notes for known and checked breaks."""
+    quarters = pd.PeriodIndex(tidy["quarter"], freq="Q")
+    values = pd.Series(tidy["credit_quality_ratio_percent"].to_numpy(), index=quarters)
+    aasb9_window = values.loc["2017Q1":"2018Q4"]
+    qoq_changes = aasb9_window.diff().abs().dropna()
+    max_qoq_change = float(qoq_changes.max()) if not qoq_changes.empty else 0.0
+    y2017 = values.loc["2017Q1":"2017Q4"]
+    y2018 = values.loc["2018Q1":"2018Q4"]
+    mean_shift = (
+        abs(float(y2018.mean() - y2017.mean()))
+        if len(y2017) and len(y2018)
+        else 0.0
+    )
+    visible_aasb9_break = max_qoq_change >= 0.25 or mean_shift >= 0.25
+    aasb9_note = (
+        "A visible level shift is present around the 2018 AASB 9 expected-credit-loss "
+        f"transition: maximum quarter-to-quarter change was {max_qoq_change:.2f} "
+        f"percentage points and the 2018 mean differed from 2017 by {mean_shift:.2f} "
+        "percentage points."
+        if visible_aasb9_break
+        else (
+            "No visible level shift was found around the 2018 AASB 9 "
+            f"expected-credit-loss transition: maximum quarter-to-quarter change "
+            f"was {max_qoq_change:.2f} percentage points and the 2018 mean "
+            f"differed from 2017 by {mean_shift:.2f} percentage points."
+        )
+    )
+
+    return pd.DataFrame(
+        [
+            {
+                "item": "confirmed_workbook",
+                "note": (
+                    "Quarterly authorised deposit-taking institution performance-"
+                    "September 2004 to March 2026.xlsx"
+                ),
+                "source_url": APRA_QADIP_WORKBOOK_URL,
+            },
+            {
+                "item": "confirmed_sheet_and_rows",
+                "note": (
+                    f"Sheet '{APRA_QADIP_RATIO_SHEET}' uses row labels "
+                    f"'{APRA_QADIP_RATIO_ROWS[0]}' and "
+                    f"'{APRA_QADIP_RATIO_ROWS[1]}' for the aggregate ADI ratio."
+                ),
+                "source_url": APRA_QADIP_WORKBOOK_URL,
+            },
+            {
+                "item": "aasb9_2018_check",
+                "note": aasb9_note,
+                "source_url": APRA_QADIP_WORKBOOK_URL,
+            },
+            {
+                "item": "aps_220_2022_definition_change",
+                "note": (
+                    "APRA's explanatory notes say asset-quality data were updated "
+                    "from the March 2022 reference period, replacing the concept "
+                    "of impaired with non-performing; this output therefore marks "
+                    "the measurement basis for each quarter."
+                ),
+                "source_url": APRA_QADIP_WORKBOOK_URL,
+            },
+        ]
+    )
+
+
+def download_apra_credit_quality(
+    output_dir: Path,
+    start_year: int,
+    end_year: int,
+    save_meta: bool = True,
+) -> dict[str, Any]:
+    """Download APRA QADIP and save the aggregate ADI credit-quality ratio."""
+    apra_dir = output_dir / "apra"
+    workbook_path = apra_dir / "apra_qadip_performance_sep2004_mar2026.xlsx"
+
+    print("APRA: Quarterly ADI Performance credit quality", flush=True)
+    try:
+        workbook_record = download_binary(APRA_QADIP_WORKBOOK_URL, workbook_path)
+        tidy = parse_apra_credit_quality_workbook(workbook_path)
+    except Exception as exc:
+        raise RuntimeError(f"Could not retrieve APRA credit-quality data: {exc}") from exc
+
+    quarters = pd.PeriodIndex(tidy["quarter"], freq="Q")
+    filtered = tidy.loc[
+        (quarters.year >= start_year) & (quarters.year <= end_year)
+    ].copy()
+    curated_dir = PROJECT_ROOT / "data" / "curated"
+    metadata_dir = PROJECT_ROOT / "data" / "metadata"
+
+    data_record = save_csv(filtered, curated_dir / "credit_quality_quarterly.csv")
+    metadata_record = None
+    if save_meta:
+        notes = describe_apra_credit_quality_breaks(tidy)
+        metadata_record = save_csv(
+            notes,
+            metadata_dir / "credit_quality_quarterly_notes.csv",
+        )
+
+    return {
+        "variable": "credit_quality_quarterly",
+        "title": "APRA aggregate ADI impaired/non-performing loan ratio",
+        "source_page": APRA_QADIP_SOURCE_PAGE,
+        "source_url": APRA_QADIP_WORKBOOK_URL,
+        "raw_workbook": workbook_record,
+        "data": data_record,
+        "metadata": metadata_record,
+    }
 
 
 def download_rba_historical_forecasts(
@@ -689,6 +918,7 @@ def main() -> int:
         "end_year": args.end_year,
         "abs": [],
         "rba": [],
+        "apra": [],
         "yfinance": [],
     }
 
@@ -700,6 +930,12 @@ def main() -> int:
             save_meta=not args.no_metadata,
         )
         manifest["rba"] = download_rba_data(
+            output_dir=output_dir,
+            start_year=args.start_year,
+            end_year=args.end_year,
+            save_meta=not args.no_metadata,
+        )
+        manifest["apra"] = download_apra_credit_quality(
             output_dir=output_dir,
             start_year=args.start_year,
             end_year=args.end_year,

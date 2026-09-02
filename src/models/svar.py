@@ -345,6 +345,23 @@ def forecast_svar(
     return forecast_from_fit(fitted=fitted, steps=steps)
 
 
+def forecast_cumulative_unemployment_change(horizon: int = 4) -> float:
+    """Return System B's cumulative unemployment-rate change in percentage points."""
+    if horizon < 1:
+        raise ValueError("horizon must be at least 1.")
+
+    frame = load_svar_level_frame(columns=SYSTEM_B_COLUMNS)
+    fitted = fit_svar(
+        frame,
+        lag_order=DEFAULT_SVAR_LAG_ORDER,
+        ordering=SYSTEM_B_CHOLESKY_ORDER,
+    )
+    forecast = forecast_from_fit(fitted, steps=horizon)
+    current_unemployment = frame["unemployment_rate"].iloc[-1]
+    forecasted_unemployment = forecast["unemployment_rate"].iloc[horizon - 1]
+    return float(forecasted_unemployment - current_unemployment)
+
+
 def simulate_paths_from_fit(
     fitted,
     steps: int = max(DEFAULT_HORIZONS),
