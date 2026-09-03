@@ -1,85 +1,85 @@
 dataset,status,rows,columns,start_date,end_date,missing_values,duplicate_dates,notes
-raw:cpi_qoq,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-processed:cpi_qoq,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-raw:cpi_yoy,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-processed:cpi_yoy,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-raw:trimmed_mean_cpi_qoq,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-processed:trimmed_mean_cpi_qoq,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-raw:trimmed_mean_cpi_yoy,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-processed:trimmed_mean_cpi_yoy,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-raw:unemployment_rate,PASS,372,2,1995-01-01,2025-12-01,0,0,ok
-processed:unemployment_rate,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-raw:cash_rate,PASS,372,2,1995-01-01,2025-12-01,0,0,ok
-processed:cash_rate,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-raw:wage_price_index,PASS,114,2,1997-07-01,2025-10-01,0,0,ok
-processed:wage_price_index,PASS,114,2,1997-07-01,2025-10-01,0,0,ok
-raw:producer_price_index,PASS,110,2,1998-07-01,2025-10-01,0,0,ok
-processed:producer_price_index,PASS,110,2,1998-07-01,2025-10-01,0,0,ok
-raw:commodity_price_index,PASS,372,22,1995-01-01,2025-12-01,0,0,ok
-processed:commodity_price_index,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
+raw:cpi_qoq,WARNING,128,2,1995-01-01,2026-10-01,2,0,2 missing values
+processed:cpi_qoq,WARNING,128,2,1995-01-01,2026-10-01,2,0,2 missing values
+raw:cpi_yoy,WARNING,128,2,1995-01-01,2026-10-01,2,0,2 missing values
+processed:cpi_yoy,WARNING,128,2,1995-01-01,2026-10-01,2,0,2 missing values
+raw:trimmed_mean_cpi_qoq,WARNING,128,2,1995-01-01,2026-10-01,2,0,2 missing values
+processed:trimmed_mean_cpi_qoq,WARNING,128,2,1995-01-01,2026-10-01,2,0,2 missing values
+raw:trimmed_mean_cpi_yoy,WARNING,128,2,1995-01-01,2026-10-01,2,0,2 missing values
+processed:trimmed_mean_cpi_yoy,WARNING,128,2,1995-01-01,2026-10-01,2,0,2 missing values
+raw:unemployment_rate,PASS,379,2,1995-01-01,2026-07-01,0,0,ok
+processed:unemployment_rate,PASS,127,2,1995-01-01,2026-07-01,0,0,ok
+raw:cash_rate,PASS,381,2,1995-01-01,2026-09-01,0,0,ok
+processed:cash_rate,PASS,127,2,1995-01-01,2026-07-01,0,0,ok
+raw:wage_price_index,PASS,116,2,1997-07-01,2026-04-01,0,0,ok
+processed:wage_price_index,PASS,116,2,1997-07-01,2026-04-01,0,0,ok
+raw:producer_price_index,PASS,112,2,1998-07-01,2026-04-01,0,0,ok
+processed:producer_price_index,PASS,112,2,1998-07-01,2026-04-01,0,0,ok
+raw:commodity_price_index,WARNING,383,22,1995-01-01,2026-11-01,3,0,3 missing values
+processed:commodity_price_index,WARNING,128,2,1995-01-01,2026-10-01,1,0,1 missing values
 raw:wti_price,PASS,6367,7,2000-08-23,2025-12-31,0,0,ok
 processed:wti_price,PASS,102,2,2000-07-01,2025-10-01,0,0,ok
 raw:brent_price,PASS,4585,7,2007-07-30,2025-12-31,0,0,ok
 processed:brent_price,PASS,74,2,2007-07-01,2025-10-01,0,0,ok
-raw:aud_usd,PASS,192,2,2010-01-29,2025-12-31,0,0,ok
-processed:aud_usd,PASS,64,2,2010-01-01,2025-10-01,0,0,ok
-raw:household_spending,PASS,162,2,2012-07-01,2025-12-01,0,0,ok
-processed:household_spending,PASS,54,2,2012-07-01,2025-10-01,0,0,ok
-raw:inflation_expectations_business,PASS,124,8,1995-01-01,2025-10-01,0,0,ok
-processed:inflation_expectations_business,PASS,124,2,1995-01-01,2025-10-01,0,0,ok
-curated_quarterly_macro_features,PASS,124,54,1995Q1,2025Q4,860,0,ok
-curated_column:cpi_qoq,PASS,124,1,1995Q1,2025Q4,0,0,ok
-curated_column:cpi_yoy,PASS,124,1,1995Q1,2025Q4,0,0,ok
-curated_column:trimmed_mean_cpi_qoq,PASS,124,1,1995Q1,2025Q4,0,0,ok
-curated_column:trimmed_mean_cpi_yoy,PASS,124,1,1995Q1,2025Q4,0,0,ok
-curated_column:unemployment_rate,PASS,124,1,1995Q1,2025Q4,0,0,ok
-curated_column:unemployment_rate_change,PASS,123,1,1995Q1,2025Q4,1,0,ok
-curated_column:cash_rate,PASS,124,1,1995Q1,2025Q4,0,0,ok
-curated_column:cash_rate_change,PASS,123,1,1995Q1,2025Q4,1,0,ok
-curated_column:wage_price_index,PASS,114,1,1995Q1,2025Q4,10,0,ok
-curated_column:wpi_growth,PASS,113,1,1995Q1,2025Q4,11,0,ok
-curated_column:producer_price_index,PASS,110,1,1995Q1,2025Q4,14,0,ok
-curated_column:ppi_growth,PASS,109,1,1995Q1,2025Q4,15,0,ok
-curated_column:commodity_price_index,PASS,124,1,1995Q1,2025Q4,0,0,ok
-curated_column:commodity_growth,PASS,123,1,1995Q1,2025Q4,1,0,ok
-curated_column:wti_price,PASS,102,1,1995Q1,2025Q4,22,0,ok
-curated_column:wti_growth,PASS,101,1,1995Q1,2025Q4,23,0,ok
-curated_column:brent_price,PASS,74,1,1995Q1,2025Q4,50,0,ok
-curated_column:brent_growth,PASS,73,1,1995Q1,2025Q4,51,0,ok
-curated_column:aud_usd,PASS,64,1,1995Q1,2025Q4,60,0,ok
-curated_column:aud_usd_change,PASS,63,1,1995Q1,2025Q4,61,0,ok
-curated_column:household_spending,WARNING,54,1,1995Q1,2025Q4,70,0,56.5% missing after quarterly merge
-curated_column:household_spending_growth,WARNING,53,1,1995Q1,2025Q4,71,0,57.3% missing after quarterly merge
-curated_column:inflation_expectations_business,PASS,124,1,1995Q1,2025Q4,0,0,ok
-curated_column:ppi_growth_lag2_sq,PASS,107,1,1995Q1,2025Q4,17,0,ok
-curated_column:commodity_growth_lag1_sq,PASS,122,1,1995Q1,2025Q4,2,0,ok
-curated_column:wti_growth_lag1_sq,PASS,100,1,1995Q1,2025Q4,24,0,ok
-curated_column:brent_growth_lag1_sq,PASS,72,1,1995Q1,2025Q4,52,0,ok
-curated_column:cash_rate_change_lag1_x_unemployment_rate_change_lag1,PASS,122,1,1995Q1,2025Q4,2,0,ok
-curated_column:cpi_yoy_lag1,PASS,123,1,1995Q1,2025Q4,1,0,ok
-curated_column:cpi_yoy_lag4,PASS,120,1,1995Q1,2025Q4,4,0,ok
-curated_column:trimmed_mean_cpi_yoy_lag1,PASS,123,1,1995Q1,2025Q4,1,0,ok
-curated_column:trimmed_mean_cpi_yoy_lag4,PASS,120,1,1995Q1,2025Q4,4,0,ok
-curated_column:cash_rate_lag1,PASS,123,1,1995Q1,2025Q4,1,0,ok
-curated_column:cash_rate_lag2,PASS,122,1,1995Q1,2025Q4,2,0,ok
-curated_column:cash_rate_lag4,PASS,120,1,1995Q1,2025Q4,4,0,ok
-curated_column:unemployment_rate_lag1,PASS,123,1,1995Q1,2025Q4,1,0,ok
-curated_column:unemployment_rate_lag2,PASS,122,1,1995Q1,2025Q4,2,0,ok
-curated_column:unemployment_rate_lag4,PASS,120,1,1995Q1,2025Q4,4,0,ok
-curated_column:wpi_growth_lag1,PASS,112,1,1995Q1,2025Q4,12,0,ok
-curated_column:wpi_growth_lag2,PASS,111,1,1995Q1,2025Q4,13,0,ok
-curated_column:ppi_growth_lag1,PASS,108,1,1995Q1,2025Q4,16,0,ok
-curated_column:ppi_growth_lag2,PASS,107,1,1995Q1,2025Q4,17,0,ok
-curated_column:commodity_growth_lag1,PASS,122,1,1995Q1,2025Q4,2,0,ok
-curated_column:wti_growth_lag1,PASS,100,1,1995Q1,2025Q4,24,0,ok
-curated_column:brent_growth_lag1,PASS,72,1,1995Q1,2025Q4,52,0,ok
-curated_column:aud_usd_change_lag1,PASS,62,1,1995Q1,2025Q4,62,0,ok
-curated_column:cash_rate_change_lag1,PASS,122,1,1995Q1,2025Q4,2,0,ok
-curated_column:unemployment_rate_change_lag1,PASS,122,1,1995Q1,2025Q4,2,0,ok
-curated_column:unemployment_rate_change_lag2,PASS,121,1,1995Q1,2025Q4,3,0,ok
-curated_column:household_spending_growth_lag1,WARNING,52,1,1995Q1,2025Q4,72,0,58.1% missing after quarterly merge
-curated_column:inflation_expectations_business_lag1,PASS,123,1,1995Q1,2025Q4,1,0,ok
-curated_column:covid_shock_down_lag0,PASS,124,1,1995Q1,2025Q4,0,0,ok
-curated_column:covid_shock_rebound_lag1,PASS,124,1,1995Q1,2025Q4,0,0,ok
-pandera:curated_quarterly_macro_features,PASS,124,54,1995Q1,2025Q4,860,0,Pandera schema validation passed.
-platform:duckdb,PASS,124,54,1995Q1,2025Q4,860,0,Loaded curated data and quality report to data/analytics/cpi_forecast.duckdb.
+raw:aud_usd,PASS,200,2,2010-01-29,2026-08-31,0,0,ok
+processed:aud_usd,PASS,67,2,2010-01-01,2026-07-01,0,0,ok
+raw:household_spending,PASS,169,2,2012-07-01,2026-07-01,0,0,ok
+processed:household_spending,PASS,57,2,2012-07-01,2026-07-01,0,0,ok
+raw:inflation_expectations_business,WARNING,128,8,1995-01-01,2026-10-01,2,0,2 missing values
+processed:inflation_expectations_business,WARNING,128,2,1995-01-01,2026-10-01,2,0,2 missing values
+curated_quarterly_macro_features,PASS,128,54,1995Q1,2026Q4,921,0,ok
+curated_column:cpi_qoq,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:cpi_yoy,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:trimmed_mean_cpi_qoq,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:trimmed_mean_cpi_yoy,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:unemployment_rate,PASS,127,1,1995Q1,2026Q4,1,0,ok
+curated_column:unemployment_rate_change,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:cash_rate,PASS,127,1,1995Q1,2026Q4,1,0,ok
+curated_column:cash_rate_change,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:wage_price_index,PASS,116,1,1995Q1,2026Q4,12,0,ok
+curated_column:wpi_growth,PASS,115,1,1995Q1,2026Q4,13,0,ok
+curated_column:producer_price_index,PASS,112,1,1995Q1,2026Q4,16,0,ok
+curated_column:ppi_growth,PASS,111,1,1995Q1,2026Q4,17,0,ok
+curated_column:commodity_price_index,PASS,127,1,1995Q1,2026Q4,1,0,ok
+curated_column:commodity_growth,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:wti_price,PASS,102,1,1995Q1,2026Q4,26,0,ok
+curated_column:wti_growth,PASS,101,1,1995Q1,2026Q4,27,0,ok
+curated_column:brent_price,PASS,74,1,1995Q1,2026Q4,54,0,ok
+curated_column:brent_growth,PASS,73,1,1995Q1,2026Q4,55,0,ok
+curated_column:aud_usd,PASS,67,1,1995Q1,2026Q4,61,0,ok
+curated_column:aud_usd_change,PASS,66,1,1995Q1,2026Q4,62,0,ok
+curated_column:household_spending,WARNING,57,1,1995Q1,2026Q4,71,0,55.5% missing after quarterly merge
+curated_column:household_spending_growth,WARNING,56,1,1995Q1,2026Q4,72,0,56.2% missing after quarterly merge
+curated_column:inflation_expectations_business,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:ppi_growth_lag2_sq,PASS,111,1,1995Q1,2026Q4,17,0,ok
+curated_column:commodity_growth_lag1_sq,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:wti_growth_lag1_sq,PASS,101,1,1995Q1,2026Q4,27,0,ok
+curated_column:brent_growth_lag1_sq,PASS,73,1,1995Q1,2026Q4,55,0,ok
+curated_column:cash_rate_change_lag1_x_unemployment_rate_change_lag1,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:cpi_yoy_lag1,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:cpi_yoy_lag4,PASS,124,1,1995Q1,2026Q4,4,0,ok
+curated_column:trimmed_mean_cpi_yoy_lag1,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:trimmed_mean_cpi_yoy_lag4,PASS,124,1,1995Q1,2026Q4,4,0,ok
+curated_column:cash_rate_lag1,PASS,127,1,1995Q1,2026Q4,1,0,ok
+curated_column:cash_rate_lag2,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:cash_rate_lag4,PASS,124,1,1995Q1,2026Q4,4,0,ok
+curated_column:unemployment_rate_lag1,PASS,127,1,1995Q1,2026Q4,1,0,ok
+curated_column:unemployment_rate_lag2,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:unemployment_rate_lag4,PASS,124,1,1995Q1,2026Q4,4,0,ok
+curated_column:wpi_growth_lag1,PASS,115,1,1995Q1,2026Q4,13,0,ok
+curated_column:wpi_growth_lag2,PASS,115,1,1995Q1,2026Q4,13,0,ok
+curated_column:ppi_growth_lag1,PASS,111,1,1995Q1,2026Q4,17,0,ok
+curated_column:ppi_growth_lag2,PASS,111,1,1995Q1,2026Q4,17,0,ok
+curated_column:commodity_growth_lag1,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:wti_growth_lag1,PASS,101,1,1995Q1,2026Q4,27,0,ok
+curated_column:brent_growth_lag1,PASS,73,1,1995Q1,2026Q4,55,0,ok
+curated_column:aud_usd_change_lag1,PASS,66,1,1995Q1,2026Q4,62,0,ok
+curated_column:cash_rate_change_lag1,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:unemployment_rate_change_lag1,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:unemployment_rate_change_lag2,PASS,125,1,1995Q1,2026Q4,3,0,ok
+curated_column:household_spending_growth_lag1,WARNING,56,1,1995Q1,2026Q4,72,0,56.2% missing after quarterly merge
+curated_column:inflation_expectations_business_lag1,PASS,126,1,1995Q1,2026Q4,2,0,ok
+curated_column:covid_shock_down_lag0,PASS,128,1,1995Q1,2026Q4,0,0,ok
+curated_column:covid_shock_rebound_lag1,PASS,128,1,1995Q1,2026Q4,0,0,ok
+pandera:curated_quarterly_macro_features,PASS,128,54,1995Q1,2026Q4,921,0,Pandera schema validation passed.
+platform:duckdb,PASS,128,54,1995Q1,2026Q4,921,0,Loaded curated data and quality report to data/analytics/cpi_forecast.duckdb.

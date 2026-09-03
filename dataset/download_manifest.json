@@ -1,5 +1,5 @@
 {
-  "downloaded_at_utc": "2026-08-24T15:00:29.488698+00:00",
+  "downloaded_at_utc": "2026-09-03T09:36:46.179238+00:00",
   "python_version": "3.11.15 (main, Jun 11 2026, 15:20:16) [GCC 14.3.0]",
   "packages": {
     "pandas": "2.3.3",
@@ -7,7 +7,7 @@
     "yfinance": "1.5.2"
   },
   "start_year": 1995,
-  "end_year": 2025,
+  "end_year": 2026,
   "abs": [
     {
       "variable": "cpi_qoq",
@@ -16,8 +16,8 @@
       "single_excel_only": "64010Appendix1a",
       "title": "Consumer Price Index: All groups CPI, seasonally adjusted, quarterly percentage change",
       "data": {
-        "file": "dataset/abs/cpi_qoq_1995_2025.csv",
-        "rows": 124,
+        "file": "dataset/abs/cpi_qoq_1995_2026.csv",
+        "rows": 128,
         "columns": [
           "date",
           "cpi_qoq"
@@ -50,8 +50,8 @@
       "single_excel_only": "64010Appendix1a",
       "title": "Consumer Price Index: All groups CPI, seasonally adjusted, year-ended percentage change",
       "data": {
-        "file": "dataset/abs/cpi_yoy_1995_2025.csv",
-        "rows": 124,
+        "file": "dataset/abs/cpi_yoy_1995_2026.csv",
+        "rows": 128,
         "columns": [
           "date",
           "cpi_yoy"
@@ -84,8 +84,8 @@
       "single_excel_only": "64010Appendix1a",
       "title": "Consumer Price Index: Trimmed Mean, quarterly percentage change",
       "data": {
-        "file": "dataset/abs/trimmed_mean_cpi_qoq_1995_2025.csv",
-        "rows": 124,
+        "file": "dataset/abs/trimmed_mean_cpi_qoq_1995_2026.csv",
+        "rows": 128,
         "columns": [
           "date",
           "trimmed_mean_cpi_qoq"
@@ -118,8 +118,8 @@
       "single_excel_only": "64010Appendix1a",
       "title": "Consumer Price Index: Trimmed Mean, year-ended percentage change",
       "data": {
-        "file": "dataset/abs/trimmed_mean_cpi_yoy_1995_2025.csv",
-        "rows": 124,
+        "file": "dataset/abs/trimmed_mean_cpi_yoy_1995_2026.csv",
+        "rows": 128,
         "columns": [
           "date",
           "trimmed_mean_cpi_yoy"
@@ -152,8 +152,8 @@
       "single_excel_only": "62020001",
       "title": "Unemployment rate: Persons, Australia, seasonally adjusted",
       "data": {
-        "file": "dataset/abs/unemployment_rate_1995_2025.csv",
-        "rows": 372,
+        "file": "dataset/abs/unemployment_rate_1995_2026.csv",
+        "rows": 379,
         "columns": [
           "date",
           "unemployment_rate"
@@ -186,8 +186,8 @@
       "single_excel_only": "634501",
       "title": "Wage Price Index: Total hourly rates of pay excluding bonuses, private and public, all industries, Australia",
       "data": {
-        "file": "dataset/abs/wage_price_index_1995_2025.csv",
-        "rows": 114,
+        "file": "dataset/abs/wage_price_index_1995_2026.csv",
+        "rows": 116,
         "columns": [
           "date",
           "wage_price_index"
@@ -220,8 +220,8 @@
       "single_excel_only": "642701",
       "title": "Producer Price Index: Final demand, index number",
       "data": {
-        "file": "dataset/abs/producer_price_index_1995_2025.csv",
-        "rows": 110,
+        "file": "dataset/abs/producer_price_index_1995_2026.csv",
+        "rows": 112,
         "columns": [
           "date",
           "producer_price_index"
@@ -254,8 +254,8 @@
       "single_excel_only": "5682001",
       "title": "Monthly Household Spending Indicator: Total household spending, Australia, current price, seasonally adjusted",
       "data": {
-        "file": "dataset/abs/household_spending_1995_2025.csv",
-        "rows": 162,
+        "file": "dataset/abs/household_spending_1995_2026.csv",
+        "rows": 169,
         "columns": [
           "date",
           "household_spending"
@@ -288,8 +288,8 @@
       "table": "OCR",
       "title": "Official Cash Rate, monthly",
       "data": {
-        "file": "dataset/rba/cash_rate_1995_2025.csv",
-        "rows": 372,
+        "file": "dataset/rba/cash_rate_1995_2026.csv",
+        "rows": 381,
         "columns": [
           "date",
           "cash_rate"
@@ -302,8 +302,8 @@
       "table": "Z:F11.1-Monthly",
       "title": "AUD/USD exchange rate",
       "data": {
-        "file": "dataset/rba/aud_usd_exchange_rate_1995_2025.csv",
-        "rows": 192,
+        "file": "dataset/rba/aud_usd_exchange_rate_1995_2026.csv",
+        "rows": 200,
         "columns": [
           "date",
           "FXRUSD"
@@ -331,8 +331,8 @@
       "table": "G3",
       "title": "Inflation expectations",
       "data": {
-        "file": "dataset/rba/inflation_expectations_1995_2025.csv",
-        "rows": 124,
+        "file": "dataset/rba/inflation_expectations_1995_2026.csv",
+        "rows": 128,
         "columns": [
           "date",
           "GCONEXP",
@@ -366,8 +366,8 @@
       "table": "I2",
       "title": "RBA commodity price indexes",
       "data": {
-        "file": "dataset/rba/commodity_prices_1995_2025.csv",
-        "rows": 372,
+        "file": "dataset/rba/commodity_prices_1995_2026.csv",
+        "rows": 383,
         "columns": [
           "date",
           "GRCPAIAD",
@@ -420,7 +420,7 @@
         "url": "https://www.rba.gov.au/statistics/xls/cpi-by-horizon.xls"
       },
       "data": {
-        "file": "dataset/rba/rba_historical_cpi_forecasts_by_horizon_1995_2025.csv",
+        "file": "dataset/rba/rba_historical_cpi_forecasts_by_horizon_1995_2026.csv",
         "rows": 2904,
         "columns": [
           "forecast_date",
@@ -434,42 +434,37 @@
       }
     }
   ],
-  "yfinance": [
-    {
-      "variable": "wti_crude_oil",
-      "ticker": "CL=F",
-      "title": "WTI crude oil futures",
-      "data": {
-        "file": "dataset/market/wti_crude_oil_1995_2025.csv",
-        "rows": 6367,
-        "columns": [
-          "Date",
-          "Adj Close",
-          "Close",
-          "High",
-          "Low",
-          "Open",
-          "Volume"
-        ]
-      }
+  "apra": {
+    "variable": "credit_quality_quarterly",
+    "title": "APRA aggregate ADI impaired/non-performing loan ratio",
+    "source_page": "https://www.apra.gov.au/news-and-publications/quarterly-authorised-deposit-taking-institution-statistics",
+    "source_url": "https://www.apra.gov.au/system/files/2026-06/Quarterly%20authorised%20deposit-taking%20institution%20performance-September%202004%20to%20March%202026.xlsx",
+    "raw_workbook": {
+      "file": "dataset/apra/apra_qadip_performance_sep2004_mar2026.xlsx",
+      "bytes": 1826743,
+      "url": "https://www.apra.gov.au/system/files/2026-06/Quarterly%20authorised%20deposit-taking%20institution%20performance-September%202004%20to%20March%202026.xlsx"
     },
-    {
-      "variable": "brent_crude_oil",
-      "ticker": "BZ=F",
-      "title": "Brent crude oil futures",
-      "data": {
-        "file": "dataset/market/brent_crude_oil_1995_2025.csv",
-        "rows": 4585,
-        "columns": [
-          "Date",
-          "Adj Close",
-          "Close",
-          "High",
-          "Low",
-          "Open",
-          "Volume"
-        ]
-      }
+    "data": {
+      "file": "/home/juanvu/QBUS2820/Assignment 2/Assignment 2 Implementation/data/curated/credit_quality_quarterly.csv",
+      "rows": 87,
+      "columns": [
+        "quarter",
+        "credit_quality_ratio_percent",
+        "source_measure",
+        "measurement_basis",
+        "measurement_note",
+        "source_sheet"
+      ]
+    },
+    "metadata": {
+      "file": "/home/juanvu/QBUS2820/Assignment 2/Assignment 2 Implementation/data/metadata/credit_quality_quarterly_notes.csv",
+      "rows": 4,
+      "columns": [
+        "item",
+        "note",
+        "source_url"
+      ]
     }
-  ]
+  },
+  "yfinance": []
 }

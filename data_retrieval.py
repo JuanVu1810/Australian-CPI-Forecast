@@ -276,8 +276,13 @@ def filter_years(
 
 def save_csv(df: pd.DataFrame, path: Path) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(path, index=False)
-    return {"file": str(path), "rows": len(df), "columns": list(df.columns)}
+    clean = df.copy()
+    for column in clean.select_dtypes(include=["object", "string"]).columns:
+        clean[column] = clean[column].map(
+            lambda value: value.strip() if isinstance(value, str) else value
+        )
+    clean.to_csv(path, index=False)
+    return {"file": str(path), "rows": len(clean), "columns": list(clean.columns)}
 
 
 def save_metadata(metadata: Any, path: Path) -> dict[str, Any] | None:

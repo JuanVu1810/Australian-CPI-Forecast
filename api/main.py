@@ -563,12 +563,16 @@ def _elastic_net_family_forecast(
     seed: int,
     target_column: str = TARGET_COLUMN,
     feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
+    forecast_origin: str | None = None,
 ) -> FamilyForecastData:
     fitted = _load_elastic_net_fit(model_uri)
     current_frame = _current_elastic_net_frame(
         target_column=target_column,
         feature_columns=feature_columns,
     )
+    if forecast_origin is not None:
+        origin_period = pd.Period(forecast_origin, freq="Q")
+        current_frame = current_frame.loc[current_frame.index <= origin_period]
     horizon_to_value = dict(zip(fitted.horizons, fitted.predict_next(current_frame)))
     missing = [
         horizon
@@ -631,6 +635,7 @@ def _ensemble_family_forecast(
         requested_horizon,
         n_sims,
         seed + 1,
+        forecast_origin=sarima_result.forecast_origin,
     )
     if sarima_result.horizon_served != requested_horizon:
         raise RuntimeError("SARIMA component did not serve the requested ensemble horizon.")
@@ -706,6 +711,7 @@ def _ensemble_trimmed_mean_family_forecast(
         seed + 1,
         target_column=TRIMMED_MEAN_TARGET_COLUMN,
         feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+        forecast_origin=sarima_result.forecast_origin,
     )
     if sarima_result.horizon_served != requested_horizon:
         raise RuntimeError(
@@ -762,23 +768,6 @@ def _build_live_rba_action_row(n_sims: int, seed: int) -> pd.DataFrame:
             ),
         )
 
-    latest = curated.iloc[-1]
-    null_columns = [
-        column
-        for column in sorted(required_columns)
-        if pd.isna(latest[column])
-    ]
-    if null_columns:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Latest curated macro row is missing RBA action inputs: "
-                f"{', '.join(null_columns)}."
-            ),
-        )
-
-    forecast_origin = str(latest["quarter"])
-    target_quarter = next_quarters(forecast_origin, 1)[0]
     headline = _ensemble_family_forecast(
         "ignored",
         requested_horizon=1,
@@ -791,13 +780,40 @@ def _build_live_rba_action_row(n_sims: int, seed: int) -> pd.DataFrame:
         n_sims=n_sims,
         seed=seed + 2,
     )
-    if headline.quarters[0] != target_quarter or trimmed_mean.quarters[0] != target_quarter:
+    if headline.quarters[0] != trimmed_mean.quarters[0]:
         raise HTTPException(
             status_code=503,
             detail=(
-                "Live RBA action forecasts do not align with the next curated quarter "
-                f"{target_quarter}: headline={headline.quarters[0]}, "
+                "Live RBA action forecasts do not align with each other: "
+                f"headline={headline.quarters[0]}, "
                 f"trimmed_mean={trimmed_mean.quarters[0]}."
+            ),
+        )
+
+    target_quarter = headline.quarters[0]
+    forecast_origin = str(pd.Period(target_quarter, freq="Q") - 1)
+    origin_rows = curated.loc[curated["quarter"].astype(str).eq(forecast_origin)]
+    if origin_rows.empty:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Curated dataset is missing the RBA action forecast-origin row "
+                f"{forecast_origin}."
+            ),
+        )
+
+    latest = origin_rows.iloc[0]
+    null_columns = [
+        column
+        for column in sorted(required_columns)
+        if pd.isna(latest[column])
+    ]
+    if null_columns:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Curated macro row for {forecast_origin} is missing RBA action inputs: "
+                f"{', '.join(null_columns)}."
             ),
         )
 
@@ -893,6 +909,7 @@ def _forecast_all_with_handlers(
 
     models: list[FamilyForecast] = []
     unavailable: list[UnavailableFamily] = []
+    anchor_forecast_origin: str | None = None
     for family, handler in family_handlers.items():
         try:
             model_family_tag = None if model_family_tags is None else model_family_tags.get(family)
@@ -903,7 +920,16 @@ def _forecast_all_with_handlers(
                 model_family_tag=model_family_tag,
             )
             model_uri = _logged_model_uri(client, run_id)
-            result = handler(model_uri, request.horizon, request.n_sims, seed=42)
+            if family == "elastic_net" and anchor_forecast_origin is not None:
+                result = handler(
+                    model_uri,
+                    request.horizon,
+                    request.n_sims,
+                    seed=42,
+                    forecast_origin=anchor_forecast_origin,
+                )
+            else:
+                result = handler(model_uri, request.horizon, request.n_sims, seed=42)
         except (RuntimeError, MlflowException, OSError) as exc:
             unavailable.append(UnavailableFamily(model_family=family, reason=str(exc)))
             continue
@@ -950,6 +976,8 @@ def _forecast_all_with_handlers(
                 forecast_origin=result.forecast_origin,
             )
         )
+        if family == "sarima":
+            anchor_forecast_origin = result.forecast_origin
 
     return AllForecastsResponse(
         requested_horizon=request.horizon,

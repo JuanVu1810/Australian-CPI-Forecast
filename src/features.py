@@ -24,10 +24,10 @@ def add_growth_rates(df: pd.DataFrame) -> pd.DataFrame:
     }
     for source_col, output_col in growth_specs.items():
         if source_col in result:
-            result[output_col] = result[source_col].pct_change(1) * 100
+            result[output_col] = result[source_col].pct_change(1, fill_method=None) * 100
 
     if "aud_usd" in result:
-        result["aud_usd_change"] = result["aud_usd"].pct_change(1) * 100
+        result["aud_usd_change"] = result["aud_usd"].pct_change(1, fill_method=None) * 100
 
     rate_change_specs = {
         "cash_rate": "cash_rate_change",

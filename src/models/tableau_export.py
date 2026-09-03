@@ -26,6 +26,12 @@ Writes to reports/tableau/:
                                    CPI, so it blends with forecast.csv on
                                    `quarter` to lead a trend chart into the
                                    forecast
+    elastic_net_feature_importance.csv -- tidy per-horizon Elastic Net
+                                   coefficients for both targets from
+                                   reports/elastic_net_coefficients*.csv, with
+                                   a readable feature_label and an
+                                   is_exogenous flag separating macro drivers
+                                   from the model's own autoregressive lags
 """
 
 from __future__ import annotations
@@ -55,6 +61,41 @@ HISTORICAL_INDICATOR_COLUMNS = {
     "aud_usd_change": "AUD/USD Exchange Rate Change",
     "household_spending_growth": "Household Spending Growth",
     "inflation_expectations_business": "Business Inflation Expectations",
+}
+
+ELASTIC_NET_COEFFICIENT_REPORTS = {
+    "Headline": PROJECT_ROOT / "reports/elastic_net_coefficients.csv",
+    "Trimmed mean": PROJECT_ROOT / "reports/elastic_net_coefficients_trimmed_mean.csv",
+}
+
+# Readable labels for every feature name that appears in either coefficient
+# report. Own-target lags are flagged separately (AUTOREGRESSIVE_FEATURES)
+# rather than dropped, so Tableau can show how much of the forecast is
+# inertia versus exogenous macro drivers.
+FEATURE_LABELS = {
+    "cash_rate_change_lag1": "Cash Rate Change (lag 1)",
+    "cash_rate_change_lag1_x_unemployment_rate_change_lag1": (
+        "Cash Rate Change x Unemployment Rate Change Interaction (lag 1)"
+    ),
+    "commodity_growth_lag1": "Commodity Price Growth (lag 1)",
+    "commodity_growth_lag1_sq": "Commodity Price Growth Squared (lag 1)",
+    "cpi_yoy_lag1": "Headline CPI YoY (lag 1, autoregressive)",
+    "cpi_yoy_lag4": "Headline CPI YoY (lag 4, autoregressive)",
+    "inflation_expectations_business_lag1": "Business Inflation Expectations (lag 1)",
+    "ppi_growth_lag2": "Producer Price Growth (lag 2)",
+    "ppi_growth_lag2_sq": "Producer Price Growth Squared (lag 2)",
+    "trimmed_mean_cpi_yoy_lag1": "Trimmed Mean CPI YoY (lag 1, autoregressive)",
+    "trimmed_mean_cpi_yoy_lag4": "Trimmed Mean CPI YoY (lag 4, autoregressive)",
+    "unemployment_rate_change_lag1": "Unemployment Rate Change (lag 1)",
+    "wti_growth_lag1": "WTI Oil Price Growth (lag 1)",
+    "wti_growth_lag1_sq": "WTI Oil Price Growth Squared (lag 1)",
+}
+
+AUTOREGRESSIVE_FEATURES = {
+    "cpi_yoy_lag1",
+    "cpi_yoy_lag4",
+    "trimmed_mean_cpi_yoy_lag1",
+    "trimmed_mean_cpi_yoy_lag4",
 }
 
 FORECAST_TARGETS = {
@@ -181,8 +222,10 @@ def build_coverage_frame() -> pd.DataFrame:
 
 
 def build_dataset_overview_frame() -> pd.DataFrame:
-    curated = pd.read_csv(CURATED_DATA_PATH, usecols=["quarter"])
-    quarters = curated["quarter"].astype(str)
+    indicator_columns = list(HISTORICAL_INDICATOR_COLUMNS)
+    curated = pd.read_csv(CURATED_DATA_PATH, usecols=["quarter", *indicator_columns])
+    observed = curated.loc[curated[indicator_columns].notna().any(axis=1)]
+    quarters = observed["quarter"].astype(str)
     series_availability = pd.read_csv(SERIES_AVAILABILITY_PATH)
     return pd.DataFrame(
         [
@@ -215,6 +258,26 @@ def build_historical_indicators_frame() -> pd.DataFrame:
     return long_frame.drop(columns=["mean", "std"])
 
 
+def build_feature_importance_frame() -> pd.DataFrame:
+    frames = []
+    for target_label, path in ELASTIC_NET_COEFFICIENT_REPORTS.items():
+        if not path.exists():
+            continue
+        report = pd.read_csv(path, usecols=["horizon", "feature", "coef"])
+        report["target"] = target_label
+        frames.append(report)
+    if not frames:
+        return pd.DataFrame()
+    combined = pd.concat(frames, ignore_index=True)
+    # coef is read off a StandardScaler -> ElasticNet pipeline (elastic_net.py),
+    # so magnitudes are already on a comparable standardized scale across
+    # features -- abs_coef is a valid cross-feature importance ranking as-is.
+    combined["feature_label"] = combined["feature"].map(FEATURE_LABELS).fillna(combined["feature"])
+    combined["is_exogenous"] = ~combined["feature"].isin(AUTOREGRESSIVE_FEATURES)
+    combined["abs_coef"] = combined["coef"].abs()
+    return combined[["target", "horizon", "feature", "feature_label", "is_exogenous", "coef", "abs_coef"]]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-base-url", default=DEFAULT_API_BASE_URL)
@@ -244,8 +307,11 @@ def main() -> None:
     build_coverage_frame().to_csv(args.output_dir / "model_interval_coverage.csv", index=False)
     build_dataset_overview_frame().to_csv(args.output_dir / "dataset_overview.csv", index=False)
     build_historical_indicators_frame().to_csv(args.output_dir / "historical_indicators.csv", index=False)
+    build_feature_importance_frame().to_csv(
+        args.output_dir / "elastic_net_feature_importance.csv", index=False
+    )
 
-    print(f"Wrote 7 CSVs to {args.output_dir}")
+    print(f"Wrote 8 CSVs to {args.output_dir}")
 
 
 if __name__ == "__main__":

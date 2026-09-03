@@ -454,7 +454,7 @@ def test_forecast_all_returns_sarima_and_elastic_net_with_draw_intervals(
         "_current_elastic_net_frame",
         lambda **kwargs: pd.DataFrame(
             {"cpi_yoy_lag1": [1.0, 2.0]},
-            index=pd.period_range("2022Q3", periods=2, freq="Q"),
+            index=pd.period_range("2021Q3", periods=2, freq="Q"),
         ),
     )
     monkeypatch.setattr(
@@ -888,8 +888,15 @@ def test_forecast_all_ensemble_uses_component_model_uris_without_own_model_artif
             horizon_cap=None,
         )
 
-    def fake_elastic_net_family_forecast(model_uri, requested_horizon, n_sims, seed):
+    def fake_elastic_net_family_forecast(
+        model_uri,
+        requested_horizon,
+        n_sims,
+        seed,
+        forecast_origin=None,
+    ):
         seen_component_uris["elastic_net"] = model_uri
+        seen_component_uris["elastic_forecast_origin"] = forecast_origin
         return api_main.FamilyForecastData(
             forecast=[3.0, 4.0, 5.0],
             draws=np.tile(np.array([3.0, 4.0, 5.0]), (n_sims, 1)),
@@ -933,6 +940,7 @@ def test_forecast_all_ensemble_uses_component_model_uris_without_own_model_artif
         client,
         elastic_net_run_id,
     )
+    assert seen_component_uris["elastic_forecast_origin"] == "2021Q4"
     assert ensemble_run_id not in seen_component_uris["sarima"]
     assert ensemble_run_id not in seen_component_uris["elastic_net"]
 
@@ -964,10 +972,12 @@ def test_trimmed_mean_ensemble_uses_trimmed_components_and_fixed_weights(
         seed,
         target_column,
         feature_columns,
+        forecast_origin=None,
     ):
         seen_component_uris["elastic_net"] = model_uri
         seen_component_uris["elastic_target"] = target_column
         seen_component_uris["elastic_features"] = feature_columns
+        seen_component_uris["elastic_forecast_origin"] = forecast_origin
         return api_main.FamilyForecastData(
             forecast=[3.0, 4.0, 5.0],
             draws=np.tile(np.array([3.0, 4.0, 5.0]), (n_sims, 1)),
@@ -1007,6 +1017,7 @@ def test_trimmed_mean_ensemble_uses_trimmed_components_and_fixed_weights(
     )
     assert seen_component_uris["elastic_target"] == "trimmed_mean_cpi_yoy"
     assert seen_component_uris["elastic_features"][0] == "trimmed_mean_cpi_yoy_lag1"
+    assert seen_component_uris["elastic_forecast_origin"] == "2021Q4"
 
 
 def test_interval_from_paths_matches_numpy_percentile():

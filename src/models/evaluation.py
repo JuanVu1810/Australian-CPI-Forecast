@@ -26,7 +26,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CURATED_DATA_PATH = PROJECT_ROOT / "data/curated/quarterly_macro_features.csv"
 RBA_FORECAST_PATH = (
-    PROJECT_ROOT / "dataset/rba/rba_historical_cpi_forecasts_by_horizon_1995_2025.csv"
+    PROJECT_ROOT / "dataset/rba/rba_historical_cpi_forecasts_by_horizon_1995_2026.csv"
 )
 COMPARISON_OUTPUT_PATH = PROJECT_ROOT / "reports/model_comparison_sarima.csv"
 
