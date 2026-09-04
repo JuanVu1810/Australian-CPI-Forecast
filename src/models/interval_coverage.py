@@ -18,7 +18,11 @@ from src.models.elastic_net import (
     load_elastic_net_feature_frame,
     simulate_elastic_net_paths,
 )
-from src.models.ensemble import horizon_rmse_weights, simulate_ensemble_paths
+from src.models.ensemble import (
+    dynamic_weights_source_path,
+    horizon_rmse_weights,
+    simulate_ensemble_paths,
+)
 from src.models.evaluation import (
     CURATED_DATA_PATH,
     DEFAULT_HORIZONS,
@@ -175,7 +179,10 @@ def run_family_interval_backtests(
         feature_columns=elastic_net_feature_columns,
     )
     if weights is None:
-        weights = horizon_rmse_weights(horizons=requested_horizons)
+        weights = horizon_rmse_weights(
+            horizons=requested_horizons,
+            path=dynamic_weights_source_path(target_column),
+        )
 
     frames: list[pd.DataFrame] = []
     if "sarima" in requested_families:
@@ -388,7 +395,7 @@ def run_trimmed_mean_interval_coverage(
         sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
         sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
         elastic_net_feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
-        weights=(0.5, 0.5),
+        weights=None,
         verbose=verbose,
     )
 

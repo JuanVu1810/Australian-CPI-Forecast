@@ -165,7 +165,7 @@ def test_run_scenario_keeps_tier1_paths_independent_of_shock_size(monkeypatch, t
     monkeypatch.setattr(
         scenario.ensemble,
         "horizon_rmse_weights",
-        lambda horizons: {horizon: (0.5, 0.5) for horizon in horizons},
+        lambda horizons, path=None: {horizon: (0.5, 0.5) for horizon in horizons},
     )
 
     def fake_simulate_ensemble_paths(*args, **kwargs):

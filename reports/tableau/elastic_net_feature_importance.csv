@@ -87,31 +87,31 @@ Headline,8,wti_growth_lag1,WTI Oil Price Growth (lag 1),True,0.0,0.0
 Headline,8,ppi_growth_lag2_sq,Producer Price Growth Squared (lag 2),True,0.0,0.0
 Headline,8,wti_growth_lag1_sq,WTI Oil Price Growth Squared (lag 1),True,0.203963,0.203963
 Headline,8,cash_rate_change_lag1_x_unemployment_rate_change_lag1,Cash Rate Change x Unemployment Rate Change Interaction (lag 1),True,-0.0,0.0
-Trimmed mean,1,trimmed_mean_cpi_yoy_lag1,"Trimmed Mean CPI YoY (lag 1, autoregressive)",False,1.127875,1.127875
-Trimmed mean,1,trimmed_mean_cpi_yoy_lag4,"Trimmed Mean CPI YoY (lag 4, autoregressive)",False,-0.2784,0.2784
-Trimmed mean,1,commodity_growth_lag1,Commodity Price Growth (lag 1),True,0.089383,0.089383
-Trimmed mean,1,wti_growth_lag1,WTI Oil Price Growth (lag 1),True,0.143777,0.143777
-Trimmed mean,1,commodity_growth_lag1_sq,Commodity Price Growth Squared (lag 1),True,-0.016005,0.016005
+Trimmed mean,1,trimmed_mean_cpi_yoy_lag1,"Trimmed Mean CPI YoY (lag 1, autoregressive)",False,1.120572,1.120572
+Trimmed mean,1,trimmed_mean_cpi_yoy_lag4,"Trimmed Mean CPI YoY (lag 4, autoregressive)",False,-0.272435,0.272435
+Trimmed mean,1,commodity_growth_lag1,Commodity Price Growth (lag 1),True,0.092577,0.092577
+Trimmed mean,1,wti_growth_lag1,WTI Oil Price Growth (lag 1),True,0.146809,0.146809
+Trimmed mean,1,commodity_growth_lag1_sq,Commodity Price Growth Squared (lag 1),True,-0.023329,0.023329
 Trimmed mean,1,wti_growth_lag1_sq,WTI Oil Price Growth Squared (lag 1),True,-0.0,0.0
-Trimmed mean,1,cash_rate_change_lag1_x_unemployment_rate_change_lag1,Cash Rate Change x Unemployment Rate Change Interaction (lag 1),True,-8.5e-05,8.5e-05
-Trimmed mean,2,trimmed_mean_cpi_yoy_lag1,"Trimmed Mean CPI YoY (lag 1, autoregressive)",False,0.916125,0.916125
-Trimmed mean,2,trimmed_mean_cpi_yoy_lag4,"Trimmed Mean CPI YoY (lag 4, autoregressive)",False,-0.237,0.237
-Trimmed mean,2,commodity_growth_lag1,Commodity Price Growth (lag 1),True,0.115743,0.115743
-Trimmed mean,2,wti_growth_lag1,WTI Oil Price Growth (lag 1),True,0.209903,0.209903
+Trimmed mean,1,cash_rate_change_lag1_x_unemployment_rate_change_lag1,Cash Rate Change x Unemployment Rate Change Interaction (lag 1),True,-0.003667,0.003667
+Trimmed mean,2,trimmed_mean_cpi_yoy_lag1,"Trimmed Mean CPI YoY (lag 1, autoregressive)",False,0.898198,0.898198
+Trimmed mean,2,trimmed_mean_cpi_yoy_lag4,"Trimmed Mean CPI YoY (lag 4, autoregressive)",False,-0.220477,0.220477
+Trimmed mean,2,commodity_growth_lag1,Commodity Price Growth (lag 1),True,0.107755,0.107755
+Trimmed mean,2,wti_growth_lag1,WTI Oil Price Growth (lag 1),True,0.198721,0.198721
 Trimmed mean,2,commodity_growth_lag1_sq,Commodity Price Growth Squared (lag 1),True,-0.0,0.0
 Trimmed mean,2,wti_growth_lag1_sq,WTI Oil Price Growth Squared (lag 1),True,-0.0,0.0
-Trimmed mean,2,cash_rate_change_lag1_x_unemployment_rate_change_lag1,Cash Rate Change x Unemployment Rate Change Interaction (lag 1),True,-0.002681,0.002681
-Trimmed mean,3,trimmed_mean_cpi_yoy_lag1,"Trimmed Mean CPI YoY (lag 1, autoregressive)",False,0.740822,0.740822
-Trimmed mean,3,trimmed_mean_cpi_yoy_lag4,"Trimmed Mean CPI YoY (lag 4, autoregressive)",False,-0.231166,0.231166
-Trimmed mean,3,commodity_growth_lag1,Commodity Price Growth (lag 1),True,0.116766,0.116766
-Trimmed mean,3,wti_growth_lag1,WTI Oil Price Growth (lag 1),True,0.195667,0.195667
-Trimmed mean,3,commodity_growth_lag1_sq,Commodity Price Growth Squared (lag 1),True,0.0,0.0
+Trimmed mean,2,cash_rate_change_lag1_x_unemployment_rate_change_lag1,Cash Rate Change x Unemployment Rate Change Interaction (lag 1),True,-0.0,0.0
+Trimmed mean,3,trimmed_mean_cpi_yoy_lag1,"Trimmed Mean CPI YoY (lag 1, autoregressive)",False,0.726945,0.726945
+Trimmed mean,3,trimmed_mean_cpi_yoy_lag4,"Trimmed Mean CPI YoY (lag 4, autoregressive)",False,-0.213739,0.213739
+Trimmed mean,3,commodity_growth_lag1,Commodity Price Growth (lag 1),True,0.123843,0.123843
+Trimmed mean,3,wti_growth_lag1,WTI Oil Price Growth (lag 1),True,0.196401,0.196401
+Trimmed mean,3,commodity_growth_lag1_sq,Commodity Price Growth Squared (lag 1),True,-0.0,0.0
 Trimmed mean,3,wti_growth_lag1_sq,WTI Oil Price Growth Squared (lag 1),True,0.0,0.0
 Trimmed mean,3,cash_rate_change_lag1_x_unemployment_rate_change_lag1,Cash Rate Change x Unemployment Rate Change Interaction (lag 1),True,-0.0,0.0
-Trimmed mean,4,trimmed_mean_cpi_yoy_lag1,"Trimmed Mean CPI YoY (lag 1, autoregressive)",False,0.349331,0.349331
-Trimmed mean,4,trimmed_mean_cpi_yoy_lag4,"Trimmed Mean CPI YoY (lag 4, autoregressive)",False,-0.004779,0.004779
-Trimmed mean,4,commodity_growth_lag1,Commodity Price Growth (lag 1),True,0.11011,0.11011
-Trimmed mean,4,wti_growth_lag1,WTI Oil Price Growth (lag 1),True,0.120694,0.120694
+Trimmed mean,4,trimmed_mean_cpi_yoy_lag1,"Trimmed Mean CPI YoY (lag 1, autoregressive)",False,0.345977,0.345977
+Trimmed mean,4,trimmed_mean_cpi_yoy_lag4,"Trimmed Mean CPI YoY (lag 4, autoregressive)",False,-0.0,0.0
+Trimmed mean,4,commodity_growth_lag1,Commodity Price Growth (lag 1),True,0.112125,0.112125
+Trimmed mean,4,wti_growth_lag1,WTI Oil Price Growth (lag 1),True,0.116052,0.116052
 Trimmed mean,4,commodity_growth_lag1_sq,Commodity Price Growth Squared (lag 1),True,0.0,0.0
 Trimmed mean,4,wti_growth_lag1_sq,WTI Oil Price Growth Squared (lag 1),True,0.0,0.0
 Trimmed mean,4,cash_rate_change_lag1_x_unemployment_rate_change_lag1,Cash Rate Change x Unemployment Rate Change Interaction (lag 1),True,-0.0,0.0

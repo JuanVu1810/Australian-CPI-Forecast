@@ -43,6 +43,9 @@ DEFAULT_WEIGHTS = (0.5, 0.5)
 DEFAULT_INITIAL_TRAIN_SIZE = 40
 DEFAULT_SEED = 42
 DYNAMIC_WEIGHTS_SOURCE_PATH = PROJECT_ROOT / "reports/model_comparison_elastic_net.csv"
+TRIMMED_MEAN_DYNAMIC_WEIGHTS_SOURCE_PATH = (
+    PROJECT_ROOT / "reports/model_comparison_elastic_net_trimmed_mean.csv"
+)
 ENSEMBLE_COMPARISON_OUTPUT_PATH = PROJECT_ROOT / "reports/model_comparison_ensemble.csv"
 TRIMMED_MEAN_ENSEMBLE_COMPARISON_OUTPUT_PATH = (
     PROJECT_ROOT / "reports/model_comparison_ensemble_trimmed_mean.csv"
@@ -124,6 +127,18 @@ def horizon_rmse_weights(
         assert np.isclose(sum(pair), 1.0)
         weights[horizon_key] = pair
     return weights
+
+
+def dynamic_weights_source_path(target_column: str) -> Path:
+    """Return the walk-forward RMSE report to derive inverse-RMSE weights from.
+
+    Headline and trimmed-mean each have their own SARIMA vs Elastic Net
+    accuracy comparison, so the weight source must match the target being
+    forecast rather than always defaulting to the headline report.
+    """
+    if target_column == TRIMMED_MEAN_TARGET_COLUMN:
+        return TRIMMED_MEAN_DYNAMIC_WEIGHTS_SOURCE_PATH
+    return DYNAMIC_WEIGHTS_SOURCE_PATH
 
 
 def _position_horizons(length: int, horizons) -> tuple[int, ...]:
@@ -214,7 +229,10 @@ def forecast_ensemble(
     """Fit both components on raw training data and combine their point forecasts."""
     requested_horizons = tuple(range(1, steps + 1))
     if weights is None:
-        weights = horizon_rmse_weights(horizons=requested_horizons)
+        weights = horizon_rmse_weights(
+            horizons=requested_horizons,
+            path=dynamic_weights_source_path(target_column),
+        )
     sarima_forecast = forecast_sarima(
         train_frame[target_column],
         steps=steps,
@@ -251,7 +269,10 @@ def simulate_ensemble_paths(
     """Fit both components on raw training data and combine their predictive draws."""
     requested_horizons = tuple(range(1, steps + 1))
     if weights is None:
-        weights = horizon_rmse_weights(horizons=requested_horizons)
+        weights = horizon_rmse_weights(
+            horizons=requested_horizons,
+            path=dynamic_weights_source_path(target_column),
+        )
     sarima_train = (
         pd.Series(sarima_series).dropna().astype(float)
         if sarima_series is not None
@@ -375,7 +396,10 @@ def run_ensemble_comparison(
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     weighting_scheme = "fixed"
     if weights is None:
-        weights = horizon_rmse_weights(horizons=requested_horizons)
+        weights = horizon_rmse_weights(
+            horizons=requested_horizons,
+            path=dynamic_weights_source_path(target_column),
+        )
         weighting_scheme = "dynamic_inverse_rmse_per_horizon"
     elif not isinstance(weights, dict):
         weights = _validate_weights(weights)
@@ -497,7 +521,7 @@ def run_trimmed_mean_ensemble_comparison(
         comparison_output_path=comparison_output_path,
         initial_train_size=initial_train_size,
         horizons=horizons,
-        weights=DEFAULT_WEIGHTS,
+        weights=None,
         seed=seed,
         max_origins=max_origins,
         target_column=TRIMMED_MEAN_TARGET_COLUMN,

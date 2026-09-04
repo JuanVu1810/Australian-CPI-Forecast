@@ -727,7 +727,10 @@ def _ensemble_trimmed_mean_family_forecast(
         raise RuntimeError("Trimmed-mean ensemble components returned different origins.")
 
     horizons = tuple(range(1, requested_horizon + 1))
-    weights = {horizon: ensemble.DEFAULT_WEIGHTS for horizon in horizons}
+    weights = ensemble.horizon_rmse_weights(
+        horizons=horizons,
+        path=ensemble.TRIMMED_MEAN_DYNAMIC_WEIGHTS_SOURCE_PATH,
+    )
     forecast = ensemble.combine_point_forecasts(
         sarima_result.forecast,
         elastic_net_result.forecast,

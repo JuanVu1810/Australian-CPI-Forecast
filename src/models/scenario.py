@@ -97,7 +97,7 @@ TARGET_CONFIGS: dict[str, ScenarioTargetConfig] = {
         sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
         sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
         elastic_net_feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
-        dynamic_weights=False,
+        dynamic_weights=True,
     ),
 }
 
@@ -196,6 +196,10 @@ def run_scenario(
 
     steps = max(requested_horizons)
     frame = _load_curated_frame(curated_path)
+    # Pinned to the same cutoff as the SVAR IRF export and credit-stress test
+    # (svar.FORECAST_ORIGIN_PIN) so no component here fits on data later than
+    # 2025Q4, regardless of how far the curated CSV itself has been refreshed.
+    frame = frame.loc[frame.index <= svar.FORECAST_ORIGIN_PIN]
     svar_frame = _svar_frame(frame, config.svar_columns)
     fitted_svar = svar.fit_svar(
         svar_frame,
@@ -337,7 +341,10 @@ def _ensemble_weights(
 ) -> dict[int, tuple[float, float]]:
     horizons = tuple(range(1, steps + 1))
     if config.dynamic_weights:
-        return ensemble.horizon_rmse_weights(horizons=horizons)
+        return ensemble.horizon_rmse_weights(
+            horizons=horizons,
+            path=ensemble.dynamic_weights_source_path(config.target_column),
+        )
     return {horizon: ensemble.DEFAULT_WEIGHTS for horizon in horizons}
 
 

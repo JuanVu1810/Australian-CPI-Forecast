@@ -263,7 +263,8 @@ def run_ensemble_fan(
         )
     if weights is None:
         weights = ensemble.horizon_rmse_weights(
-            horizons=tuple(int(h) for h in horizons)
+            horizons=tuple(int(h) for h in horizons),
+            path=ensemble.dynamic_weights_source_path(target_column),
         )
     paths = ensemble.simulate_ensemble_paths(
         frame,
@@ -387,10 +388,6 @@ def run_all_simulation_fans(
             elastic_net_feature_columns=(
                 TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS
             ),
-            weights={
-                horizon: ensemble.DEFAULT_WEIGHTS
-                for horizon in DEFAULT_HORIZONS
-            },
             n_sims=n_sims,
             seed=seed,
             verbose=verbose,

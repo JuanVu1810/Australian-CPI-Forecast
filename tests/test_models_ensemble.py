@@ -99,6 +99,15 @@ def test_horizon_rmse_weights_real_report_sanity_check():
         assert weights[horizon][0] == pytest.approx(expected_sarima_weight)
 
 
+def test_dynamic_weights_source_path_is_target_specific():
+    assert ensemble.dynamic_weights_source_path("cpi_yoy") == ensemble.DYNAMIC_WEIGHTS_SOURCE_PATH
+    assert (
+        ensemble.dynamic_weights_source_path("trimmed_mean_cpi_yoy")
+        == ensemble.TRIMMED_MEAN_DYNAMIC_WEIGHTS_SOURCE_PATH
+    )
+    assert ensemble.DYNAMIC_WEIGHTS_SOURCE_PATH != ensemble.TRIMMED_MEAN_DYNAMIC_WEIGHTS_SOURCE_PATH
+
+
 def test_combine_point_forecasts_weighted_average_and_validation():
     sarima_forecast = np.array([1.0, 2.0, 3.0])
     elastic_net_forecast = np.array([5.0, 6.0, 7.0])
@@ -430,6 +439,6 @@ def test_run_trimmed_mean_ensemble_comparison_uses_trimmed_logging_config(monkey
     assert calls["target_column"] == "trimmed_mean_cpi_yoy"
     assert calls["elastic_net_feature_columns"][0] == "trimmed_mean_cpi_yoy_lag1"
     assert calls["include_rba"] is False
-    assert calls["weights"] == ensemble.DEFAULT_WEIGHTS
+    assert calls["weights"] is None
     assert calls["run_name"] == "trimmed_mean_ensemble_comparison"
     assert calls["model_family_tag"] == "trimmed_mean_ensemble"

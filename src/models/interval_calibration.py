@@ -366,7 +366,7 @@ def run_trimmed_mean_interval_calibration(
         sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
         sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
         elastic_net_feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
-        weights=(0.5, 0.5),
+        weights=None,
         verbose=verbose,
     )
 

@@ -21,7 +21,11 @@ from src.models.elastic_net import (
     load_elastic_net_feature_frame,
     run_elastic_net_comparison,
 )
-from src.models.ensemble import _ensemble_prediction_frame, horizon_rmse_weights
+from src.models.ensemble import (
+    _ensemble_prediction_frame,
+    dynamic_weights_source_path,
+    horizon_rmse_weights,
+)
 from src.models.evaluation import (
     CURATED_DATA_PATH,
     DEFAULT_HORIZONS,
@@ -225,7 +229,10 @@ def run_model_comparison_all(
     started = time.perf_counter()
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     if weights is None:
-        weights = horizon_rmse_weights(horizons=requested_horizons)
+        weights = horizon_rmse_weights(
+            horizons=requested_horizons,
+            path=dynamic_weights_source_path(target_column),
+        )
     series = load_target_series(curated_path, target_column=target_column)
     exog = load_elastic_net_feature_frame(
         curated_path,
@@ -381,7 +388,7 @@ def run_trimmed_mean_model_comparison_all(
         predictions_output_path=predictions_output_path,
         initial_train_size=initial_train_size,
         horizons=horizons,
-        weights=(0.5, 0.5),
+        weights=None,
         seed=seed,
         max_origins=max_origins,
         target_column=TRIMMED_MEAN_TARGET_COLUMN,

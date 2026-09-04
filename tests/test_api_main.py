@@ -945,7 +945,7 @@ def test_forecast_all_ensemble_uses_component_model_uris_without_own_model_artif
     assert ensemble_run_id not in seen_component_uris["elastic_net"]
 
 
-def test_trimmed_mean_ensemble_uses_trimmed_components_and_fixed_weights(
+def test_trimmed_mean_ensemble_uses_trimmed_components_and_dynamic_weights(
     monkeypatch,
     tmp_path,
 ):
@@ -993,10 +993,16 @@ def test_trimmed_mean_ensemble_uses_trimmed_components_and_fixed_weights(
         "_elastic_net_family_forecast",
         fake_elastic_net_family_forecast,
     )
+    seen_weights_call = {}
+
+    def fake_horizon_rmse_weights(horizons, path=None):
+        seen_weights_call["path"] = path
+        return {horizon: (0.25, 0.75) for horizon in horizons}
+
     monkeypatch.setattr(
         api_main.ensemble,
         "horizon_rmse_weights",
-        lambda horizons: pytest.fail("trimmed-mean ensemble should use fixed weights"),
+        fake_horizon_rmse_weights,
     )
 
     result = api_main._ensemble_trimmed_mean_family_forecast(
@@ -1006,7 +1012,8 @@ def test_trimmed_mean_ensemble_uses_trimmed_components_and_fixed_weights(
         seed=42,
     )
 
-    assert result.forecast == [2.0, 3.0, 4.0]
+    assert seen_weights_call["path"] == api_main.ensemble.TRIMMED_MEAN_DYNAMIC_WEIGHTS_SOURCE_PATH
+    assert result.forecast == [2.5, 3.5, 4.5]
     assert result.quarters == ["2022Q1", "2022Q2", "2022Q3"]
     assert result.horizon_cap is None
     client = MlflowClient()
