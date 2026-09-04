@@ -1,0 +1,13 @@
+variable,variable_label,latest_quarter,value,value_standardized,abs_z_rank,n_obs
+inflation_expectations_business,Business Inflation Expectations,2026Q2,3.59,2.0520219651206513,7.0,126
+ppi_growth,Producer Price Growth,2026Q2,1.302460202604938,1.1603180256384007,29.0,111
+unemployment_rate,Unemployment Rate,2026Q3,4.4618247,-0.9315915502770199,46.0,127
+trimmed_mean_cpi_yoy,Trimmed Mean CPI YoY,2026Q2,3.6,0.8719137318924045,43.0,126
+cpi_yoy,Headline CPI YoY,2026Q2,3.9,0.7455881992797079,48.0,126
+wti_growth,WTI Oil Price Growth,2025Q4,-9.00832168424942,-0.7087175439455345,39.0,101
+wpi_growth,Wage Price Growth,2026Q2,0.5614472863381126,-0.6845526441193469,59.0,115
+brent_growth,Brent Oil Price Growth,2025Q4,-7.470030181046972,-0.5561057569581704,36.0,73
+household_spending_growth,Household Spending Growth,2026Q3,2.128570046463629,0.3324124695031137,17.0,56
+aud_usd_change,AUD/USD Exchange Rate Change,2026Q3,0.6998959614111344,0.26827105131092027,55.0,66
+cash_rate,Cash Rate,2026Q3,4.35,0.19346264248149359,109.0,127
+commodity_growth,Commodity Price Growth,2026Q3,0.0867485918071286,-0.16625268536230994,106.0,126

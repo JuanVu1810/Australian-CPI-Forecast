@@ -35,6 +35,20 @@ Writes to reports/tableau/:
     svar_irf.csv             -- target responses to one-SD recursive Cholesky
                                 structural shocks in the four SVAR exogenous
                                 variables, with bootstrap bands
+    drift_error_check.csv     -- every forecast that now has a real outcome,
+                                compared against that model's own historical
+                                walk-forward error distribution at that horizon
+    drift_error_history.csv   -- horizon-1 error time series per target x
+                                model, historical origins plus any newly
+                                graded origin, flagged by `is_recent`
+    drift_covariate_check.csv -- latest reading per macro variable ranked
+                                against its own full history, flagging inputs
+                                sitting at unusual levels right now
+
+    The three drift_*.csv exports never fit or refit a model -- they only
+    compare already-generated forecasts and reports, per the guardrail in
+    .ai/TABLEAU_DASHBOARD_GUIDE.md against refitting as a side effect of a
+    routine data refresh.
 """
 
 from __future__ import annotations
@@ -45,7 +59,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from src.models import svar
+from src.models import drift_monitor, svar
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CURATED_DATA_PATH = PROJECT_ROOT / "data/curated/quarterly_macro_features.csv"
@@ -369,19 +383,31 @@ def main() -> None:
             "Start it first with: uvicorn api.main:app --reload"
         ) from exc
 
-    build_forecast_frame(forecast_payloads).to_csv(args.output_dir / "forecast.csv", index=False)
+    forecast_frame = build_forecast_frame(forecast_payloads)
+    historical_frame = build_historical_indicators_frame()
+
+    forecast_frame.to_csv(args.output_dir / "forecast.csv", index=False)
     build_rba_action_frame(rba_action_payload).to_csv(args.output_dir / "rba_action.csv", index=False)
     build_credit_stress_frame(credit_stress_payload).to_csv(args.output_dir / "credit_stress.csv", index=False)
     build_model_comparison_frame().to_csv(args.output_dir / "model_comparison.csv", index=False)
     build_coverage_frame().to_csv(args.output_dir / "model_interval_coverage.csv", index=False)
     build_dataset_overview_frame().to_csv(args.output_dir / "dataset_overview.csv", index=False)
-    build_historical_indicators_frame().to_csv(args.output_dir / "historical_indicators.csv", index=False)
+    historical_frame.to_csv(args.output_dir / "historical_indicators.csv", index=False)
     build_feature_importance_frame().to_csv(
         args.output_dir / "elastic_net_feature_importance.csv", index=False
     )
     build_svar_irf_frame().to_csv(args.output_dir / "svar_irf.csv", index=False)
+    drift_monitor.build_drift_error_check_frame(forecast_frame, historical_frame).to_csv(
+        args.output_dir / "drift_error_check.csv", index=False
+    )
+    drift_monitor.build_drift_error_history_frame(forecast_frame, historical_frame).to_csv(
+        args.output_dir / "drift_error_history.csv", index=False
+    )
+    drift_monitor.build_drift_covariate_frame(historical_frame).to_csv(
+        args.output_dir / "drift_covariate_check.csv", index=False
+    )
 
-    print(f"Wrote 9 CSVs to {args.output_dir}")
+    print(f"Wrote 12 CSVs to {args.output_dir}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,373 @@
+target,model,forecast_origin,target_quarter,error,is_recent
+Headline,elastic_net,2010Q4,2011Q1,0.72337,False
+Headline,elastic_net,2011Q1,2011Q2,0.830661,False
+Headline,elastic_net,2011Q2,2011Q3,0.516074,False
+Headline,elastic_net,2011Q3,2011Q4,-0.019229,False
+Headline,elastic_net,2011Q4,2012Q1,-1.314392,False
+Headline,elastic_net,2012Q1,2012Q2,-1.558238,False
+Headline,elastic_net,2012Q2,2012Q3,-0.728065,False
+Headline,elastic_net,2012Q3,2012Q4,-0.821177,False
+Headline,elastic_net,2012Q4,2013Q1,-0.012264,False
+Headline,elastic_net,2013Q1,2013Q2,-0.086312,False
+Headline,elastic_net,2013Q2,2013Q3,-0.254887,False
+Headline,elastic_net,2013Q3,2013Q4,-0.20542,False
+Headline,elastic_net,2013Q4,2014Q1,0.248802,False
+Headline,elastic_net,2014Q1,2014Q2,0.339462,False
+Headline,elastic_net,2014Q2,2014Q3,-0.392087,False
+Headline,elastic_net,2014Q3,2014Q4,-1.114753,False
+Headline,elastic_net,2014Q4,2015Q1,-1.28616,False
+Headline,elastic_net,2015Q1,2015Q2,-1.177466,False
+Headline,elastic_net,2015Q2,2015Q3,-1.23002,False
+Headline,elastic_net,2015Q3,2015Q4,-0.964392,False
+Headline,elastic_net,2015Q4,2016Q1,-0.810167,False
+Headline,elastic_net,2016Q1,2016Q2,-1.193086,False
+Headline,elastic_net,2016Q2,2016Q3,-0.496797,False
+Headline,elastic_net,2016Q3,2016Q4,-1.121321,False
+Headline,elastic_net,2016Q4,2017Q1,0.064289,False
+Headline,elastic_net,2017Q1,2017Q2,-0.474512,False
+Headline,elastic_net,2017Q2,2017Q3,-0.570159,False
+Headline,elastic_net,2017Q3,2017Q4,-0.341604,False
+Headline,elastic_net,2017Q4,2018Q1,-0.139285,False
+Headline,elastic_net,2018Q1,2018Q2,-0.353101,False
+Headline,elastic_net,2018Q2,2018Q3,-0.532735,False
+Headline,elastic_net,2018Q3,2018Q4,-1.024123,False
+Headline,elastic_net,2018Q4,2019Q1,-1.116785,False
+Headline,elastic_net,2019Q1,2019Q2,-0.642253,False
+Headline,elastic_net,2019Q2,2019Q3,-0.288979,False
+Headline,elastic_net,2019Q3,2019Q4,-0.622855,False
+Headline,elastic_net,2019Q4,2020Q1,0.394801,False
+Headline,elastic_net,2020Q1,2020Q2,-2.372344,False
+Headline,elastic_net,2020Q2,2020Q3,-1.092128,False
+Headline,elastic_net,2020Q3,2020Q4,0.192454,False
+Headline,elastic_net,2020Q4,2021Q1,-0.918571,False
+Headline,elastic_net,2021Q1,2021Q2,1.672391,False
+Headline,elastic_net,2021Q2,2021Q3,0.908228,False
+Headline,elastic_net,2021Q3,2021Q4,0.437026,False
+Headline,elastic_net,2021Q4,2022Q1,2.42257,False
+Headline,elastic_net,2022Q1,2022Q2,2.611423,False
+Headline,elastic_net,2022Q2,2022Q3,2.928078,False
+Headline,elastic_net,2022Q3,2022Q4,1.816984,False
+Headline,elastic_net,2022Q4,2023Q1,1.418659,False
+Headline,elastic_net,2023Q1,2023Q2,-0.117516,False
+Headline,elastic_net,2023Q2,2023Q3,0.190326,False
+Headline,elastic_net,2023Q3,2023Q4,-1.335279,False
+Headline,elastic_net,2023Q4,2024Q1,-0.152782,False
+Headline,elastic_net,2025Q4,2026Q1,1.2573270316353486,True
+Headline,ensemble,2010Q4,2011Q1,0.758422,False
+Headline,ensemble,2011Q1,2011Q2,0.280393,False
+Headline,ensemble,2011Q2,2011Q3,-0.204431,False
+Headline,ensemble,2011Q3,2011Q4,-0.294201,False
+Headline,ensemble,2011Q4,2012Q1,-0.852393,False
+Headline,ensemble,2012Q1,2012Q2,-0.616902,False
+Headline,ensemble,2012Q2,2012Q3,-0.012773,False
+Headline,ensemble,2012Q3,2012Q4,-0.567343,False
+Headline,ensemble,2012Q4,2013Q1,-0.168127,False
+Headline,ensemble,2013Q1,2013Q2,-0.166336,False
+Headline,ensemble,2013Q2,2013Q3,0.033377,False
+Headline,ensemble,2013Q3,2013Q4,0.003418,False
+Headline,ensemble,2013Q4,2014Q1,0.09113,False
+Headline,ensemble,2014Q1,2014Q2,0.05938,False
+Headline,ensemble,2014Q2,2014Q3,-0.55331,False
+Headline,ensemble,2014Q3,2014Q4,-0.783061,False
+Headline,ensemble,2014Q4,2015Q1,-0.56321,False
+Headline,ensemble,2015Q1,2015Q2,-0.255806,False
+Headline,ensemble,2015Q2,2015Q3,-0.848175,False
+Headline,ensemble,2015Q3,2015Q4,-0.359234,False
+Headline,ensemble,2015Q4,2016Q1,-0.641838,False
+Headline,ensemble,2016Q1,2016Q2,-0.458914,False
+Headline,ensemble,2016Q2,2016Q3,-0.237069,False
+Headline,ensemble,2016Q3,2016Q4,-0.565473,False
+Headline,ensemble,2016Q4,2017Q1,0.135797,False
+Headline,ensemble,2017Q1,2017Q2,-0.330387,False
+Headline,ensemble,2017Q2,2017Q3,-0.374939,False
+Headline,ensemble,2017Q3,2017Q4,0.110028,False
+Headline,ensemble,2017Q4,2018Q1,-0.082806,False
+Headline,ensemble,2018Q1,2018Q2,-0.263219,False
+Headline,ensemble,2018Q2,2018Q3,-0.392261,False
+Headline,ensemble,2018Q3,2018Q4,-0.486701,False
+Headline,ensemble,2018Q4,2019Q1,-0.638335,False
+Headline,ensemble,2019Q1,2019Q2,-0.064683,False
+Headline,ensemble,2019Q2,2019Q3,-0.145173,False
+Headline,ensemble,2019Q3,2019Q4,-0.162653,False
+Headline,ensemble,2019Q4,2020Q1,0.176025,False
+Headline,ensemble,2020Q1,2020Q2,-2.447317,False
+Headline,ensemble,2020Q2,2020Q3,0.382823,False
+Headline,ensemble,2020Q3,2020Q4,0.427988,False
+Headline,ensemble,2020Q4,2021Q1,-0.371601,False
+Headline,ensemble,2021Q1,2021Q2,1.11268,False
+Headline,ensemble,2021Q2,2021Q3,0.473577,False
+Headline,ensemble,2021Q3,2021Q4,0.769869,False
+Headline,ensemble,2021Q4,2022Q1,1.843378,False
+Headline,ensemble,2022Q1,2022Q2,1.699929,False
+Headline,ensemble,2022Q2,2022Q3,1.551107,False
+Headline,ensemble,2022Q3,2022Q4,1.210308,False
+Headline,ensemble,2022Q4,2023Q1,0.675704,False
+Headline,ensemble,2023Q1,2023Q2,0.050376,False
+Headline,ensemble,2023Q2,2023Q3,0.078877,False
+Headline,ensemble,2023Q3,2023Q4,-0.595413,False
+Headline,ensemble,2023Q4,2024Q1,0.186971,False
+Headline,ensemble,2025Q4,2026Q1,0.8457978728587889,True
+Headline,sarima,2004Q4,2005Q1,-0.101032,False
+Headline,sarima,2005Q1,2005Q2,-0.16657,False
+Headline,sarima,2005Q2,2005Q3,0.060675,False
+Headline,sarima,2005Q3,2005Q4,-0.284545,False
+Headline,sarima,2005Q4,2006Q1,-0.016466,False
+Headline,sarima,2006Q1,2006Q2,0.911334,False
+Headline,sarima,2006Q2,2006Q3,-0.166732,False
+Headline,sarima,2006Q3,2006Q4,-0.982269,False
+Headline,sarima,2006Q4,2007Q1,-0.797157,False
+Headline,sarima,2007Q1,2007Q2,0.445884,False
+Headline,sarima,2007Q2,2007Q3,-0.324887,False
+Headline,sarima,2007Q3,2007Q4,0.497815,False
+Headline,sarima,2007Q4,2008Q1,0.68604,False
+Headline,sarima,2008Q1,2008Q2,0.301682,False
+Headline,sarima,2008Q2,2008Q3,-0.035134,False
+Headline,sarima,2008Q3,2008Q4,-1.134978,False
+Headline,sarima,2008Q4,2009Q1,-1.012866,False
+Headline,sarima,2009Q1,2009Q2,-0.208213,False
+Headline,sarima,2009Q2,2009Q3,0.100286,False
+Headline,sarima,2009Q3,2009Q4,0.235647,False
+Headline,sarima,2009Q4,2010Q1,0.046103,False
+Headline,sarima,2010Q1,2010Q2,-0.330986,False
+Headline,sarima,2010Q2,2010Q3,-0.277443,False
+Headline,sarima,2010Q3,2010Q4,-0.22637,False
+Headline,sarima,2010Q4,2011Q1,0.777992,False
+Headline,sarima,2011Q1,2011Q2,-0.026827,False
+Headline,sarima,2011Q2,2011Q3,-0.606695,False
+Headline,sarima,2011Q3,2011Q4,-0.447721,False
+Headline,sarima,2011Q4,2012Q1,-0.594456,False
+Headline,sarima,2012Q1,2012Q2,-0.091347,False
+Headline,sarima,2012Q2,2012Q3,0.386581,False
+Headline,sarima,2012Q3,2012Q4,-0.425626,False
+Headline,sarima,2012Q4,2013Q1,-0.255148,False
+Headline,sarima,2013Q1,2013Q2,-0.211014,False
+Headline,sarima,2013Q2,2013Q3,0.194318,False
+Headline,sarima,2013Q3,2013Q4,0.120014,False
+Headline,sarima,2013Q4,2014Q1,0.0031,False
+Headline,sarima,2014Q1,2014Q2,-0.096993,False
+Headline,sarima,2014Q2,2014Q3,-0.643322,False
+Headline,sarima,2014Q3,2014Q4,-0.597874,False
+Headline,sarima,2014Q4,2015Q1,-0.159581,False
+Headline,sarima,2015Q1,2015Q2,0.258765,False
+Headline,sarima,2015Q2,2015Q3,-0.634988,False
+Headline,sarima,2015Q3,2015Q4,-0.021369,False
+Headline,sarima,2015Q4,2016Q1,-0.547858,False
+Headline,sarima,2016Q1,2016Q2,-0.049019,False
+Headline,sarima,2016Q2,2016Q3,-0.092062,False
+Headline,sarima,2016Q3,2016Q4,-0.255139,False
+Headline,sarima,2016Q4,2017Q1,0.17572,False
+Headline,sarima,2017Q1,2017Q2,-0.249921,False
+Headline,sarima,2017Q2,2017Q3,-0.265945,False
+Headline,sarima,2017Q3,2017Q4,0.362178,False
+Headline,sarima,2017Q4,2018Q1,-0.051273,False
+Headline,sarima,2018Q1,2018Q2,-0.213038,False
+Headline,sarima,2018Q2,2018Q3,-0.313834,False
+Headline,sarima,2018Q3,2018Q4,-0.186654,False
+Headline,sarima,2018Q4,2019Q1,-0.371212,False
+Headline,sarima,2019Q1,2019Q2,0.257779,False
+Headline,sarima,2019Q2,2019Q3,-0.064885,False
+Headline,sarima,2019Q3,2019Q4,0.094282,False
+Headline,sarima,2019Q4,2020Q1,0.053881,False
+Headline,sarima,2020Q1,2020Q2,-2.489175,False
+Headline,sarima,2020Q2,2020Q3,1.2063,False
+Headline,sarima,2020Q3,2020Q4,0.559488,False
+Headline,sarima,2020Q4,2021Q1,-0.066223,False
+Headline,sarima,2021Q1,2021Q2,0.800188,False
+Headline,sarima,2021Q2,2021Q3,0.230907,False
+Headline,sarima,2021Q3,2021Q4,0.955698,False
+Headline,sarima,2021Q4,2022Q1,1.520011,False
+Headline,sarima,2022Q1,2022Q2,1.191034,False
+Headline,sarima,2022Q2,2022Q3,0.782332,False
+Headline,sarima,2022Q3,2022Q4,0.871596,False
+Headline,sarima,2022Q4,2023Q1,0.260907,False
+Headline,sarima,2023Q1,2023Q2,0.144112,False
+Headline,sarima,2023Q2,2023Q3,0.016654,False
+Headline,sarima,2023Q3,2023Q4,-0.18234,False
+Headline,sarima,2023Q4,2024Q1,0.376657,False
+Headline,sarima,2025Q4,2026Q1,0.6160377675440629,True
+Trimmed mean,elastic_net,2010Q4,2011Q1,-0.400672,False
+Trimmed mean,elastic_net,2011Q1,2011Q2,0.295354,False
+Trimmed mean,elastic_net,2011Q2,2011Q3,0.06528,False
+Trimmed mean,elastic_net,2011Q3,2011Q4,-0.215491,False
+Trimmed mean,elastic_net,2011Q4,2012Q1,-0.351073,False
+Trimmed mean,elastic_net,2012Q1,2012Q2,-0.918862,False
+Trimmed mean,elastic_net,2012Q2,2012Q3,-0.152504,False
+Trimmed mean,elastic_net,2012Q3,2012Q4,0.148605,False
+Trimmed mean,elastic_net,2012Q4,2013Q1,-0.007425,False
+Trimmed mean,elastic_net,2013Q1,2013Q2,-0.14084,False
+Trimmed mean,elastic_net,2013Q2,2013Q3,-0.123482,False
+Trimmed mean,elastic_net,2013Q3,2013Q4,0.048625,False
+Trimmed mean,elastic_net,2013Q4,2014Q1,0.035216,False
+Trimmed mean,elastic_net,2014Q1,2014Q2,0.077613,False
+Trimmed mean,elastic_net,2014Q2,2014Q3,-0.405581,False
+Trimmed mean,elastic_net,2014Q3,2014Q4,-0.504292,False
+Trimmed mean,elastic_net,2014Q4,2015Q1,-0.064305,False
+Trimmed mean,elastic_net,2015Q1,2015Q2,0.020962,False
+Trimmed mean,elastic_net,2015Q2,2015Q3,-0.096303,False
+Trimmed mean,elastic_net,2015Q3,2015Q4,-0.327057,False
+Trimmed mean,elastic_net,2015Q4,2016Q1,-0.40545,False
+Trimmed mean,elastic_net,2016Q1,2016Q2,-0.447579,False
+Trimmed mean,elastic_net,2016Q2,2016Q3,-0.039901,False
+Trimmed mean,elastic_net,2016Q3,2016Q4,-0.735041,False
+Trimmed mean,elastic_net,2016Q4,2017Q1,-0.023639,False
+Trimmed mean,elastic_net,2017Q1,2017Q2,0.32307,False
+Trimmed mean,elastic_net,2017Q2,2017Q3,-0.183608,False
+Trimmed mean,elastic_net,2017Q3,2017Q4,0.019416,False
+Trimmed mean,elastic_net,2017Q4,2018Q1,-0.110154,False
+Trimmed mean,elastic_net,2018Q1,2018Q2,-0.360022,False
+Trimmed mean,elastic_net,2018Q2,2018Q3,-0.205298,False
+Trimmed mean,elastic_net,2018Q3,2018Q4,0.018653,False
+Trimmed mean,elastic_net,2018Q4,2019Q1,-0.232413,False
+Trimmed mean,elastic_net,2019Q1,2019Q2,-0.302592,False
+Trimmed mean,elastic_net,2019Q2,2019Q3,-0.150584,False
+Trimmed mean,elastic_net,2019Q3,2019Q4,-0.17434,False
+Trimmed mean,elastic_net,2019Q4,2020Q1,0.138285,False
+Trimmed mean,elastic_net,2020Q1,2020Q2,-0.236092,False
+Trimmed mean,elastic_net,2020Q2,2020Q3,-0.412894,False
+Trimmed mean,elastic_net,2020Q3,2020Q4,0.368192,False
+Trimmed mean,elastic_net,2020Q4,2021Q1,-0.511055,False
+Trimmed mean,elastic_net,2021Q1,2021Q2,0.212914,False
+Trimmed mean,elastic_net,2021Q2,2021Q3,0.797801,False
+Trimmed mean,elastic_net,2021Q3,2021Q4,0.839861,False
+Trimmed mean,elastic_net,2021Q4,2022Q1,1.556888,False
+Trimmed mean,elastic_net,2022Q1,2022Q2,2.111712,False
+Trimmed mean,elastic_net,2022Q2,2022Q3,1.884579,False
+Trimmed mean,elastic_net,2022Q3,2022Q4,0.921841,False
+Trimmed mean,elastic_net,2022Q4,2023Q1,-0.500948,False
+Trimmed mean,elastic_net,2023Q1,2023Q2,-1.590985,False
+Trimmed mean,elastic_net,2023Q2,2023Q3,-0.978742,False
+Trimmed mean,elastic_net,2023Q3,2023Q4,-0.377833,False
+Trimmed mean,elastic_net,2023Q4,2024Q1,0.382952,False
+Trimmed mean,elastic_net,2025Q4,2026Q1,0.6942124046406648,True
+Trimmed mean,ensemble,2010Q4,2011Q1,-0.091423,False
+Trimmed mean,ensemble,2011Q1,2011Q2,0.246589,False
+Trimmed mean,ensemble,2011Q2,2011Q3,-0.190532,False
+Trimmed mean,ensemble,2011Q3,2011Q4,-0.075499,False
+Trimmed mean,ensemble,2011Q4,2012Q1,-0.324504,False
+Trimmed mean,ensemble,2012Q1,2012Q2,-0.480691,False
+Trimmed mean,ensemble,2012Q2,2012Q3,-0.016798,False
+Trimmed mean,ensemble,2012Q3,2012Q4,0.017832,False
+Trimmed mean,ensemble,2012Q4,2013Q1,-0.056879,False
+Trimmed mean,ensemble,2013Q1,2013Q2,-0.054593,False
+Trimmed mean,ensemble,2013Q2,2013Q3,-0.03545,False
+Trimmed mean,ensemble,2013Q3,2013Q4,0.119121,False
+Trimmed mean,ensemble,2013Q4,2014Q1,-0.084572,False
+Trimmed mean,ensemble,2014Q1,2014Q2,0.078519,False
+Trimmed mean,ensemble,2014Q2,2014Q3,-0.40402,False
+Trimmed mean,ensemble,2014Q3,2014Q4,-0.20731,False
+Trimmed mean,ensemble,2014Q4,2015Q1,-0.006495,False
+Trimmed mean,ensemble,2015Q1,2015Q2,-0.004946,False
+Trimmed mean,ensemble,2015Q2,2015Q3,-0.255605,False
+Trimmed mean,ensemble,2015Q3,2015Q4,-0.102782,False
+Trimmed mean,ensemble,2015Q4,2016Q1,-0.372931,False
+Trimmed mean,ensemble,2016Q1,2016Q2,-0.208748,False
+Trimmed mean,ensemble,2016Q2,2016Q3,-0.165585,False
+Trimmed mean,ensemble,2016Q3,2016Q4,-0.359475,False
+Trimmed mean,ensemble,2016Q4,2017Q1,-0.012251,False
+Trimmed mean,ensemble,2017Q1,2017Q2,0.149603,False
+Trimmed mean,ensemble,2017Q2,2017Q3,-0.174221,False
+Trimmed mean,ensemble,2017Q3,2017Q4,0.008898,False
+Trimmed mean,ensemble,2017Q4,2018Q1,-0.052819,False
+Trimmed mean,ensemble,2018Q1,2018Q2,-0.239881,False
+Trimmed mean,ensemble,2018Q2,2018Q3,-0.089825,False
+Trimmed mean,ensemble,2018Q3,2018Q4,0.050089,False
+Trimmed mean,ensemble,2018Q4,2019Q1,-0.23552,False
+Trimmed mean,ensemble,2019Q1,2019Q2,-0.220549,False
+Trimmed mean,ensemble,2019Q2,2019Q3,-0.036599,False
+Trimmed mean,ensemble,2019Q3,2019Q4,-0.046501,False
+Trimmed mean,ensemble,2019Q4,2020Q1,0.088356,False
+Trimmed mean,ensemble,2020Q1,2020Q2,-0.399286,False
+Trimmed mean,ensemble,2020Q2,2020Q3,-0.177736,False
+Trimmed mean,ensemble,2020Q3,2020Q4,0.297111,False
+Trimmed mean,ensemble,2020Q4,2021Q1,-0.337252,False
+Trimmed mean,ensemble,2021Q1,2021Q2,0.200347,False
+Trimmed mean,ensemble,2021Q2,2021Q3,0.604984,False
+Trimmed mean,ensemble,2021Q3,2021Q4,0.645535,False
+Trimmed mean,ensemble,2021Q4,2022Q1,1.193258,False
+Trimmed mean,ensemble,2022Q1,2022Q2,1.348721,False
+Trimmed mean,ensemble,2022Q2,2022Q3,1.239235,False
+Trimmed mean,ensemble,2022Q3,2022Q4,0.504967,False
+Trimmed mean,ensemble,2022Q4,2023Q1,-0.573125,False
+Trimmed mean,ensemble,2023Q1,2023Q2,-0.985535,False
+Trimmed mean,ensemble,2023Q2,2023Q3,-0.417839,False
+Trimmed mean,ensemble,2023Q3,2023Q4,-0.309866,False
+Trimmed mean,ensemble,2023Q4,2024Q1,0.24294,False
+Trimmed mean,ensemble,2025Q4,2026Q1,0.3432905661307828,True
+Trimmed mean,sarima,2004Q4,2005Q1,-0.004792,False
+Trimmed mean,sarima,2005Q1,2005Q2,-0.062845,False
+Trimmed mean,sarima,2005Q2,2005Q3,0.061686,False
+Trimmed mean,sarima,2005Q3,2005Q4,-0.062887,False
+Trimmed mean,sarima,2005Q4,2006Q1,0.219756,False
+Trimmed mean,sarima,2006Q1,2006Q2,0.125354,False
+Trimmed mean,sarima,2006Q2,2006Q3,0.072554,False
+Trimmed mean,sarima,2006Q3,2006Q4,-0.196183,False
+Trimmed mean,sarima,2006Q4,2007Q1,-0.148269,False
+Trimmed mean,sarima,2007Q1,2007Q2,0.263245,False
+Trimmed mean,sarima,2007Q2,2007Q3,0.161047,False
+Trimmed mean,sarima,2007Q3,2007Q4,0.547037,False
+Trimmed mean,sarima,2007Q4,2008Q1,0.265109,False
+Trimmed mean,sarima,2008Q1,2008Q2,0.087445,False
+Trimmed mean,sarima,2008Q2,2008Q3,0.327117,False
+Trimmed mean,sarima,2008Q3,2008Q4,-0.398623,False
+Trimmed mean,sarima,2008Q4,2009Q1,0.115498,False
+Trimmed mean,sarima,2009Q1,2009Q2,-0.319109,False
+Trimmed mean,sarima,2009Q2,2009Q3,-0.01423,False
+Trimmed mean,sarima,2009Q3,2009Q4,0.112664,False
+Trimmed mean,sarima,2009Q4,2010Q1,0.024276,False
+Trimmed mean,sarima,2010Q1,2010Q2,-0.484568,False
+Trimmed mean,sarima,2010Q2,2010Q3,-0.090081,False
+Trimmed mean,sarima,2010Q3,2010Q4,-0.197579,False
+Trimmed mean,sarima,2010Q4,2011Q1,0.217826,False
+Trimmed mean,sarima,2011Q1,2011Q2,0.197824,False
+Trimmed mean,sarima,2011Q2,2011Q3,-0.446343,False
+Trimmed mean,sarima,2011Q3,2011Q4,0.064492,False
+Trimmed mean,sarima,2011Q4,2012Q1,-0.297936,False
+Trimmed mean,sarima,2012Q1,2012Q2,-0.042519,False
+Trimmed mean,sarima,2012Q2,2012Q3,0.118909,False
+Trimmed mean,sarima,2012Q3,2012Q4,-0.11294,False
+Trimmed mean,sarima,2012Q4,2013Q1,-0.106333,False
+Trimmed mean,sarima,2013Q1,2013Q2,0.031655,False
+Trimmed mean,sarima,2013Q2,2013Q3,0.052582,False
+Trimmed mean,sarima,2013Q3,2013Q4,0.189617,False
+Trimmed mean,sarima,2013Q4,2014Q1,-0.20436,False
+Trimmed mean,sarima,2014Q1,2014Q2,0.079425,False
+Trimmed mean,sarima,2014Q2,2014Q3,-0.402458,False
+Trimmed mean,sarima,2014Q3,2014Q4,0.089672,False
+Trimmed mean,sarima,2014Q4,2015Q1,0.051315,False
+Trimmed mean,sarima,2015Q1,2015Q2,-0.030854,False
+Trimmed mean,sarima,2015Q2,2015Q3,-0.414907,False
+Trimmed mean,sarima,2015Q3,2015Q4,0.121494,False
+Trimmed mean,sarima,2015Q4,2016Q1,-0.340413,False
+Trimmed mean,sarima,2016Q1,2016Q2,0.030082,False
+Trimmed mean,sarima,2016Q2,2016Q3,-0.291269,False
+Trimmed mean,sarima,2016Q3,2016Q4,0.016092,False
+Trimmed mean,sarima,2016Q4,2017Q1,-0.000862,False
+Trimmed mean,sarima,2017Q1,2017Q2,-0.023863,False
+Trimmed mean,sarima,2017Q2,2017Q3,-0.164834,False
+Trimmed mean,sarima,2017Q3,2017Q4,-0.00162,False
+Trimmed mean,sarima,2017Q4,2018Q1,0.004516,False
+Trimmed mean,sarima,2018Q1,2018Q2,-0.11974,False
+Trimmed mean,sarima,2018Q2,2018Q3,0.025647,False
+Trimmed mean,sarima,2018Q3,2018Q4,0.081525,False
+Trimmed mean,sarima,2018Q4,2019Q1,-0.238628,False
+Trimmed mean,sarima,2019Q1,2019Q2,-0.138506,False
+Trimmed mean,sarima,2019Q2,2019Q3,0.077386,False
+Trimmed mean,sarima,2019Q3,2019Q4,0.081339,False
+Trimmed mean,sarima,2019Q4,2020Q1,0.038427,False
+Trimmed mean,sarima,2020Q1,2020Q2,-0.562481,False
+Trimmed mean,sarima,2020Q2,2020Q3,0.057423,False
+Trimmed mean,sarima,2020Q3,2020Q4,0.22603,False
+Trimmed mean,sarima,2020Q4,2021Q1,-0.163448,False
+Trimmed mean,sarima,2021Q1,2021Q2,0.18778,False
+Trimmed mean,sarima,2021Q2,2021Q3,0.412167,False
+Trimmed mean,sarima,2021Q3,2021Q4,0.45121,False
+Trimmed mean,sarima,2021Q4,2022Q1,0.829629,False
+Trimmed mean,sarima,2022Q1,2022Q2,0.58573,False
+Trimmed mean,sarima,2022Q2,2022Q3,0.593891,False
+Trimmed mean,sarima,2022Q3,2022Q4,0.088093,False
+Trimmed mean,sarima,2022Q4,2023Q1,-0.645303,False
+Trimmed mean,sarima,2023Q1,2023Q2,-0.380084,False
+Trimmed mean,sarima,2023Q2,2023Q3,0.143065,False
+Trimmed mean,sarima,2023Q3,2023Q4,-0.2419,False
+Trimmed mean,sarima,2023Q4,2024Q1,0.102927,False
+Trimmed mean,sarima,2025Q4,2026Q1,-0.007631272379098775,True
