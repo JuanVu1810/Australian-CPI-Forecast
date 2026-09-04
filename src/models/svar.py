@@ -70,6 +70,7 @@ DEFAULT_UPPER_QUANTILE = 0.9
 DEFAULT_BOOTSTRAP_REPLICATIONS = 1000
 DEFAULT_ARCH_LAGS = 4
 DEFAULT_WHITENESS_NLAGS = 10
+FORECAST_ORIGIN_PIN = pd.Period("2025Q4", freq="Q")
 
 
 @dataclass(frozen=True)
@@ -345,12 +346,14 @@ def forecast_svar(
     return forecast_from_fit(fitted=fitted, steps=steps)
 
 
-def forecast_cumulative_unemployment_change(horizon: int = 4) -> float:
-    """Return System B's cumulative unemployment-rate change in percentage points."""
+def forecast_cumulative_unemployment_change(horizon: int = 4) -> tuple[float, str]:
+    """Return System B's cumulative unemployment-rate change and forecast origin."""
     if horizon < 1:
         raise ValueError("horizon must be at least 1.")
 
     frame = load_svar_level_frame(columns=SYSTEM_B_COLUMNS)
+    frame = frame.loc[frame.index <= FORECAST_ORIGIN_PIN]
+    forecast_origin = str(frame.index[-1])
     fitted = fit_svar(
         frame,
         lag_order=DEFAULT_SVAR_LAG_ORDER,
@@ -359,7 +362,7 @@ def forecast_cumulative_unemployment_change(horizon: int = 4) -> float:
     forecast = forecast_from_fit(fitted, steps=horizon)
     current_unemployment = frame["unemployment_rate"].iloc[-1]
     forecasted_unemployment = forecast["unemployment_rate"].iloc[horizon - 1]
-    return float(forecasted_unemployment - current_unemployment)
+    return float(forecasted_unemployment - current_unemployment), forecast_origin
 
 
 def simulate_paths_from_fit(

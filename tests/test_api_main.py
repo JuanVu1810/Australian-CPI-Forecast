@@ -362,7 +362,7 @@ def test_credit_risk_stress_test_returns_svar_pd_segments(monkeypatch, tmp_path)
 
     def fake_unemployment_change(horizon):
         assert horizon == 2
-        return 2.0
+        return 2.0, "2021Q3"
 
     monkeypatch.setattr(
         api_main.svar,
@@ -372,8 +372,8 @@ def test_credit_risk_stress_test_returns_svar_pd_segments(monkeypatch, tmp_path)
 
     payload = api_main.credit_risk_stress_test(horizon=2).model_dump()
 
-    assert payload["forecast_origin"] == "2021Q4"
-    assert payload["target_quarter"] == "2022Q2"
+    assert payload["forecast_origin"] == "2021Q3"
+    assert payload["target_quarter"] == "2022Q1"
     assert payload["horizon"] == 2
     assert payload["delta_unemployment_cumulative"] == pytest.approx(2.0)
     assert payload["caveat"] == api_main.credit_stress.CREDIT_STRESS_CAVEAT
@@ -409,7 +409,7 @@ def test_credit_risk_stress_test_converts_value_errors_to_503(monkeypatch, tmp_p
     monkeypatch.setattr(
         api_main.svar,
         "forecast_cumulative_unemployment_change",
-        lambda horizon: 1.0,
+        lambda horizon: (1.0, "2021Q4"),
     )
 
     def run_with_malformed_assumptions(delta_unemployment_cumulative):

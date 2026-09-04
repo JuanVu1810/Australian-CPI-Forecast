@@ -32,6 +32,9 @@ Writes to reports/tableau/:
                                    a readable feature_label and an
                                    is_exogenous flag separating macro drivers
                                    from the model's own autoregressive lags
+    svar_irf.csv             -- target responses to one-SD recursive Cholesky
+                                structural shocks in the four SVAR exogenous
+                                variables, with bootstrap bands
 """
 
 from __future__ import annotations
@@ -42,11 +45,15 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from src.models import svar
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CURATED_DATA_PATH = PROJECT_ROOT / "data/curated/quarterly_macro_features.csv"
 SERIES_AVAILABILITY_PATH = PROJECT_ROOT / "data/metadata/series_availability.csv"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "reports/tableau"
 DEFAULT_API_BASE_URL = "http://localhost:8000"
+SVAR_EXPORT_FORECAST_ORIGIN = svar.FORECAST_ORIGIN_PIN
+SVAR_EXPORT_HORIZONS = tuple(range(1, 9))
 
 HISTORICAL_INDICATOR_COLUMNS = {
     "cpi_yoy": "Headline CPI YoY",
@@ -108,6 +115,19 @@ FORECAST_TARGETS = {
         "endpoint": "/forecast/trimmed-mean/all",
         "comparison_report": PROJECT_ROOT / "reports/model_comparison_trimmed_mean_all.csv",
         "coverage_report": PROJECT_ROOT / "reports/model_interval_coverage_trimmed_mean.csv",
+    },
+}
+
+SVAR_SYSTEMS = {
+    "System A": {
+        "target": "cpi_yoy",
+        "columns": svar.SYSTEM_A_COLUMNS,
+        "ordering": svar.SYSTEM_A_CHOLESKY_ORDER,
+    },
+    "System B": {
+        "target": "trimmed_mean_cpi_yoy",
+        "columns": svar.SYSTEM_B_COLUMNS,
+        "ordering": svar.SYSTEM_B_CHOLESKY_ORDER,
     },
 }
 
@@ -278,6 +298,55 @@ def build_feature_importance_frame() -> pd.DataFrame:
     return combined[["target", "horizon", "feature", "feature_label", "is_exogenous", "coef", "abs_coef"]]
 
 
+def build_svar_irf_frame() -> pd.DataFrame:
+    frames = []
+    for system, config in SVAR_SYSTEMS.items():
+        target = str(config["target"])
+        frame = svar.load_svar_level_frame(columns=config["columns"])
+        frame = frame.loc[frame.index <= SVAR_EXPORT_FORECAST_ORIGIN]
+        fitted = svar.fit_svar(frame, ordering=config["ordering"])
+        point = svar.recursive_cholesky_irfs(
+            fitted,
+            horizons=SVAR_EXPORT_HORIZONS,
+        )
+        bands = svar.bootstrap_cholesky_irf_bands(
+            fitted,
+            horizons=SVAR_EXPORT_HORIZONS,
+        )
+        combined = point.merge(
+            bands.drop(columns=["irf"]),
+            on=["response", "shock", "horizon"],
+            how="left",
+        )
+        filtered = combined.loc[
+            combined["response"].eq(target)
+            & combined["shock"].isin(svar.COMMON_MACRO_COLUMNS)
+        ].copy()
+        filtered["system"] = system
+        filtered["target"] = target
+        filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
+        frames.append(filtered)
+
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)[
+        [
+            "system",
+            "target",
+            "forecast_origin",
+            "response",
+            "shock",
+            "horizon",
+            "irf",
+            "lower",
+            "upper",
+            "lower_quantile",
+            "upper_quantile",
+            "bootstrap_replications",
+        ]
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-base-url", default=DEFAULT_API_BASE_URL)
@@ -310,8 +379,9 @@ def main() -> None:
     build_feature_importance_frame().to_csv(
         args.output_dir / "elastic_net_feature_importance.csv", index=False
     )
+    build_svar_irf_frame().to_csv(args.output_dir / "svar_irf.csv", index=False)
 
-    print(f"Wrote 8 CSVs to {args.output_dir}")
+    print(f"Wrote 9 CSVs to {args.output_dir}")
 
 
 if __name__ == "__main__":

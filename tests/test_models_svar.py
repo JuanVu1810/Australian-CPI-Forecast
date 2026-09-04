@@ -212,12 +212,13 @@ def test_simulate_paths_from_fit_slices_presample_and_returns_stochastic_first_s
 def test_forecast_cumulative_unemployment_change_uses_system_b(monkeypatch):
     frame = pd.DataFrame(
         {
-            "trimmed_mean_cpi_yoy": [2.1, 2.2, 2.3],
-            "unemployment_rate": [4.1, 4.2, 4.3],
-            "cash_rate": [3.8, 3.9, 4.0],
-            "commodity_growth": [0.5, 0.6, 0.7],
-            "inflation_expectations_business": [3.0, 3.1, 3.2],
-        }
+            "trimmed_mean_cpi_yoy": [2.1, 2.2, 2.3, 8.9],
+            "unemployment_rate": [4.1, 4.2, 4.3, 9.9],
+            "cash_rate": [3.8, 3.9, 4.0, 8.8],
+            "commodity_growth": [0.5, 0.6, 0.7, 7.7],
+            "inflation_expectations_business": [3.0, 3.1, 3.2, 6.6],
+        },
+        index=pd.period_range("2025Q2", periods=4, freq="Q"),
     )
     fit_marker = object()
 
@@ -226,7 +227,7 @@ def test_forecast_cumulative_unemployment_change_uses_system_b(monkeypatch):
         return frame
 
     def fake_fit_svar(data, lag_order, ordering):
-        assert data is frame
+        assert data.index.tolist() == list(pd.period_range("2025Q2", "2025Q4", freq="Q"))
         assert lag_order == svar.DEFAULT_SVAR_LAG_ORDER
         assert ordering == svar.SYSTEM_B_CHOLESKY_ORDER
         return fit_marker
@@ -240,9 +241,10 @@ def test_forecast_cumulative_unemployment_change_uses_system_b(monkeypatch):
     monkeypatch.setattr(svar, "fit_svar", fake_fit_svar)
     monkeypatch.setattr(svar, "forecast_from_fit", fake_forecast_from_fit)
 
-    change = svar.forecast_cumulative_unemployment_change(horizon=3)
+    change, forecast_origin = svar.forecast_cumulative_unemployment_change(horizon=3)
 
     assert change == pytest.approx(0.6)
+    assert forecast_origin == "2025Q4"
 
 
 def test_forecast_cumulative_unemployment_change_requires_positive_horizon():

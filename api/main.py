@@ -1048,10 +1048,10 @@ def credit_risk_stress_test(
     horizon: int = CREDIT_STRESS_DEFAULT_HORIZON,
 ) -> CreditRiskStressTestResponse:
     try:
-        curated = load_curated_data()
-        forecast_origin = str(curated.iloc[-1]["quarter"])
+        delta, forecast_origin = svar.forecast_cumulative_unemployment_change(
+            horizon=horizon
+        )
         target_quarter = next_quarters(forecast_origin, horizon)[-1]
-        delta = svar.forecast_cumulative_unemployment_change(horizon=horizon)
         stress_frame = credit_stress.run_credit_stress_test(
             delta_unemployment_cumulative=delta
         )
