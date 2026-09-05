@@ -10,10 +10,29 @@ from src.models.svar import (
     compare_system_a_to_b_irf_bands,
     check_var_stability,
     bootstrap_cholesky_irf_bands,
+    historical_decomposition,
     johansen_cointegration_check,
     select_bic_lag_order,
+    structural_shocks,
     system_a_requires_full_treatment,
 )
+
+
+def _synthetic_var_frame(
+    n_obs: int = 140,
+    columns: tuple[str, ...] = ("commodity_growth", "cpi_yoy", "cash_rate"),
+) -> pd.DataFrame:
+    rng = np.random.default_rng(202609)
+    values = np.zeros((n_obs, len(columns)))
+    coefficients = np.diag(np.linspace(0.18, 0.32, len(columns)))
+    innovations = rng.normal(scale=0.2, size=values.shape)
+    for index in range(1, len(values)):
+        values[index] = coefficients @ values[index - 1] + innovations[index]
+    return pd.DataFrame(
+        values,
+        index=pd.period_range("1995Q1", periods=n_obs, freq="Q"),
+        columns=list(columns),
+    )
 
 
 def test_calculate_dof_lag_cap_uses_lag_adjusted_usable_observations():
@@ -184,6 +203,50 @@ def test_recursive_cholesky_period_zero_last_ordered_shock_has_no_earlier_effect
     assert np.array_equal(
         period_zero_irfs[earlier_indices, cash_rate_index],
         np.zeros(len(earlier_indices)),
+    )
+
+
+def test_structural_shocks_reconstruct_reduced_form_residuals():
+    data = _synthetic_var_frame()
+    fitted = svar.fit_svar(data, lag_order=1)
+    impact = np.asarray(fitted.irf(periods=1).P, dtype=float)
+
+    np.testing.assert_allclose(fitted.irf(periods=0).orth_irfs[0], impact)
+
+    shocks = structural_shocks(fitted)
+    wide = shocks.pivot(index="quarter", columns="shock", values="shock_value")
+    wide = wide.loc[fitted.resid.index, fitted.names]
+    reconstructed = wide.to_numpy(dtype=float) @ impact.T
+
+    assert shocks["quarter"].drop_duplicates().tolist() == list(
+        data.index[fitted.k_ar :]
+    )
+    np.testing.assert_allclose(
+        reconstructed,
+        fitted.resid.to_numpy(dtype=float),
+        rtol=1e-10,
+        atol=1e-10,
+    )
+
+
+def test_historical_decomposition_reconstructs_actual_synthetic_var_path():
+    data = _synthetic_var_frame()
+    fitted = svar.fit_svar(data, lag_order=1)
+
+    decomposition = historical_decomposition(fitted)
+    reconstructed = (
+        decomposition.groupby(["quarter", "response"])["contribution"]
+        .sum()
+        .unstack("response")
+    )
+    actual = data.loc[data.index[fitted.k_ar :], fitted.names]
+
+    assert set(decomposition["component"]) == {"baseline", *fitted.names}
+    np.testing.assert_allclose(
+        reconstructed.loc[actual.index, actual.columns].to_numpy(dtype=float),
+        actual.to_numpy(dtype=float),
+        rtol=1e-6,
+        atol=1e-6,
     )
 
 

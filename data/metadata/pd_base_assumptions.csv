@@ -1,3 +1,3 @@
 segment,pd_base,note
-personal_loans,0.03,"Illustrative annual probability-of-default assumption for unsecured consumer lending; it is not calibrated to any real portfolio, including NAB's."
-mortgages,0.005,"Illustrative annual probability-of-default assumption for well-secured mortgage lending; it is not calibrated to any real portfolio, including NAB's."
+personal_loans,0.0878,"NAB's FY2025 Pillar 3 disclosed weighted-average PD for the 'other retail' Basel exposure class (Table CR6, as at 30 Sep 2025). 'Other retail' is broader than unsecured personal lending (it can include small-business retail exposures), so this is the closest disclosed proxy for this segment, not an exact category match."
+mortgages,0.0207,"NAB's FY2025 Pillar 3 disclosed weighted-average PD for the 'residential mortgage' Basel exposure class (Table CR6, as at 30 Sep 2025)."

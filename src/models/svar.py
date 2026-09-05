@@ -426,6 +426,82 @@ def recursive_cholesky_irfs(
     )
 
 
+def structural_shocks(fitted) -> pd.DataFrame:
+    """Recover recursive-Cholesky structural shocks from fitted VAR residuals."""
+    names = tuple(str(name) for name in fitted.names)
+    residuals = pd.DataFrame(
+        fitted.resid,
+        columns=list(names),
+        index=_residual_index(fitted),
+    )
+    impact = np.asarray(fitted.irf(periods=1).P, dtype=float)
+    period_zero_impact = np.asarray(fitted.irf(periods=0).orth_irfs[0], dtype=float)
+    if not np.allclose(period_zero_impact, impact):
+        raise ValueError("fitted IRF impact matrix orientation is inconsistent with P.")
+
+    shock_values = np.linalg.solve(impact, residuals.to_numpy(dtype=float).T).T
+    wide = pd.DataFrame(shock_values, index=residuals.index, columns=list(names))
+    return (
+        wide.reset_index(names="quarter")
+        .melt(id_vars="quarter", var_name="shock", value_name="shock_value")
+        .sort_values(["quarter", "shock"])
+        .reset_index(drop=True)
+    )
+
+
+def historical_decomposition(fitted) -> pd.DataFrame:
+    """Decompose fitted history into a zero-shock baseline and shock contributions."""
+    names = tuple(str(name) for name in fitted.names)
+    endog = np.asarray(fitted.endog, dtype=float)
+    lag_order = int(fitted.k_ar)
+    if lag_order < 1:
+        raise ValueError("fitted VAR must have a positive lag order.")
+    if len(endog) <= lag_order:
+        raise ValueError("fitted VAR history must exceed its lag order.")
+
+    labels = _fitted_index(fitted)
+    output_labels = labels[lag_order:]
+    baseline = _zero_shock_baseline(fitted)
+    shocks_wide = structural_shocks(fitted).pivot(
+        index="quarter",
+        columns="shock",
+        values="shock_value",
+    )
+    shocks_wide = shocks_wide.loc[output_labels, list(names)]
+    shocks = shocks_wide.to_numpy(dtype=float)
+
+    response_count = len(names)
+    shock_count = len(names)
+    output_count = len(output_labels)
+    irfs = np.asarray(fitted.irf(periods=len(endog)).orth_irfs, dtype=float)
+    contributions = np.zeros((output_count, response_count, shock_count), dtype=float)
+    for offset in range(output_count):
+        for horizon in range(offset + 1):
+            contributions[offset] += irfs[horizon] * shocks[offset - horizon][None, :]
+
+    rows: list[dict[str, object]] = []
+    for offset, quarter in enumerate(output_labels):
+        for response_index, response in enumerate(names):
+            rows.append(
+                {
+                    "quarter": quarter,
+                    "response": response,
+                    "component": "baseline",
+                    "contribution": float(baseline[lag_order + offset, response_index]),
+                }
+            )
+            for shock_index, shock in enumerate(names):
+                rows.append(
+                    {
+                        "quarter": quarter,
+                        "response": response,
+                        "component": shock,
+                        "contribution": float(contributions[offset, response_index, shock_index]),
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
 def bootstrap_cholesky_irf_bands(
     fitted,
     horizons: Sequence[int] = DEFAULT_HORIZONS,
@@ -678,6 +754,38 @@ def _future_index(fitted, steps: int) -> pd.Index:
     if isinstance(index, pd.DatetimeIndex) and index.freq is not None:
         return pd.date_range(last + index.freq, periods=steps, freq=index.freq)
     return pd.RangeIndex(start=len(index), stop=len(index) + steps)
+
+
+def _fitted_index(fitted) -> pd.Index:
+    labels = getattr(fitted.model.data, "row_labels", None)
+    if labels is None or len(labels) == 0:
+        return pd.RangeIndex(start=0, stop=len(fitted.endog))
+    return pd.Index(labels)
+
+
+def _residual_index(fitted) -> pd.Index:
+    residual_index = getattr(fitted.resid, "index", None)
+    if residual_index is not None:
+        return pd.Index(residual_index)
+    return _fitted_index(fitted)[fitted.k_ar :]
+
+
+def _zero_shock_baseline(fitted) -> np.ndarray:
+    endog = np.asarray(fitted.endog, dtype=float)
+    lag_order = int(fitted.k_ar)
+    values = np.zeros_like(endog, dtype=float)
+    values[:lag_order] = endog[:lag_order]
+    deterministic = np.asarray(fitted.endog_lagged, dtype=float)[:, : fitted.k_trend]
+    deterministic_coefficients = np.asarray(fitted.params, dtype=float)[: fitted.k_trend]
+    for t in range(lag_order, len(endog)):
+        if fitted.k_trend:
+            predicted = deterministic[t - lag_order] @ deterministic_coefficients
+        else:
+            predicted = np.zeros(endog.shape[1], dtype=float)
+        for lag in range(1, lag_order + 1):
+            predicted += np.asarray(fitted.coefs[lag - 1], dtype=float) @ values[t - lag]
+        values[t] = predicted
+    return values
 
 
 def _irf_array_to_frame(

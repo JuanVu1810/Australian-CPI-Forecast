@@ -56,10 +56,12 @@ def test_load_pd_base_assumptions_reads_real_metadata_file():
     assert set(assumptions["segment"]) == {"personal_loans", "mortgages"}
     personal = assumptions.set_index("segment").loc["personal_loans"]
     mortgage = assumptions.set_index("segment").loc["mortgages"]
-    assert personal["pd_base"] == pytest.approx(0.03)
-    assert mortgage["pd_base"] == pytest.approx(0.005)
-    assert "not calibrated to any real portfolio" in personal["note"]
-    assert "not calibrated to any real portfolio" in mortgage["note"]
+    assert personal["pd_base"] == pytest.approx(0.0878)
+    assert mortgage["pd_base"] == pytest.approx(0.0207)
+    assert "NAB" in personal["note"]
+    assert "Pillar 3" in personal["note"]
+    assert "not an exact category match" in personal["note"]
+    assert "residential mortgage" in mortgage["note"]
 
 
 def test_run_credit_stress_test_returns_two_segment_frame():
@@ -75,4 +77,4 @@ def test_run_credit_stress_test_returns_two_segment_frame():
     ]
     assert result["ur_sensitivity"].tolist() == [0.4, 0.6]
     assert result["delta_unemployment_cumulative"].tolist() == [2.0, 2.0]
-    assert result["pd_stressed"].tolist() == pytest.approx([0.038, 0.017])
+    assert result["pd_stressed"].tolist() == pytest.approx([0.0958, 0.0327])

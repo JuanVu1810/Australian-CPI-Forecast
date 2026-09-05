@@ -35,6 +35,13 @@ Writes to reports/tableau/:
     svar_irf.csv             -- target responses to one-SD recursive Cholesky
                                 structural shocks in the four SVAR exogenous
                                 variables, with bootstrap bands
+    svar_shock_events.csv    -- located historical own-target structural
+                                shocks, standardized within each system's own
+                                history
+    svar_historical_decomposition.csv -- each target's actual fitted-history
+                                path decomposed into the zero-shock baseline,
+                                target own-shock, and four exogenous-shock
+                                contributions
     drift_error_check.csv     -- every forecast that now has a real outcome,
                                 compared against that model's own historical
                                 walk-forward error distribution at that horizon
@@ -56,6 +63,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -361,6 +369,71 @@ def build_svar_irf_frame() -> pd.DataFrame:
     ]
 
 
+def build_svar_shock_events_frame() -> pd.DataFrame:
+    frames = []
+    for system, config in SVAR_SYSTEMS.items():
+        target = str(config["target"])
+        frame = svar.load_svar_level_frame(columns=config["columns"])
+        frame = frame.loc[frame.index <= SVAR_EXPORT_FORECAST_ORIGIN]
+        fitted = svar.fit_svar(frame, ordering=config["ordering"])
+        shocks = svar.structural_shocks(fitted)
+        # Locate quarters where the system target itself has an unusual
+        # structural shock; macro-driver contributions are shown separately
+        # in svar_historical_decomposition.csv.
+        filtered = shocks.loc[shocks["shock"].eq(target)].copy()
+        stats = filtered.groupby("shock")["shock_value"].agg(["mean", "std"])
+        filtered = filtered.join(stats, on="shock")
+        shock_std = filtered["std"].replace(0, np.nan)
+        filtered["shock_z"] = (filtered["shock_value"] - filtered["mean"]) / shock_std
+        filtered["flagged"] = filtered["shock_z"].abs().gt(2).fillna(False).astype(bool)
+        filtered["system"] = system
+        filtered["target"] = target
+        filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
+        frames.append(filtered)
+
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)[
+        [
+            "system",
+            "target",
+            "forecast_origin",
+            "quarter",
+            "shock",
+            "shock_z",
+            "flagged",
+        ]
+    ]
+
+
+def build_svar_historical_decomposition_frame() -> pd.DataFrame:
+    frames = []
+    for system, config in SVAR_SYSTEMS.items():
+        target = str(config["target"])
+        frame = svar.load_svar_level_frame(columns=config["columns"])
+        frame = frame.loc[frame.index <= SVAR_EXPORT_FORECAST_ORIGIN]
+        fitted = svar.fit_svar(frame, ordering=config["ordering"])
+        decomposition = svar.historical_decomposition(fitted)
+        filtered = decomposition.loc[decomposition["response"].eq(target)].copy()
+        filtered["system"] = system
+        filtered["target"] = target
+        filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
+        frames.append(filtered)
+
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)[
+        [
+            "system",
+            "target",
+            "forecast_origin",
+            "quarter",
+            "component",
+            "contribution",
+        ]
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-base-url", default=DEFAULT_API_BASE_URL)
@@ -397,6 +470,10 @@ def main() -> None:
         args.output_dir / "elastic_net_feature_importance.csv", index=False
     )
     build_svar_irf_frame().to_csv(args.output_dir / "svar_irf.csv", index=False)
+    build_svar_shock_events_frame().to_csv(args.output_dir / "svar_shock_events.csv", index=False)
+    build_svar_historical_decomposition_frame().to_csv(
+        args.output_dir / "svar_historical_decomposition.csv", index=False
+    )
     drift_monitor.build_drift_error_check_frame(forecast_frame, historical_frame).to_csv(
         args.output_dir / "drift_error_check.csv", index=False
     )
@@ -407,7 +484,7 @@ def main() -> None:
         args.output_dir / "drift_covariate_check.csv", index=False
     )
 
-    print(f"Wrote 12 CSVs to {args.output_dir}")
+    print(f"Wrote 14 CSVs to {args.output_dir}")
 
 
 if __name__ == "__main__":

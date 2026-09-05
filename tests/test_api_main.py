@@ -380,15 +380,15 @@ def test_credit_risk_stress_test_returns_svar_pd_segments(monkeypatch, tmp_path)
     assert payload["segments"] == [
         {
             "segment": "personal_loans",
-            "pd_base": pytest.approx(0.03),
+            "pd_base": pytest.approx(0.0878),
             "ur_sensitivity": pytest.approx(0.4),
-            "pd_stressed": pytest.approx(0.038),
+            "pd_stressed": pytest.approx(0.0958),
         },
         {
             "segment": "mortgages",
-            "pd_base": pytest.approx(0.005),
+            "pd_base": pytest.approx(0.0207),
             "ur_sensitivity": pytest.approx(0.6),
-            "pd_stressed": pytest.approx(0.017),
+            "pd_stressed": pytest.approx(0.0327),
         },
     ]
 
