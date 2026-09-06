@@ -1,0 +1,17 @@
+system,system_target,forecast_origin,quarter,horizon,unemployment_rate_origin,unemployment_rate_forecast,p10,p90,cumulative_change_vs_origin
+A,cpi_yoy,2025Q4,2026Q1,1,4.257,4.314,4.03,4.622,0.057
+A,cpi_yoy,2025Q4,2026Q2,2,4.257,4.397,3.937,4.917,0.139
+A,cpi_yoy,2025Q4,2026Q3,3,4.257,4.475,3.867,5.139,0.218
+A,cpi_yoy,2025Q4,2026Q4,4,4.257,4.548,3.853,5.313,0.291
+A,cpi_yoy,2025Q4,2027Q1,5,4.257,4.603,3.832,5.415,0.346
+A,cpi_yoy,2025Q4,2027Q2,6,4.257,4.643,3.813,5.563,0.386
+A,cpi_yoy,2025Q4,2027Q3,7,4.257,4.671,3.775,5.619,0.414
+A,cpi_yoy,2025Q4,2027Q4,8,4.257,4.694,3.761,5.647,0.437
+B,trimmed_mean_cpi_yoy,2025Q4,2026Q1,1,4.257,4.308,3.999,4.62,0.051
+B,trimmed_mean_cpi_yoy,2025Q4,2026Q2,2,4.257,4.367,3.858,4.864,0.109
+B,trimmed_mean_cpi_yoy,2025Q4,2026Q3,3,4.257,4.425,3.788,5.073,0.168
+B,trimmed_mean_cpi_yoy,2025Q4,2026Q4,4,4.257,4.481,3.694,5.243,0.223
+B,trimmed_mean_cpi_yoy,2025Q4,2027Q1,5,4.257,4.531,3.654,5.355,0.274
+B,trimmed_mean_cpi_yoy,2025Q4,2027Q2,6,4.257,4.576,3.637,5.411,0.319
+B,trimmed_mean_cpi_yoy,2025Q4,2027Q3,7,4.257,4.617,3.643,5.521,0.36
+B,trimmed_mean_cpi_yoy,2025Q4,2027Q4,8,4.257,4.655,3.635,5.56,0.398
