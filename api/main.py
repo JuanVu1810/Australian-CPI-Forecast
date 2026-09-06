@@ -72,7 +72,7 @@ RBA_ACTION_CAVEAT = (
     "confidence intervals cross zero in reports/rba_classifier_evaluation.md."
 )
 CREDIT_STRESS_DEFAULT_HORIZON = signature(
-    svar.forecast_cumulative_unemployment_change
+    svar.forecast_cumulative_unemployment_change_quantiles
 ).parameters["horizon"].default
 
 app = FastAPI(
@@ -137,18 +137,28 @@ class RbaActionResponse(BaseModel):
     caveat: str
 
 
+class CreditRiskScenario(BaseModel):
+    name: str
+    probability_weight: float
+    delta_unemployment_cumulative: float
+
+
 class CreditStressSegmentResult(BaseModel):
     segment: str
     pd_base: float
     ur_sensitivity: float
-    pd_stressed: float
+    lgd: float
+    ead_aud_m: float
+    pd_stressed_by_scenario: dict[str, float]
+    ecl_aud_m_by_scenario: dict[str, float]
+    ecl_aud_m_12m_probability_weighted: float
 
 
 class CreditRiskStressTestResponse(BaseModel):
     forecast_origin: str
     target_quarter: str
     horizon: int
-    delta_unemployment_cumulative: float
+    scenarios: list[CreditRiskScenario]
     segments: list[CreditStressSegmentResult]
     caveat: str
 
@@ -1050,33 +1060,60 @@ def rba_action() -> RbaActionResponse:
 def credit_risk_stress_test(
     horizon: int = CREDIT_STRESS_DEFAULT_HORIZON,
 ) -> CreditRiskStressTestResponse:
+    scenario_names = list(credit_stress.SCENARIO_QUANTILES)
+    quantiles = [credit_stress.SCENARIO_QUANTILES[name] for name in scenario_names]
     try:
-        delta, forecast_origin = svar.forecast_cumulative_unemployment_change(
-            horizon=horizon
+        deltas, forecast_origin = svar.forecast_cumulative_unemployment_change_quantiles(
+            horizon=horizon, quantiles=quantiles
         )
         target_quarter = next_quarters(forecast_origin, horizon)[-1]
+        scenario_deltas = dict(zip(scenario_names, deltas))
         stress_frame = credit_stress.run_credit_stress_test(
-            delta_unemployment_cumulative=delta
+            scenario_deltas=scenario_deltas
         )
     except HTTPException:
         raise
     except (RuntimeError, ValueError, OSError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    segments = [
-        CreditStressSegmentResult(
-            segment=str(row["segment"]),
-            pd_base=float(row["pd_base"]),
-            ur_sensitivity=float(row["ur_sensitivity"]),
-            pd_stressed=float(row["pd_stressed"]),
+    scenarios = [
+        CreditRiskScenario(
+            name=name,
+            probability_weight=float(credit_stress.SCENARIO_PROBABILITY_WEIGHTS[name]),
+            delta_unemployment_cumulative=float(scenario_deltas[name]),
         )
-        for _, row in stress_frame.iterrows()
+        for name in scenario_names
     ]
+    segments = []
+    for segment, segment_frame in stress_frame.groupby("segment", sort=False):
+        pd_stressed_by_scenario = dict(
+            zip(segment_frame["scenario"], segment_frame["pd_stressed"].astype(float))
+        )
+        ecl_by_scenario = dict(
+            zip(segment_frame["scenario"], segment_frame["ecl_aud_m"].astype(float))
+        )
+        ecl_weighted = float(
+            (segment_frame["probability_weight"] * segment_frame["ecl_aud_m"]).sum()
+        )
+        first_row = segment_frame.iloc[0]
+        segments.append(
+            CreditStressSegmentResult(
+                segment=str(segment),
+                pd_base=float(first_row["pd_base"]),
+                ur_sensitivity=float(first_row["ur_sensitivity"]),
+                lgd=float(first_row["lgd"]),
+                ead_aud_m=float(first_row["ead_aud_m"]),
+                pd_stressed_by_scenario=pd_stressed_by_scenario,
+                ecl_aud_m_by_scenario=ecl_by_scenario,
+                ecl_aud_m_12m_probability_weighted=ecl_weighted,
+            )
+        )
+
     return CreditRiskStressTestResponse(
         forecast_origin=forecast_origin,
         target_quarter=target_quarter,
         horizon=int(horizon),
-        delta_unemployment_cumulative=float(delta),
+        scenarios=scenarios,
         segments=segments,
         caveat=credit_stress.CREDIT_STRESS_CAVEAT,
     )

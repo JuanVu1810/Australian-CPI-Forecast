@@ -64,17 +64,69 @@ def test_load_pd_base_assumptions_reads_real_metadata_file():
     assert "residential mortgage" in mortgage["note"]
 
 
-def test_run_credit_stress_test_returns_two_segment_frame():
-    result = credit_stress.run_credit_stress_test(delta_unemployment_cumulative=2.0)
+def test_load_lgd_ead_assumptions_reads_real_metadata_file():
+    assumptions = credit_stress.load_lgd_ead_assumptions()
 
-    assert result["segment"].tolist() == ["personal_loans", "mortgages"]
+    assert set(assumptions["segment"]) == {"personal_loans", "mortgages"}
+    personal = assumptions.set_index("segment").loc["personal_loans"]
+    mortgage = assumptions.set_index("segment").loc["mortgages"]
+    assert personal["lgd"] == pytest.approx(0.73)
+    assert personal["ead_aud_m"] == pytest.approx(1663.0)
+    assert mortgage["lgd"] == pytest.approx(0.16)
+    assert mortgage["ead_aud_m"] == pytest.approx(429996.0)
+    assert "NAB" in personal["note"]
+    assert "Table CR6" in personal["note"]
+    assert "not an exact category match" in personal["note"]
+    assert "residential mortgage" in mortgage["note"]
+
+
+def test_run_credit_stress_test_returns_segment_by_scenario_frame():
+    scenario_deltas = {"downside": -1.0, "base": 0.0, "upside": 2.0}
+
+    result = credit_stress.run_credit_stress_test(scenario_deltas=scenario_deltas)
+
     assert list(result.columns) == [
         "segment",
+        "scenario",
+        "probability_weight",
+        "delta_unemployment_cumulative",
         "pd_base",
         "ur_sensitivity",
-        "delta_unemployment_cumulative",
+        "lgd",
+        "ead_aud_m",
         "pd_stressed",
+        "ecl_aud_m",
     ]
-    assert result["ur_sensitivity"].tolist() == [0.4, 0.6]
-    assert result["delta_unemployment_cumulative"].tolist() == [2.0, 2.0]
-    assert result["pd_stressed"].tolist() == pytest.approx([0.0958, 0.0327])
+    assert set(result["segment"]) == {"personal_loans", "mortgages"}
+    assert set(result["scenario"]) == set(scenario_deltas)
+    assert len(result) == 6
+
+    personal_upside = result.loc[
+        (result["segment"] == "personal_loans") & (result["scenario"] == "upside")
+    ].iloc[0]
+    expected_personal_pd = credit_stress.personal_loan_stressed_pd(0.0878, 2.0)
+    assert personal_upside["pd_stressed"] == pytest.approx(expected_personal_pd)
+    assert personal_upside["lgd"] == pytest.approx(0.73)
+    assert personal_upside["ead_aud_m"] == pytest.approx(1663.0)
+    assert personal_upside["ecl_aud_m"] == pytest.approx(
+        expected_personal_pd * 0.73 * 1663.0
+    )
+    assert personal_upside["probability_weight"] == pytest.approx(
+        credit_stress.SCENARIO_PROBABILITY_WEIGHTS["upside"]
+    )
+
+    mortgage_downside = result.loc[
+        (result["segment"] == "mortgages") & (result["scenario"] == "downside")
+    ].iloc[0]
+    expected_mortgage_pd = credit_stress.mortgage_stressed_pd(0.0207, -1.0)
+    assert mortgage_downside["pd_stressed"] == pytest.approx(expected_mortgage_pd)
+    assert mortgage_downside["lgd"] == pytest.approx(0.16)
+    assert mortgage_downside["ead_aud_m"] == pytest.approx(429996.0)
+    assert mortgage_downside["ecl_aud_m"] == pytest.approx(
+        expected_mortgage_pd * 0.16 * 429996.0
+    )
+
+
+def test_run_credit_stress_test_requires_weight_for_every_scenario():
+    with pytest.raises(ValueError, match="Scenario weights missing"):
+        credit_stress.run_credit_stress_test(scenario_deltas={"unknown_scenario": 1.0})

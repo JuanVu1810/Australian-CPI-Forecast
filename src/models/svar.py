@@ -410,6 +410,43 @@ def simulate_svar_paths(
     return simulate_paths_from_fit(fitted=fitted, steps=steps, n_sims=n_sims, seed=seed)
 
 
+def forecast_cumulative_unemployment_change_quantiles(
+    horizon: int = 4,
+    quantiles: Sequence[float] = (DEFAULT_LOWER_QUANTILE, 0.5, DEFAULT_UPPER_QUANTILE),
+    n_sims: int = DEFAULT_BOOTSTRAP_REPLICATIONS,
+    seed: int = 42,
+) -> tuple[list[float], str]:
+    """Return quantiles of System B's simulated cumulative unemployment-rate change.
+
+    Reuses the same block-bootstrap simulation machinery as
+    ``simulate_paths_from_fit`` (already used for IRF bands and CPI simulation
+    fans) instead of a single deterministic mean-path forecast, so callers can
+    build probability-weighted scenarios from one simulated distribution.
+    """
+    if horizon < 1:
+        raise ValueError("horizon must be at least 1.")
+
+    frame = load_svar_level_frame(columns=SYSTEM_B_COLUMNS)
+    frame = frame.loc[frame.index <= FORECAST_ORIGIN_PIN]
+    forecast_origin = str(frame.index[-1])
+    fitted = fit_svar(
+        frame,
+        lag_order=DEFAULT_SVAR_LAG_ORDER,
+        ordering=SYSTEM_B_CHOLESKY_ORDER,
+    )
+    paths = simulate_paths_from_fit(fitted, steps=horizon, n_sims=n_sims, seed=seed)
+    unemployment_index = fitted.names.index("unemployment_rate")
+    current_unemployment = frame["unemployment_rate"].iloc[-1]
+    simulated_cumulative_change = (
+        paths[:, horizon - 1, unemployment_index] - current_unemployment
+    )
+    deltas = [
+        float(np.quantile(simulated_cumulative_change, quantile))
+        for quantile in quantiles
+    ]
+    return deltas, forecast_origin
+
+
 def recursive_cholesky_irfs(
     fitted,
     horizons: Sequence[int] = DEFAULT_HORIZONS,

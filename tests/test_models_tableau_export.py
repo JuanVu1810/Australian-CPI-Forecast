@@ -122,3 +122,92 @@ def test_build_svar_historical_decomposition_frame_keeps_target_baseline_and_own
         *tableau_export.svar.COMMON_MACRO_COLUMNS,
     }
     assert len(decomposition) == 1 + 1 + len(tableau_export.svar.COMMON_MACRO_COLUMNS)
+
+
+def test_build_credit_stress_frame_flattens_segment_by_scenario_payload():
+    payload = {
+        "forecast_origin": "2025Q4",
+        "target_quarter": "2026Q4",
+        "horizon": 4,
+        "scenarios": [
+            {"name": "downside", "probability_weight": 0.425, "delta_unemployment_cumulative": 0.5},
+            {"name": "base", "probability_weight": 0.55, "delta_unemployment_cumulative": 0.2},
+            {"name": "upside", "probability_weight": 0.025, "delta_unemployment_cumulative": -0.1},
+        ],
+        "segments": [
+            {
+                "segment": "personal_loans",
+                "pd_base": 0.0878,
+                "ur_sensitivity": 0.4,
+                "lgd": 0.73,
+                "ead_aud_m": 1663.0,
+                "pd_stressed_by_scenario": {
+                    "downside": 0.0898,
+                    "base": 0.0886,
+                    "upside": 0.0878,
+                },
+                "ecl_aud_m_by_scenario": {
+                    "downside": 109.0,
+                    "base": 107.6,
+                    "upside": 106.6,
+                },
+                "ecl_aud_m_12m_probability_weighted": 107.9,
+            },
+            {
+                "segment": "mortgages",
+                "pd_base": 0.0207,
+                "ur_sensitivity": 0.6,
+                "lgd": 0.16,
+                "ead_aud_m": 429996.0,
+                "pd_stressed_by_scenario": {
+                    "downside": 0.0237,
+                    "base": 0.0219,
+                    "upside": 0.0207,
+                },
+                "ecl_aud_m_by_scenario": {
+                    "downside": 1630.0,
+                    "base": 1507.0,
+                    "upside": 1424.0,
+                },
+                "ecl_aud_m_12m_probability_weighted": 1553.0,
+            },
+        ],
+    }
+
+    frame = tableau_export.build_credit_stress_frame(payload)
+
+    assert list(frame.columns) == [
+        "segment",
+        "scenario",
+        "probability_weight",
+        "delta_unemployment_cumulative",
+        "pd_base",
+        "ur_sensitivity",
+        "lgd",
+        "ead_aud_m",
+        "pd_stressed",
+        "ecl_aud_m",
+        "ecl_aud_m_12m_probability_weighted",
+        "forecast_origin",
+        "target_quarter",
+        "horizon",
+    ]
+    assert len(frame) == 6
+    assert set(frame["segment"]) == {"personal_loans", "mortgages"}
+    assert set(frame["scenario"]) == {"downside", "base", "upside"}
+
+    personal_downside = frame.loc[
+        (frame["segment"] == "personal_loans") & (frame["scenario"] == "downside")
+    ].iloc[0]
+    assert personal_downside["probability_weight"] == 0.425
+    assert personal_downside["delta_unemployment_cumulative"] == 0.5
+    assert personal_downside["pd_stressed"] == 0.0898
+    assert personal_downside["ecl_aud_m"] == 109.0
+    assert personal_downside["ecl_aud_m_12m_probability_weighted"] == 107.9
+    assert personal_downside["forecast_origin"] == "2025Q4"
+    assert personal_downside["target_quarter"] == "2026Q4"
+    assert personal_downside["horizon"] == 4
+
+
+def test_build_credit_stress_frame_returns_empty_frame_for_no_segments():
+    assert tableau_export.build_credit_stress_frame({"segments": []}).empty

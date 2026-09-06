@@ -315,6 +315,73 @@ def test_forecast_cumulative_unemployment_change_requires_positive_horizon():
         svar.forecast_cumulative_unemployment_change(horizon=0)
 
 
+def test_forecast_cumulative_unemployment_change_quantiles_uses_system_b(monkeypatch):
+    frame = pd.DataFrame(
+        {
+            "trimmed_mean_cpi_yoy": [2.1, 2.2, 2.3, 8.9],
+            "unemployment_rate": [4.1, 4.2, 4.3, 9.9],
+            "cash_rate": [3.8, 3.9, 4.0, 8.8],
+            "commodity_growth": [0.5, 0.6, 0.7, 7.7],
+            "inflation_expectations_business": [3.0, 3.1, 3.2, 6.6],
+        },
+        index=pd.period_range("2025Q2", periods=4, freq="Q"),
+    )
+
+    class FakeFitted:
+        names = [
+            "trimmed_mean_cpi_yoy",
+            "unemployment_rate",
+            "cash_rate",
+            "commodity_growth",
+            "inflation_expectations_business",
+        ]
+
+    fitted_marker = FakeFitted()
+    simulated_unemployment = np.array([4.0, 4.4, 4.8, 5.2, 6.0])
+
+    def fake_load_svar_level_frame(columns):
+        assert columns == svar.SYSTEM_B_COLUMNS
+        return frame
+
+    def fake_fit_svar(data, lag_order, ordering):
+        assert data.index.tolist() == list(pd.period_range("2025Q2", "2025Q4", freq="Q"))
+        assert lag_order == svar.DEFAULT_SVAR_LAG_ORDER
+        assert ordering == svar.SYSTEM_B_CHOLESKY_ORDER
+        return fitted_marker
+
+    def fake_simulate_paths_from_fit(fitted, steps, n_sims, seed):
+        assert fitted is fitted_marker
+        assert steps == 3
+        assert n_sims == 5
+        assert seed == 7
+        paths = np.zeros((n_sims, steps, len(FakeFitted.names)))
+        paths[:, steps - 1, FakeFitted.names.index("unemployment_rate")] = (
+            simulated_unemployment
+        )
+        return paths
+
+    monkeypatch.setattr(svar, "load_svar_level_frame", fake_load_svar_level_frame)
+    monkeypatch.setattr(svar, "fit_svar", fake_fit_svar)
+    monkeypatch.setattr(svar, "simulate_paths_from_fit", fake_simulate_paths_from_fit)
+
+    deltas, forecast_origin = svar.forecast_cumulative_unemployment_change_quantiles(
+        horizon=3, quantiles=(0.1, 0.5, 0.9), n_sims=5, seed=7
+    )
+
+    current_unemployment = 4.3
+    expected = np.quantile(
+        simulated_unemployment - current_unemployment, [0.1, 0.5, 0.9]
+    ).tolist()
+    assert deltas == pytest.approx(expected)
+    assert deltas == sorted(deltas)
+    assert forecast_origin == "2025Q4"
+
+
+def test_forecast_cumulative_unemployment_change_quantiles_requires_positive_horizon():
+    with pytest.raises(ValueError, match="horizon must be at least 1"):
+        svar.forecast_cumulative_unemployment_change_quantiles(horizon=0)
+
+
 def test_draw_contiguous_residual_blocks_preserves_residual_runs():
     residuals = np.arange(24, dtype=float).reshape(12, 2)
     rng = np.random.default_rng(42)

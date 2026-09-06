@@ -13,7 +13,8 @@ Usage:
 Writes to reports/tableau/:
     forecast.csv              -- point + interval, all families, both targets
     rba_action.csv             -- all classifier rows from GET /rba-action
-    credit_stress.csv          -- PD stress-test rows from GET /credit-risk/stress-test
+    credit_stress.csv          -- illustrative 12-month ECL rows (segment x
+                                   scenario) from GET /credit-risk/stress-test
     model_comparison.csv       -- overall RMSE/MAE per family, both targets
     model_interval_coverage.csv -- overall coverage per family, both targets
     dataset_overview.csv       -- one-row summary of the curated dataset
@@ -215,14 +216,51 @@ def build_rba_action_frame(payload: dict) -> pd.DataFrame:
 
 
 def build_credit_stress_frame(payload: dict) -> pd.DataFrame:
-    frame = pd.DataFrame(payload.get("segments", []))
-    if frame.empty:
-        return frame
-    frame["forecast_origin"] = payload["forecast_origin"]
-    frame["target_quarter"] = payload["target_quarter"]
-    frame["horizon"] = payload["horizon"]
-    frame["delta_unemployment_cumulative"] = payload["delta_unemployment_cumulative"]
-    return frame
+    """Flatten the segment x scenario ECL payload into one row per pair.
+
+    ``payload["segments"]`` carries per-scenario values as dicts
+    (``pd_stressed_by_scenario``, ``ecl_aud_m_by_scenario``); this expands
+    them into a tidy long frame -- one row per segment per scenario -- using
+    ``payload["scenarios"]`` for each scenario's probability weight and
+    unemployment delta.
+    """
+    segments = payload.get("segments", [])
+    if not segments:
+        return pd.DataFrame()
+
+    scenario_weights = {
+        scenario["name"]: scenario["probability_weight"]
+        for scenario in payload.get("scenarios", [])
+    }
+    scenario_deltas = {
+        scenario["name"]: scenario["delta_unemployment_cumulative"]
+        for scenario in payload.get("scenarios", [])
+    }
+
+    rows = []
+    for segment in segments:
+        for scenario_name, pd_stressed in segment["pd_stressed_by_scenario"].items():
+            rows.append(
+                {
+                    "segment": segment["segment"],
+                    "scenario": scenario_name,
+                    "probability_weight": scenario_weights.get(scenario_name),
+                    "delta_unemployment_cumulative": scenario_deltas.get(scenario_name),
+                    "pd_base": segment["pd_base"],
+                    "ur_sensitivity": segment["ur_sensitivity"],
+                    "lgd": segment["lgd"],
+                    "ead_aud_m": segment["ead_aud_m"],
+                    "pd_stressed": pd_stressed,
+                    "ecl_aud_m": segment["ecl_aud_m_by_scenario"][scenario_name],
+                    "ecl_aud_m_12m_probability_weighted": segment[
+                        "ecl_aud_m_12m_probability_weighted"
+                    ],
+                    "forecast_origin": payload["forecast_origin"],
+                    "target_quarter": payload["target_quarter"],
+                    "horizon": payload["horizon"],
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def build_model_comparison_frame() -> pd.DataFrame:

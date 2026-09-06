@@ -355,19 +355,25 @@ def test_rba_action_converts_mlflow_errors_to_503(monkeypatch, tmp_path):
     assert "No finished MLflow run found" in exc_info.value.detail
 
 
-def test_credit_risk_stress_test_returns_svar_pd_segments(monkeypatch, tmp_path):
+def test_credit_risk_stress_test_returns_svar_ecl_segments(monkeypatch, tmp_path):
     curated_path = tmp_path / "curated.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
 
-    def fake_unemployment_change(horizon):
+    scenario_names = list(api_main.credit_stress.SCENARIO_QUANTILES)
+    fake_deltas = [-1.0, 0.0, 2.0]
+
+    def fake_unemployment_change_quantiles(horizon, quantiles):
         assert horizon == 2
-        return 2.0, "2021Q3"
+        assert list(quantiles) == [
+            api_main.credit_stress.SCENARIO_QUANTILES[name] for name in scenario_names
+        ]
+        return fake_deltas, "2021Q3"
 
     monkeypatch.setattr(
         api_main.svar,
-        "forecast_cumulative_unemployment_change",
-        fake_unemployment_change,
+        "forecast_cumulative_unemployment_change_quantiles",
+        fake_unemployment_change_quantiles,
     )
 
     payload = api_main.credit_risk_stress_test(horizon=2).model_dump()
@@ -375,20 +381,66 @@ def test_credit_risk_stress_test_returns_svar_pd_segments(monkeypatch, tmp_path)
     assert payload["forecast_origin"] == "2021Q3"
     assert payload["target_quarter"] == "2022Q1"
     assert payload["horizon"] == 2
-    assert payload["delta_unemployment_cumulative"] == pytest.approx(2.0)
     assert payload["caveat"] == api_main.credit_stress.CREDIT_STRESS_CAVEAT
+
+    scenario_deltas = dict(zip(scenario_names, fake_deltas))
+    weights = api_main.credit_stress.SCENARIO_PROBABILITY_WEIGHTS
+    assert payload["scenarios"] == [
+        {
+            "name": name,
+            "probability_weight": pytest.approx(weights[name]),
+            "delta_unemployment_cumulative": pytest.approx(scenario_deltas[name]),
+        }
+        for name in scenario_names
+    ]
+
+    personal_pd = {
+        name: api_main.credit_stress.personal_loan_stressed_pd(0.0878, delta)
+        for name, delta in scenario_deltas.items()
+    }
+    personal_ecl = {
+        name: pd_stressed * 0.73 * 1663.0 for name, pd_stressed in personal_pd.items()
+    }
+    mortgage_pd = {
+        name: api_main.credit_stress.mortgage_stressed_pd(0.0207, delta)
+        for name, delta in scenario_deltas.items()
+    }
+    mortgage_ecl = {
+        name: pd_stressed * 0.16 * 429996.0 for name, pd_stressed in mortgage_pd.items()
+    }
+
     assert payload["segments"] == [
         {
             "segment": "personal_loans",
             "pd_base": pytest.approx(0.0878),
             "ur_sensitivity": pytest.approx(0.4),
-            "pd_stressed": pytest.approx(0.0958),
+            "lgd": pytest.approx(0.73),
+            "ead_aud_m": pytest.approx(1663.0),
+            "pd_stressed_by_scenario": {
+                name: pytest.approx(value) for name, value in personal_pd.items()
+            },
+            "ecl_aud_m_by_scenario": {
+                name: pytest.approx(value) for name, value in personal_ecl.items()
+            },
+            "ecl_aud_m_12m_probability_weighted": pytest.approx(
+                sum(weights[name] * value for name, value in personal_ecl.items())
+            ),
         },
         {
             "segment": "mortgages",
             "pd_base": pytest.approx(0.0207),
             "ur_sensitivity": pytest.approx(0.6),
-            "pd_stressed": pytest.approx(0.0327),
+            "lgd": pytest.approx(0.16),
+            "ead_aud_m": pytest.approx(429996.0),
+            "pd_stressed_by_scenario": {
+                name: pytest.approx(value) for name, value in mortgage_pd.items()
+            },
+            "ecl_aud_m_by_scenario": {
+                name: pytest.approx(value) for name, value in mortgage_ecl.items()
+            },
+            "ecl_aud_m_12m_probability_weighted": pytest.approx(
+                sum(weights[name] * value for name, value in mortgage_ecl.items())
+            ),
         },
     ]
 
@@ -408,13 +460,13 @@ def test_credit_risk_stress_test_converts_value_errors_to_503(monkeypatch, tmp_p
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
     monkeypatch.setattr(
         api_main.svar,
-        "forecast_cumulative_unemployment_change",
-        lambda horizon: (1.0, "2021Q4"),
+        "forecast_cumulative_unemployment_change_quantiles",
+        lambda horizon, quantiles: ([1.0] * len(quantiles), "2021Q4"),
     )
 
-    def run_with_malformed_assumptions(delta_unemployment_cumulative):
+    def run_with_malformed_assumptions(scenario_deltas):
         return real_run_credit_stress_test(
-            delta_unemployment_cumulative=delta_unemployment_cumulative,
+            scenario_deltas=scenario_deltas,
             pd_base_path=bad_pd_base_path,
         )
 
