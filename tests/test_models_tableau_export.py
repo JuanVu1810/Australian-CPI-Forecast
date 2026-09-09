@@ -141,6 +141,7 @@ def test_build_credit_stress_frame_flattens_segment_by_scenario_payload():
                 "ur_sensitivity": 0.4,
                 "lgd": 0.73,
                 "ead_aud_m": 1663.0,
+                "discount_rate": 0.0886,
                 "pd_stressed_by_scenario": {
                     "downside": 0.0898,
                     "base": 0.0886,
@@ -159,6 +160,7 @@ def test_build_credit_stress_frame_flattens_segment_by_scenario_payload():
                 "ur_sensitivity": 0.6,
                 "lgd": 0.16,
                 "ead_aud_m": 429996.0,
+                "discount_rate": 0.068,
                 "pd_stressed_by_scenario": {
                     "downside": 0.0237,
                     "base": 0.0219,
@@ -185,6 +187,7 @@ def test_build_credit_stress_frame_flattens_segment_by_scenario_payload():
         "ur_sensitivity",
         "lgd",
         "ead_aud_m",
+        "discount_rate",
         "pd_stressed",
         "ecl_aud_m",
         "ecl_aud_m_12m_probability_weighted",
@@ -202,6 +205,7 @@ def test_build_credit_stress_frame_flattens_segment_by_scenario_payload():
     assert personal_downside["probability_weight"] == 0.425
     assert personal_downside["delta_unemployment_cumulative"] == 0.5
     assert personal_downside["pd_stressed"] == 0.0898
+    assert personal_downside["discount_rate"] == 0.0886
     assert personal_downside["ecl_aud_m"] == 109.0
     assert personal_downside["ecl_aud_m_12m_probability_weighted"] == 107.9
     assert personal_downside["forecast_origin"] == "2025Q4"

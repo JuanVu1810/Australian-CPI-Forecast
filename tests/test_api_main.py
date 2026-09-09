@@ -399,14 +399,16 @@ def test_credit_risk_stress_test_returns_svar_ecl_segments(monkeypatch, tmp_path
         for name, delta in scenario_deltas.items()
     }
     personal_ecl = {
-        name: pd_stressed * 0.73 * 1663.0 for name, pd_stressed in personal_pd.items()
+        name: pd_stressed * 0.73 * 1663.0 / (1 + 0.0886) ** 0.5
+        for name, pd_stressed in personal_pd.items()
     }
     mortgage_pd = {
         name: api_main.credit_stress.mortgage_stressed_pd(0.0207, delta)
         for name, delta in scenario_deltas.items()
     }
     mortgage_ecl = {
-        name: pd_stressed * 0.16 * 429996.0 for name, pd_stressed in mortgage_pd.items()
+        name: pd_stressed * 0.16 * 429996.0 / (1 + 0.0680) ** 0.5
+        for name, pd_stressed in mortgage_pd.items()
     }
 
     assert payload["segments"] == [
@@ -416,6 +418,7 @@ def test_credit_risk_stress_test_returns_svar_ecl_segments(monkeypatch, tmp_path
             "ur_sensitivity": pytest.approx(0.4),
             "lgd": pytest.approx(0.73),
             "ead_aud_m": pytest.approx(1663.0),
+            "discount_rate": pytest.approx(0.0886),
             "pd_stressed_by_scenario": {
                 name: pytest.approx(value) for name, value in personal_pd.items()
             },
@@ -432,6 +435,7 @@ def test_credit_risk_stress_test_returns_svar_ecl_segments(monkeypatch, tmp_path
             "ur_sensitivity": pytest.approx(0.6),
             "lgd": pytest.approx(0.16),
             "ead_aud_m": pytest.approx(429996.0),
+            "discount_rate": pytest.approx(0.0680),
             "pd_stressed_by_scenario": {
                 name: pytest.approx(value) for name, value in mortgage_pd.items()
             },

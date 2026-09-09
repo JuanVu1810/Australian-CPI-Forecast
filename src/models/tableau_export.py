@@ -250,6 +250,7 @@ def build_credit_stress_frame(payload: dict) -> pd.DataFrame:
                     "ur_sensitivity": segment["ur_sensitivity"],
                     "lgd": segment["lgd"],
                     "ead_aud_m": segment["ead_aud_m"],
+                    "discount_rate": segment["discount_rate"],
                     "pd_stressed": pd_stressed,
                     "ecl_aud_m": segment["ecl_aud_m_by_scenario"][scenario_name],
                     "ecl_aud_m_12m_probability_weighted": segment[

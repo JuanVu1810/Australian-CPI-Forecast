@@ -149,6 +149,7 @@ class CreditStressSegmentResult(BaseModel):
     ur_sensitivity: float
     lgd: float
     ead_aud_m: float
+    discount_rate: float
     pd_stressed_by_scenario: dict[str, float]
     ecl_aud_m_by_scenario: dict[str, float]
     ecl_aud_m_12m_probability_weighted: float
@@ -1103,6 +1104,7 @@ def credit_risk_stress_test(
                 ur_sensitivity=float(first_row["ur_sensitivity"]),
                 lgd=float(first_row["lgd"]),
                 ead_aud_m=float(first_row["ead_aud_m"]),
+                discount_rate=float(first_row["discount_rate"]),
                 pd_stressed_by_scenario=pd_stressed_by_scenario,
                 ecl_aud_m_by_scenario=ecl_by_scenario,
                 ecl_aud_m_12m_probability_weighted=ecl_weighted,
