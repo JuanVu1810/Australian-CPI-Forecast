@@ -43,6 +43,7 @@ from src.models.sarima import forecast_sarima
 from src.models.sarima import DEFAULT_ORDER as SARIMA_DEFAULT_ORDER
 from src.models.sarima import DEFAULT_SEASONAL_ORDER as SARIMA_DEFAULT_SEASONAL_ORDER
 from src.models.sarima import TRIMMED_MEAN_DEFAULT_ORDER, TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER
+from src.models import svar
 
 
 COMPARISON_ALL_OUTPUT_PATH = PROJECT_ROOT / "reports/model_comparison_all.csv"
@@ -233,10 +234,15 @@ def run_model_comparison_all(
             horizons=requested_horizons,
             path=dynamic_weights_source_path(target_column),
         )
-    series = load_target_series(curated_path, target_column=target_column)
+    series = load_target_series(
+        curated_path,
+        target_column=target_column,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
+    )
     exog = load_elastic_net_feature_frame(
         curated_path,
         feature_columns=elastic_net_feature_columns,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
     )
 
     if verbose:

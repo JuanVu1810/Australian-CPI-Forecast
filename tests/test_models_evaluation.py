@@ -8,12 +8,34 @@ from src.models.evaluation import (
     compute_conformal_scale_factors,
     compute_interval_coverage_table,
     compute_metric_table,
+    load_target_series,
     seasonal_naive_forecast,
     walk_forward_backtest,
     walk_forward_backtest_direct_multihorizon,
     walk_forward_interval_coverage_backtest,
 )
 from src.models.interval_coverage import apply_interval_calibration
+
+
+def test_load_target_series_max_quarter_truncates_without_affecting_default(tmp_path):
+    curated_path = tmp_path / "curated.csv"
+    pd.DataFrame(
+        {
+            "quarter": ["2025Q2", "2025Q3", "2025Q4", "2026Q1", "2026Q2"],
+            "cpi_yoy": [3.0, 3.1, 3.2, 3.3, 3.4],
+        }
+    ).to_csv(curated_path, index=False)
+
+    unbounded = load_target_series(curated_path, target_column="cpi_yoy")
+    pinned = load_target_series(
+        curated_path,
+        target_column="cpi_yoy",
+        max_quarter=pd.Period("2025Q4", freq="Q"),
+    )
+
+    assert list(unbounded.index.astype(str)) == ["2025Q2", "2025Q3", "2025Q4", "2026Q1", "2026Q2"]
+    assert list(pinned.index.astype(str)) == ["2025Q2", "2025Q3", "2025Q4"]
+    assert pinned.iloc[-1] == 3.2
 
 
 def _comparison_prediction_frame(model: str, errors_by_horizon: dict[int, float]) -> pd.DataFrame:

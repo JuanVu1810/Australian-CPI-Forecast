@@ -31,6 +31,28 @@ def _synthetic_frame(n: int = 40) -> pd.DataFrame:
     return frame
 
 
+def test_load_elastic_net_feature_frame_max_quarter_truncates_without_affecting_default(tmp_path):
+    curated_path = tmp_path / "curated.csv"
+    pd.DataFrame(
+        {
+            "quarter": ["2025Q2", "2025Q3", "2025Q4", "2026Q1", "2026Q2"],
+            "cpi_yoy_lag1": [3.0, 3.1, 3.2, 3.3, 3.4],
+        }
+    ).to_csv(curated_path, index=False)
+
+    unbounded = elastic_net.load_elastic_net_feature_frame(
+        curated_path, feature_columns=("cpi_yoy_lag1",)
+    )
+    pinned = elastic_net.load_elastic_net_feature_frame(
+        curated_path,
+        feature_columns=("cpi_yoy_lag1",),
+        max_quarter=pd.Period("2025Q4", freq="Q"),
+    )
+
+    assert list(unbounded.index.astype(str)) == ["2025Q2", "2025Q3", "2025Q4", "2026Q1", "2026Q2"]
+    assert list(pinned.index.astype(str)) == ["2025Q2", "2025Q3", "2025Q4"]
+
+
 def test_forecast_elastic_net_direct_returns_exactly_8_finite_values():
     frame = _synthetic_frame(n=40)
 

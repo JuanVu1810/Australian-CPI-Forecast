@@ -667,11 +667,14 @@ def _ensemble_family_forecast(
         weights=weights,
         horizons=horizons,
     )
-    draws = ensemble.combine_paths(
-        sarima_result.draws,
-        elastic_net_result.draws,
-        weights=weights,
-        horizons=horizons,
+    draws = ensemble.recenter_paths_to_median(
+        ensemble.combine_paths(
+            sarima_result.draws,
+            elastic_net_result.draws,
+            weights=weights,
+            horizons=horizons,
+        ),
+        forecast,
     )
     return FamilyForecastData(
         forecast=forecast.astype(float).tolist(),
@@ -748,11 +751,14 @@ def _ensemble_trimmed_mean_family_forecast(
         weights=weights,
         horizons=horizons,
     )
-    draws = ensemble.combine_paths(
-        sarima_result.draws,
-        elastic_net_result.draws,
-        weights=weights,
-        horizons=horizons,
+    draws = ensemble.recenter_paths_to_median(
+        ensemble.combine_paths(
+            sarima_result.draws,
+            elastic_net_result.draws,
+            weights=weights,
+            horizons=horizons,
+        ),
+        forecast,
     )
     return FamilyForecastData(
         forecast=forecast.astype(float).tolist(),

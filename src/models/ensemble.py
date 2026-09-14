@@ -216,6 +216,27 @@ def combine_paths(
     return sarima_weight * sarima_values + elastic_net_weight * elastic_net_values
 
 
+def recenter_paths_to_median(paths: np.ndarray, target_median) -> np.ndarray:
+    """Shift simulated paths per-horizon so their empirical median equals ``target_median``.
+
+    ``combine_paths`` weighted-averages two independently-simulated Monte Carlo
+    components draw-by-draw; the median of that weighted sum is not the same as
+    the weighted sum of the two components' own medians (or of
+    ``combine_point_forecasts``'s deterministic point). This recenters the
+    already-combined draws onto the deterministic ensemble point forecast
+    without changing their spread or shape, so the reported forecast and the
+    simulated interval's center agree exactly.
+    """
+    values = np.asarray(paths, dtype=float)
+    if values.ndim != 2:
+        raise ValueError("paths must be two-dimensional with shape (n_sims, steps).")
+    target = np.asarray(target_median, dtype=float)
+    if target.ndim != 1 or target.shape[0] != values.shape[1]:
+        raise ValueError("target_median must be one-dimensional with one value per step.")
+    current_median = np.percentile(values, 50, axis=0)
+    return values + (target - current_median)
+
+
 def forecast_ensemble(
     train_frame: pd.DataFrame,
     steps: int = 8,
@@ -294,12 +315,39 @@ def simulate_ensemble_paths(
         feature_columns=elastic_net_feature_columns,
         target_column=target_column,
     )
-    return combine_paths(
+    combined = combine_paths(
         sarima_paths,
         elastic_net_paths,
         weights=weights,
         horizons=requested_horizons,
     )
+    # combine_paths's median is not the same as combine_point_forecasts's point
+    # (median of a weighted sum of two independent Monte Carlo components != the
+    # weighted sum of their own medians) -- recenter onto the deterministic
+    # ensemble forecast so the two agree exactly. Refits both components a
+    # second time (point-forecast only, no extra simulation) to get that target;
+    # reuses sarima_train so this respects the same sarima_series override used
+    # for the simulated paths above.
+    sarima_point = forecast_sarima(
+        sarima_train,
+        steps=steps,
+        order=sarima_order,
+        seasonal_order=sarima_seasonal_order,
+    )
+    elastic_net_point = forecast_elastic_net_direct(
+        train_frame,
+        steps=steps,
+        seed=seed,
+        feature_columns=elastic_net_feature_columns,
+        target_column=target_column,
+    )
+    target_median = combine_point_forecasts(
+        sarima_point,
+        elastic_net_point,
+        weights=weights,
+        horizons=requested_horizons,
+    )
+    return recenter_paths_to_median(combined, target_median)
 
 
 def ensemble_interval_from_paths(

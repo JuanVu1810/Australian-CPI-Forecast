@@ -179,6 +179,23 @@ def test_combine_paths_accepts_dict_weights_with_explicit_horizons():
     )
 
 
+def test_recenter_paths_to_median_shifts_without_changing_spread():
+    # Deliberately skewed pool: median (2.0) and mean (2.33) differ, exercising
+    # exactly the case recentering is meant to fix.
+    paths = np.array([[1.0, 10.0], [2.0, 20.0], [2.0, 20.0], [4.0, 40.0]])
+    target_median = np.array([5.0, 50.0])
+
+    recentered = ensemble.recenter_paths_to_median(paths, target_median)
+
+    np.testing.assert_allclose(np.percentile(recentered, 50, axis=0), target_median)
+    # A pure additive shift preserves spread exactly.
+    np.testing.assert_allclose(recentered.std(axis=0), paths.std(axis=0))
+    with pytest.raises(ValueError, match="two-dimensional"):
+        ensemble.recenter_paths_to_median(paths[:, 0], target_median)
+    with pytest.raises(ValueError, match="one value per step"):
+        ensemble.recenter_paths_to_median(paths, target_median[:1])
+
+
 def test_ensemble_interval_from_paths_uses_combined_draw_quantiles():
     paths = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
 
@@ -328,6 +345,8 @@ def test_simulate_ensemble_paths_shape_seed_divergence_and_forecast_mean(monkeyp
     np.testing.assert_array_equal(paths, repeat)
     assert not np.array_equal(paths, different)
     assert np.allclose(paths.mean(axis=0), forecast, atol=0.02)
+    # Recentering guarantees this exactly (up to floating point), not just approximately.
+    np.testing.assert_allclose(np.percentile(paths, 50, axis=0), forecast, atol=1e-10)
 
 
 def test_simulate_ensemble_paths_accepts_full_sarima_series(monkeypatch):
@@ -351,6 +370,15 @@ def test_simulate_ensemble_paths_accepts_full_sarima_series(monkeypatch):
 
     monkeypatch.setattr(ensemble, "simulate_sarima_paths", fake_sarima_paths)
     monkeypatch.setattr(ensemble, "simulate_elastic_net_paths", fake_elastic_net_paths)
+    # Recentering also needs the two deterministic point forecasts; mock these too
+    # so this stays a fast, isolated wiring test rather than fitting real models
+    # on 4-5 rows of synthetic data.
+    monkeypatch.setattr(ensemble, "forecast_sarima", lambda series, steps, **kwargs: np.ones(steps))
+    monkeypatch.setattr(
+        ensemble,
+        "forecast_elastic_net_direct",
+        lambda train_frame, steps, seed, **kwargs: np.ones(steps) * 3.0,
+    )
 
     ensemble.simulate_ensemble_paths(
         frame,

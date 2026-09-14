@@ -153,12 +153,21 @@ def clean_elastic_net_frame(
 def load_elastic_net_feature_frame(
     path: Path = CURATED_DATA_PATH,
     feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
+    max_quarter: pd.Period | None = None,
 ) -> pd.DataFrame:
-    """Load the Elastic Net feature block with a quarterly index."""
+    """Load the Elastic Net feature block with a quarterly index.
+
+    ``max_quarter``, when given, drops any rows after that quarter -- see
+    ``evaluation.load_target_series`` for why (pinning walk-forward callers to
+    a fixed origin cutoff instead of growing with the curated CSV).
+    """
     required_columns = ("quarter", *feature_columns)
     df = pd.read_csv(path, usecols=list(required_columns))
     df.index = pd.PeriodIndex(df.pop("quarter").astype(str), freq="Q")
-    return df.sort_index().astype(float)
+    frame = df.sort_index().astype(float)
+    if max_quarter is not None:
+        frame = frame.loc[frame.index <= max_quarter]
+    return frame
 
 
 def _safe_cv_splits(n_examples: int, requested: int) -> int:

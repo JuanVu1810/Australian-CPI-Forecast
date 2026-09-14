@@ -3,7 +3,7 @@ Headline,sarima,424,1.652592,1.155351
 Headline,elastic_net,424,1.705798,1.245831
 Headline,ensemble,424,1.640356,1.15985
 Headline,seasonal_naive,424,2.163358,1.518632
-Trimmed mean,sarima,440,1.281378,0.76909
-Trimmed mean,elastic_net,440,1.406506,0.974175
-Trimmed mean,ensemble,440,1.251526,0.786603
-Trimmed mean,seasonal_naive,440,1.57726,0.940227
+Trimmed mean,sarima,424,1.298886,0.776841
+Trimmed mean,elastic_net,424,1.426453,0.989237
+Trimmed mean,ensemble,424,1.273097,0.804664
+Trimmed mean,seasonal_naive,424,1.580535,0.926179

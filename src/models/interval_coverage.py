@@ -35,6 +35,7 @@ from src.models.sarima import simulate_sarima_paths
 from src.models.sarima import DEFAULT_ORDER as SARIMA_DEFAULT_ORDER
 from src.models.sarima import DEFAULT_SEASONAL_ORDER as SARIMA_DEFAULT_SEASONAL_ORDER
 from src.models.sarima import TRIMMED_MEAN_DEFAULT_ORDER, TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER
+from src.models import svar
 
 
 INTERVAL_COVERAGE_OUTPUT_PATH = PROJECT_ROOT / "reports/model_interval_coverage.csv"
@@ -173,10 +174,15 @@ def run_family_interval_backtests(
     """Run raw interval walk-forward backtests for selected served model families."""
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     requested_families = _normalise_families(families)
-    series = load_target_series(curated_path, target_column=target_column)
+    series = load_target_series(
+        curated_path,
+        target_column=target_column,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
+    )
     elastic_net_exog = load_elastic_net_feature_frame(
         curated_path,
         feature_columns=elastic_net_feature_columns,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
     )
     if weights is None:
         weights = horizon_rmse_weights(

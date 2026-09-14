@@ -147,10 +147,15 @@ def _elastic_net_training_frame(
     target_column: str,
     feature_columns: tuple[str, ...],
 ) -> pd.DataFrame:
-    target = load_target_series(curated_path, target_column=target_column)
+    target = load_target_series(
+        curated_path,
+        target_column=target_column,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
+    )
     features = load_elastic_net_feature_frame(
         curated_path,
         feature_columns=feature_columns,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
     )
     frame = pd.concat([target.rename(target_column), features], axis=1).dropna()
     if frame.empty:
@@ -163,6 +168,7 @@ def _load_svar_frame(curated_path: Path, columns: Sequence[str]) -> pd.DataFrame
     data = pd.read_csv(curated_path, usecols=required_columns)
     data.index = pd.PeriodIndex(data.pop("quarter").astype(str), freq="Q")
     frame = data.loc[:, list(columns)].apply(pd.to_numeric, errors="coerce").dropna()
+    frame = frame.loc[frame.index <= svar.FORECAST_ORIGIN_PIN]
     if frame.empty:
         raise ValueError(f"No complete SVAR rows for columns {tuple(columns)}.")
     return frame.sort_index()
@@ -181,7 +187,11 @@ def run_sarima_fan(
     seed: int = DEFAULT_SEED,
     verbose: bool = True,
 ) -> pd.DataFrame:
-    series = load_target_series(curated_path, target_column=target_column)
+    series = load_target_series(
+        curated_path,
+        target_column=target_column,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
+    )
     paths = simulate_sarima_paths(
         series,
         steps=max(horizons),
@@ -250,7 +260,11 @@ def run_ensemble_fan(
     seed: int = DEFAULT_SEED,
     verbose: bool = True,
 ) -> pd.DataFrame:
-    series = load_target_series(curated_path, target_column=target_column)
+    series = load_target_series(
+        curated_path,
+        target_column=target_column,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
+    )
     frame = _elastic_net_training_frame(
         curated_path,
         target_column=target_column,

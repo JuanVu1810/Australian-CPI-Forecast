@@ -189,15 +189,26 @@ def load_target_series(
     path: Path = CURATED_DATA_PATH,
     target_column: str = TARGET_COLUMN,
     quarter_column: str = QUARTER_COLUMN,
+    max_quarter: pd.Period | None = None,
 ) -> pd.Series:
-    """Load the modelling target as a quarterly ``PeriodIndex`` series."""
+    """Load the modelling target as a quarterly ``PeriodIndex`` series.
+
+    ``max_quarter``, when given, drops any rows after that quarter -- used by
+    walk-forward evaluation callers to pin their origin set to a fixed cutoff
+    (e.g. ``svar.FORECAST_ORIGIN_PIN``) instead of silently growing as the
+    curated CSV is refreshed with newer data. Left as ``None`` by default so
+    every other caller (live serving, EDA, ...) keeps seeing the full series.
+    """
     df = pd.read_csv(path, usecols=[quarter_column, target_column])
     if quarter_column not in df or target_column not in df:
         raise ValueError(f"{path} must contain {quarter_column!r} and {target_column!r}.")
 
     index = pd.PeriodIndex(df[quarter_column].astype(str), freq="Q")
     series = pd.Series(df[target_column].to_numpy(), index=index, name=target_column)
-    return series.dropna().astype(float).sort_index()
+    series = series.dropna().astype(float).sort_index()
+    if max_quarter is not None:
+        series = series.loc[series.index <= max_quarter]
+    return series
 
 
 def seasonal_naive_forecast(

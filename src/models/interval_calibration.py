@@ -279,6 +279,20 @@ def run_interval_calibration(
             weights=weights,
             verbose=verbose,
         )
+        actual_validation_origins = (
+            validation_predictions["forecast_origin"].nunique()
+            if "forecast_origin" in validation_predictions
+            else 0
+        )
+        if actual_validation_origins < validation_origins:
+            raise ValueError(
+                f"{family}: expected {validation_origins} held-out validation origins "
+                f"(from {origin_count_report_path}'s stale-relative-to-data origin count "
+                f"of {total_origins}), but only {actual_validation_origins} were actually "
+                f"available after loading -- regenerate {origin_count_report_path} first "
+                "(python -m src.models.interval_coverage) so its origin counts match the "
+                "current curated data before running calibration."
+            )
         calibrated_validation = _calibrated_validation_predictions(
             validation_predictions,
             factors,
