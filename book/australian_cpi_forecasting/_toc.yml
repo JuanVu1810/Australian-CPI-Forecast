@@ -1,0 +1,21 @@
+# Table of contents
+# Learn more at https://jupyterbook.org/customize/toc.html
+
+format: jb-book
+root: intro
+chapters:
+- file: 01_business_understanding
+- file: 02_data_understanding
+- file: 03_data_preparation
+- file: 04_modeling/index
+  sections:
+  - file: 04_modeling/41_sarima
+  - file: 04_modeling/42_elastic_net
+  - file: 04_modeling/43_ensemble
+  - file: 04_modeling/44_svar
+  - file: 04_modeling/45_scenario_engine
+  - file: 04_modeling/46_rba_classifier
+  - file: 04_modeling/47_credit_stress
+- file: 05_evaluation
+- file: 06_deployment
+- file: 07_conclusion

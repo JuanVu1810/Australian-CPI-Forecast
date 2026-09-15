@@ -37,3 +37,6 @@ data/analytics/*.duckdb.wal
 
 # Local MLflow runs can grow quickly; keep tracked summaries in reports/ instead.
 mlruns/
+
+# Jupyter Book build output/cache (regenerate with `jupyter-book build`)
+book/*/_build/

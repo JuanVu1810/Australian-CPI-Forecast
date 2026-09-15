@@ -44,6 +44,16 @@ DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 MAX_FORECAST_HORIZON = 8
 HISTORY_QUARTERS_SHOWN = 16
 INTERVAL_LABEL = "calibrated simulation interval (80% nominal target)"
+LIVE_API_TIMEOUT_SECONDS = 8
+REPORT_SECTIONS = (
+    "1. Business Understanding",
+    "2. Data Understanding",
+    "3. Data Preparation",
+    "4. Modeling",
+    "5. Evaluation",
+    "6. Deployment",
+    "7. Conclusion",
+)
 
 REPORT_PATHS = {
     "SARIMA (headline)": PROJECT_ROOT / "reports/simulation_fan_sarima.csv",
@@ -205,7 +215,7 @@ def _request_error_detail(exc: requests.RequestException) -> str | None:
     return str(detail) if detail else None
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def api_request(method: str, base_url: str, path: str, **kwargs) -> tuple[dict | None, str | None]:
     """Call the FastAPI service; return ``(payload, None)`` or ``(None, error_banner_text)``.
 
@@ -216,7 +226,7 @@ def api_request(method: str, base_url: str, path: str, **kwargs) -> tuple[dict |
     would. Cached briefly so unrelated widget reruns elsewhere on the page
     don't refire every live call.
     """
-    timeout = kwargs.pop("timeout", 60)
+    timeout = kwargs.pop("timeout", LIVE_API_TIMEOUT_SECONDS)
     try:
         response = requests.request(method, f"{base_url}{path}", timeout=timeout, **kwargs)
         response.raise_for_status()
@@ -353,82 +363,19 @@ def inject_article_css(theme_type: str) -> None:
           }}
 
           /* --- Wide institutional-site report shell, after opdi.aero --------
-             opdi.aero itself runs a wide (~1400px+) three-column template:
-             left page nav, a center content column, and a sticky right "on
-             this page" rail. This report has no other pages to put in a left
-             nav (that's the whole point of the single-page consolidation),
-             so it keeps Streamlit's own left sidebar (already doing real work
-             -- the live API control) and reproduces the wide-page-plus-sticky
-             -right-TOC half of that template via #cpi-toc-root below. The
-             print pass further down still renders true A4 pages for the PDF
-             export regardless of this on-screen width. ------------------- */
+             The page uses Streamlit's sidebar as the persistent side rail for
+             the table of contents and live API control. The report body stays
+             capped and centered so charts never sit under navigation chrome.
+             The print pass further down still renders true A4 pages for the
+             PDF export regardless of this on-screen width. ---------------- */
           [data-testid="stAppViewContainer"] .block-container {{
-            max-width: 1400px !important;
+            max-width: 1120px !important;
             margin: 1.5rem auto !important;
-            padding: 2.5rem 3rem 4rem 4rem !important;
+            padding: 2.5rem 3rem 4rem 3rem !important;
             background: {colors['paper']};
             box-shadow: 0 0 0 1px {colors['border']};
             border-radius: 2px;
             position: relative;
-          }}
-
-          /* Right "on this page" TOC. Tried the classic float+sticky sidebar
-             trick first, but Streamlit wraps every element (including this
-             one) in its own short auto-height div -- position:sticky's
-             "stuck" range is bounded by that immediate wrapper, not the
-             page, so it scrolled out of view within ~250px. Fixed
-             positioning is immune to that (it's always viewport-relative),
-             at the cost of needing calc() to land it inside the container's
-             own right-hand padding: the container is centered
-             (margin:auto) at a known max-width, so its right edge sits at
-             (100vw + 1400px)/2 from the viewport's left edge, i.e.
-             (100vw - 1400px)/2 from the *right* edge -- only valid once the
-             container has actually reached that max-width, hence gating on
-             the same 1400px breakpoint rather than a smaller one. No JS
-             needed for the pinning itself; see render_table_of_contents()
-             for the small scroll-spy script that highlights the current
-             section. */
-          @media (min-width: 1400px) {{
-            [data-testid="stAppViewContainer"] .block-container {{
-              padding-right: 280px !important;
-            }}
-            #cpi-toc-root {{
-              position: fixed;
-              top: 84px;
-              right: calc((100vw - 1400px) / 2 + 34px);
-              width: 220px;
-            }}
-          }}
-          @media (max-width: 1399px) {{
-            #cpi-toc-root {{ display: none; }}
-          }}
-          #cpi-toc-root {{
-            font-family: 'Source Serif 4', Georgia, serif;
-            max-height: calc(100vh - 110px);
-            overflow-y: auto;
-          }}
-          #cpi-toc-root .cpi-toc-label {{
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            font-size: 0.72rem;
-            color: {colors['muted']};
-            margin-bottom: 0.6rem;
-          }}
-          #cpi-toc-root a {{
-            display: block;
-            font-size: 0.92rem;
-            line-height: 1.9;
-            color: {colors['muted']};
-            text-decoration: none;
-            border-left: 2px solid transparent;
-            padding-left: 0.7rem;
-            transition: color 0.15s, border-color 0.15s;
-          }}
-          #cpi-toc-root a:hover {{ color: {colors['ink']}; }}
-          #cpi-toc-root a.cpi-toc-active {{
-            color: {colors['fan']};
-            border-left-color: {colors['fan']};
-            font-weight: 600;
           }}
 
           .cpi-print-btn {{
@@ -449,7 +396,7 @@ def inject_article_css(theme_type: str) -> None:
             @page {{ size: A4; margin: 2cm; }}
             [data-testid="stSidebar"], [data-testid="stHeader"], [data-testid="stToolbar"],
             [data-testid="stDecoration"], [data-testid="collapsedControl"],
-            #MainMenu, footer, .cpi-print-hide, #cpi-toc-root {{
+            #MainMenu, footer, .cpi-print-hide {{
               display: none !important;
             }}
             [data-testid="stAppViewContainer"] .block-container {{
@@ -496,69 +443,11 @@ def download_pdf_button() -> None:
     )
 
 
-def render_table_of_contents(sections: list[str]) -> None:
-    """Sticky right-hand "on this page" rail, after opdi.aero's template.
-
-    The nav markup goes through ``st.html()`` so it lands inline in the
-    normal document flow (required for the float+sticky CSS trick above to
-    work at all). The scroll-spy script that highlights the current section
-    is injected separately via ``st.iframe()`` instead (the replacement for
-    the deprecated ``st.components.v1.html`` -- same underlying mechanism):
-    Streamlit strips <script> tags from ``st.html()``/``st.markdown()``
-    content (they'd be a stored-XSS vector otherwise), but an iframe with
-    inline HTML content *does* execute <script>, and same-origin iframes can
-    reach back into ``window.parent.document`` to manipulate the real page --
-    the same trick the existing "Download as PDF" button's
-    ``onclick="window.print()"`` relies on, just for a persistent observer
-    instead of a one-shot call.
-    """
-    links = "\n".join(
-        f'<a href="#{slugify(section)}" data-slug="{slugify(section)}">{section}</a>'
-        for section in sections
-    )
-    st.html(
-        f"""
-        <div id="cpi-toc-root">
-          <div class="cpi-toc-label">On this page</div>
-          {links}
-        </div>
-        """
-    )
-    slugs = [slugify(section) for section in sections]
-    st.iframe(
-        f"""
-        <script>
-          (function () {{
-            const doc = window.parent.document;
-            const slugs = {slugs!r};
-            // Streamlit scrolls its own [data-testid="stMain"] section, not
-            // documentElement/body/window -- verified against the live DOM
-            // (window-level scroll listeners here never fired). getBoundingClientRect()
-            // is viewport-relative regardless of which ancestor actually scrolls,
-            // so it needs no scrollTop bookkeeping at all: a header is "current"
-            // once its top has crossed a small offset below the viewport top.
-            function highlight() {{
-              let current = slugs[0];
-              for (const slug of slugs) {{
-                const el = doc.getElementById(slug);
-                if (el && el.getBoundingClientRect().top - 110 <= 0) {{
-                  current = slug;
-                }}
-              }}
-              doc.querySelectorAll('#cpi-toc-root a').forEach((a) => {{
-                a.classList.toggle('cpi-toc-active', a.dataset.slug === current);
-              }});
-            }}
-            const scrollContainer = doc.querySelector('[data-testid="stMain"]') || window.parent;
-            scrollContainer.removeEventListener('scroll', scrollContainer._cpiTocHighlight || (() => {{}}));
-            scrollContainer._cpiTocHighlight = highlight;
-            scrollContainer.addEventListener('scroll', highlight, {{passive: true}});
-            highlight();
-          }})();
-        </script>
-        """,
-        height=1,
-    )
+def render_sidebar_table_of_contents(sections: tuple[str, ...]) -> None:
+    st.markdown("### On this page")
+    for section in sections:
+        st.markdown(f"- [{section}](#{slugify(section)})")
+    st.divider()
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +486,7 @@ def build_fan_chart(report: pd.DataFrame, theme_type: str) -> alt.LayerChart:
     )
     return (
         (outer_band + inner_band + median_line)
-        .properties(height=380)
+        .properties(height=300)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -629,7 +518,7 @@ def build_cpi_history_chart(curated: pd.DataFrame, theme_type: str) -> alt.Layer
     )
     return (
         (band + headline + trimmed)
-        .properties(height=340)
+        .properties(height=280)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -640,29 +529,36 @@ def build_ensemble_path_chart(
 ) -> alt.LayerChart:
     colors = PALETTE[theme_type]
     revealed = sample[sample["draw_id"] < n_reveal]
-    outer_band = (
-        alt.Chart(fan)
-        .mark_area(opacity=0.14, color=colors["fan"])
-        .encode(x=alt.X("horizon:Q", title="Horizon (quarters ahead)"), y="p10:Q", y2="p90:Q")
-    )
-    inner_band = (
-        alt.Chart(fan)
-        .mark_area(opacity=0.28, color=colors["fan"])
-        .encode(x="horizon:Q", y="p25:Q", y2="p75:Q")
-    )
-    lines = (
+    final_step = n_reveal >= int(sample["draw_id"].max()) + 1
+    layers = [
         alt.Chart(revealed)
         .mark_line(strokeWidth=0.8, opacity=0.35, color=colors["fan"])
         .encode(x="horizon:Q", y=alt.Y("value:Q", title=value_label), detail="draw_id:N")
-    )
-    median_line = (
-        alt.Chart(fan)
-        .mark_line(strokeWidth=2.2, point=alt.OverlayMarkDef(size=40), color=colors["median"])
-        .encode(x="horizon:Q", y="median:Q")
-    )
+    ]
+    if final_step:
+        outer_band = (
+            alt.Chart(fan)
+            .mark_area(opacity=0.14, color=colors["fan"])
+            .encode(x=alt.X("horizon:Q", title="Horizon (quarters ahead)"), y="p10:Q", y2="p90:Q")
+        )
+        inner_band = (
+            alt.Chart(fan)
+            .mark_area(opacity=0.28, color=colors["fan"])
+            .encode(x="horizon:Q", y="p25:Q", y2="p75:Q")
+        )
+        median_line = (
+            alt.Chart(fan)
+            .mark_line(strokeWidth=2.2, point=alt.OverlayMarkDef(size=40), color=colors["median"])
+            .encode(
+                x="horizon:Q",
+                y="median:Q",
+                tooltip=["target_quarter:N", "horizon:Q", alt.Tooltip("median:Q", title="Forecast", format=".2f")],
+            )
+        )
+        layers = [outer_band, inner_band, *layers, median_line]
     return (
-        (outer_band + inner_band + lines + median_line)
-        .properties(height=380)
+        alt.layer(*layers)
+        .properties(height=300)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -682,7 +578,7 @@ def build_svar_irf_chart(irf: pd.DataFrame, max_horizon: int, theme_type: str) -
         .mark_line(strokeWidth=2, point=True, color=colors["median"])
         .encode(x="horizon:Q", y="irf:Q", tooltip=["shock:N", "horizon:Q", "irf:Q"])
     )
-    layered = alt.layer(zero_line, band, line, data=subset).properties(height=180, width=320)
+    layered = alt.layer(zero_line, band, line, data=subset).properties(height=150, width=300)
     return (
         layered.facet(facet=alt.Facet("shock:N", title=None), columns=2)
         .resolve_scale(y="independent")
@@ -709,7 +605,7 @@ def build_static_rba_probability_chart(rba: pd.DataFrame, theme_type: str) -> al
             ),
             tooltip=["model:N", "action:N", "probability:Q"],
         )
-        .properties(height=220)
+        .properties(height=200)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -763,7 +659,7 @@ def build_credit_stress_chart(credit: pd.DataFrame, scenario: str, theme_type: s
             y=alt.Y("ecl_aud_m:Q", title="12-month ECL ($AUDm)"),
             tooltip=["segment:N", "ecl_aud_m:Q", "pd_stressed:Q"],
         )
-        .properties(height=280)
+        .properties(height=240)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -788,7 +684,7 @@ def build_rmse_bar_chart(comparison: pd.DataFrame, theme_type: str) -> alt.Chart
             ),
             tooltip=["model:N", "rmse:Q", "n:Q"],
         )
-        .properties(height=220)
+        .properties(height=200)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -813,7 +709,7 @@ def build_coverage_bar_chart(coverage: pd.DataFrame, theme_type: str) -> alt.Lay
     )
     return (
         (bars + nominal)
-        .properties(height=260)
+        .properties(height=220)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -878,7 +774,7 @@ def build_forecast_chart(history: pd.DataFrame, forecast: pd.DataFrame, theme_ty
     )
     return (
         (target_band + midpoint_rule + band + actual_line + forecast_line + origin_rule)
-        .properties(height=360)
+        .properties(height=300)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -927,7 +823,7 @@ def build_scenario_chart(forecast: pd.DataFrame, theme_type: str, y_axis_title: 
     origin_rule = alt.Chart(forecast.iloc[[0]]).mark_rule(color=colors["muted"], strokeDash=[2, 2]).encode(x="quarter_date:T")
     return (
         (target_band + midpoint_rule + band + forecast_line + origin_rule)
-        .properties(height=360)
+        .properties(height=300)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -950,7 +846,7 @@ def build_accuracy_chart(report: pd.DataFrame, theme_type: str) -> alt.LayerChar
             color=alt.Color("model:N", title="Model"),
             tooltip=["model:N", "horizon:N", "rmse:Q", "mae:Q", "n:Q"],
         )
-        .properties(height=340)
+        .properties(height=300)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -980,7 +876,7 @@ def build_coverage_chart(report: pd.DataFrame, theme_type: str) -> alt.LayerChar
     )
     return (
         (nominal + empirical + flagged)
-        .properties(height=340)
+        .properties(height=300)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -1004,7 +900,7 @@ def build_scatter_chart(report: pd.DataFrame, theme_type: str) -> alt.LayerChart
     reference = alt.Chart(diagonal).mark_line(strokeDash=[4, 3], color=colors["nominal"], strokeWidth=1.5).encode(x="actual:Q", y="forecast:Q")
     return (
         (points + reference)
-        .properties(height=380)
+        .properties(height=300)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
     )
@@ -1133,19 +1029,9 @@ dek(
     "the six-tab Tableau executive dashboard, and is deliberately longer."
 )
 download_pdf_button()
-render_table_of_contents(
-    [
-        "1. Business Understanding",
-        "2. Data Understanding",
-        "3. Data Preparation",
-        "4. Modeling",
-        "5. Evaluation",
-        "6. Deployment",
-        "7. Conclusion",
-    ]
-)
 
 with st.sidebar:
+    render_sidebar_table_of_contents(REPORT_SECTIONS)
     st.subheader("Live API connection")
     api_base_url = st.text_input("API base URL", value=DEFAULT_API_BASE_URL, key="api_base_url").rstrip("/")
     st.caption(
@@ -1421,7 +1307,7 @@ if sample_path.exists() and fan_path.exists():
 
     slider_col, play_col = st.columns([5, 1])
     with slider_col:
-        n_reveal = st.slider("Paths revealed", 1, n_draws, value=n_draws, key=f"ensemble_reveal_{ensemble_target}")
+        n_reveal = st.slider("Paths revealed", 1, n_draws, value=1, key=f"ensemble_reveal_{ensemble_target}")
     chart_placeholder = st.empty()
     with play_col:
         st.write("")
@@ -1532,24 +1418,46 @@ scenario_max_horizon = scenario_control_cols[3].slider(
 scenario_target = SCENARIO_TARGET_CONFIG[scenario_target_label]
 scenario_horizons = list(range(1, scenario_max_horizon + 1))
 
-scenario_payload, scenario_error = api_request(
-    "POST",
-    api_base_url,
-    "/forecast/scenario",
-    json={
-        "target": scenario_target["request_value"],
-        "shock_variable": scenario_shock_variable,
-        "shock_value": scenario_shock_value,
-        "horizons": scenario_horizons,
-    },
-    timeout=120,
-)
-if scenario_error:
-    st.info(scenario_error)
-else:
-    baseline_payload, baseline_error = api_request(
-        "POST", api_base_url, scenario_target["baseline_endpoint"], json={"horizon": scenario_max_horizon}, timeout=60
+if st.button("Run scenario", key="run_scenario"):
+    scenario_payload, scenario_error = api_request(
+        "POST",
+        api_base_url,
+        "/forecast/scenario",
+        json={
+            "target": scenario_target["request_value"],
+            "shock_variable": scenario_shock_variable,
+            "shock_value": scenario_shock_value,
+            "horizons": scenario_horizons,
+        },
     )
+    baseline_payload, baseline_error = (None, None)
+    if scenario_payload is not None:
+        baseline_payload, baseline_error = api_request(
+            "POST",
+            api_base_url,
+            scenario_target["baseline_endpoint"],
+            json={"horizon": scenario_max_horizon},
+        )
+    st.session_state["scenario_result"] = {
+        "payload": scenario_payload,
+        "error": scenario_error,
+        "baseline_payload": baseline_payload,
+        "baseline_error": baseline_error,
+        "target": scenario_target,
+    }
+
+scenario_result = st.session_state.get("scenario_result")
+if scenario_result is None:
+    st.info("Run the scenario to fetch the live SVAR-adjusted forecast.")
+else:
+    scenario_payload = scenario_result["payload"]
+    scenario_error = scenario_result["error"]
+    baseline_payload = scenario_result["baseline_payload"]
+    scenario_target = scenario_result["target"]
+
+if scenario_result is not None and scenario_error:
+    st.info(scenario_error)
+elif scenario_result is not None and scenario_payload is not None:
     scenario_metric_cols = st.columns(4)
     scenario_metric_cols[0].metric("Forecast origin", scenario_payload["forecast_origin"])
     scenario_metric_cols[1].metric("Target", scenario_payload["target"])
@@ -1606,20 +1514,16 @@ st.markdown(
     "into $K{-}1$ cumulative binary classifiers; majority vote takes the mode of the "
     "first four, tie-broken by threshold's own call."
 )
-rba_payload, rba_error = api_request("GET", api_base_url, "/rba-action", timeout=120)
-if rba_error:
-    st.info(rba_error)
-    rba_path = PROJECT_ROOT / "reports/tableau/rba_action.csv"
-    if rba_path.exists():
-        rba_static = load_report(rba_path)
-        origin = str(rba_static["forecast_origin"].iloc[0])
-        target_q = str(rba_static["target_quarter"].iloc[0])
-        call = str(rba_static["reportable_action"].iloc[0])
-        st.metric(f"Reportable call for {target_q} (origin {origin}) — static fallback", call.upper())
-        st.altair_chart(build_static_rba_probability_chart(rba_static, theme_type), width="stretch")
-    else:
-        st.error(f"Missing: `{_display_path(rba_path)}`")
-else:
+if st.button("Refresh RBA action", key="refresh_rba_action"):
+    rba_payload, rba_error = api_request("GET", api_base_url, "/rba-action")
+    st.session_state["rba_action_result"] = {"payload": rba_payload, "error": rba_error}
+
+rba_result = st.session_state.get("rba_action_result")
+if rba_result and rba_result["error"]:
+    st.info(rba_result["error"])
+
+if rba_result and rba_result["payload"] is not None:
+    rba_payload = rba_result["payload"]
     rba_headline_cols = st.columns(5)
     rba_headline_cols[0].metric("Threshold action", rba_payload["reportable_action"])
     rba_headline_cols[1].metric("Target quarter", rba_payload["target_quarter"])
@@ -1659,6 +1563,17 @@ else:
                 secondary_table[column] = secondary_table[column].astype(float).round(4)
             st.markdown("**Secondary classifier comparison**")
             st.dataframe(secondary_table, width="stretch", hide_index=True)
+else:
+    rba_path = PROJECT_ROOT / "reports/tableau/rba_action.csv"
+    if rba_path.exists():
+        rba_static = load_report(rba_path)
+        origin = str(rba_static["forecast_origin"].iloc[0])
+        target_q = str(rba_static["target_quarter"].iloc[0])
+        call = str(rba_static["reportable_action"].iloc[0])
+        st.metric(f"Reportable call for {target_q} (origin {origin})", call.upper())
+        st.altair_chart(build_static_rba_probability_chart(rba_static, theme_type), width="stretch")
+    else:
+        st.error(f"Missing: `{_display_path(rba_path)}`")
 source_line("`src/models/rba_classifier.py`, served at `GET /rba-action`")
 
 st.subheader("4.7 Credit Stress & Illustrative ECL")
@@ -1850,18 +1765,30 @@ with live_control_cols[0]:
 with live_control_cols[1]:
     live_horizon = st.slider("Forecast horizon (quarters)", min_value=1, max_value=MAX_FORECAST_HORIZON, value=MAX_FORECAST_HORIZON, key="live_forecast_horizon")
 
-live_payloads_by_target: dict[str, dict] = {}
-live_fetch_error = None
-for label, config in FORECAST_TARGET_CONFIG.items():
-    payload, error = api_request("POST", api_base_url, config["endpoint"], json={"horizon": live_horizon}, timeout=60)
-    if error:
-        live_fetch_error = error
-        break
-    live_payloads_by_target[label] = payload
+if st.button("Load live forecasts", key="load_live_forecasts"):
+    live_payloads_by_target: dict[str, dict] = {}
+    live_fetch_error = None
+    for label, config in FORECAST_TARGET_CONFIG.items():
+        payload, error = api_request("POST", api_base_url, config["endpoint"], json={"horizon": live_horizon})
+        if error:
+            live_fetch_error = error
+            break
+        live_payloads_by_target[label] = payload
+    st.session_state["live_forecast_result"] = {
+        "payloads_by_target": live_payloads_by_target,
+        "error": live_fetch_error,
+        "horizon": live_horizon,
+    }
 
-if live_fetch_error:
-    st.info(live_fetch_error)
+live_result = st.session_state.get("live_forecast_result")
+if live_result is None:
+    st.info("Load live forecasts to query the configured FastAPI service.")
+elif live_result["error"]:
+    st.info(live_result["error"])
 else:
+    live_payloads_by_target = live_result["payloads_by_target"]
+    if live_result["horizon"] != live_horizon:
+        st.info("Loaded forecasts use the previous horizon. Reload to refresh this view.")
     live_family_maps = {label: _family_map(payload) for label, payload in live_payloads_by_target.items()}
     common_families = set.intersection(*(set(fm) for fm in live_family_maps.values()))
     live_unavailable = [
