@@ -54,6 +54,12 @@ SIMULATION_FAN_SVAR_HEADLINE_OUTPUT_PATH = (
 SIMULATION_FAN_SVAR_TRIMMED_MEAN_OUTPUT_PATH = (
     PROJECT_ROOT / "reports/simulation_fan_svar_trimmed_mean.csv"
 )
+SIMULATION_PATHS_SAMPLE_ENSEMBLE_OUTPUT_PATH = (
+    PROJECT_ROOT / "reports/simulation_paths_sample_ensemble.csv"
+)
+SIMULATION_PATHS_SAMPLE_ENSEMBLE_TRIMMED_MEAN_OUTPUT_PATH = (
+    PROJECT_ROOT / "reports/simulation_paths_sample_ensemble_trimmed_mean.csv"
+)
 SIMULATION_FAN_OUTPUT_PATHS = {
     "sarima": SIMULATION_FAN_SARIMA_OUTPUT_PATH,
     "sarima_trimmed_mean": SIMULATION_FAN_SARIMA_TRIMMED_MEAN_OUTPUT_PATH,
@@ -302,6 +308,132 @@ def run_ensemble_fan(
     return _write_fan(fan, output_path, verbose=verbose)
 
 
+def sample_paths_frame(
+    paths: np.ndarray,
+    *,
+    model_family: str,
+    target_column: str,
+    forecast_origin: str,
+    horizons: Sequence[int] = DEFAULT_HORIZONS,
+    n_draws: int = 120,
+    sample_seed: int = 7,
+) -> pd.DataFrame:
+    """Sample a subset of simulated draws in long format for interactive display.
+
+    Unlike ``fan_frame_from_paths`` (percentile summary, one row per horizon),
+    this keeps individual draws -- one row per draw x horizon -- so a UI can
+    reveal them progressively (e.g. a Streamlit "paths revealed" slider)
+    without shipping all ``n_sims`` draws.
+    """
+    requested_horizons = tuple(int(horizon) for horizon in horizons)
+    values = np.asarray(paths, dtype=float)
+    if values.ndim != 2:
+        raise ValueError("paths must have shape (n_sims, steps).")
+    if min(requested_horizons) < 1 or max(requested_horizons) > values.shape[1]:
+        raise ValueError(
+            f"sample paths do not cover requested horizons {requested_horizons}; "
+            f"path shape is {values.shape}."
+        )
+    n_draws = min(n_draws, values.shape[0])
+    rng = np.random.default_rng(sample_seed)
+    draw_indices = rng.choice(values.shape[0], size=n_draws, replace=False)
+    sample = values[np.sort(draw_indices)][:, [h - 1 for h in requested_horizons]]
+
+    rows = []
+    for draw_id, draw_values in enumerate(sample):
+        for position, horizon in enumerate(requested_horizons):
+            rows.append(
+                {
+                    "model_family": model_family,
+                    "target_column": target_column,
+                    "forecast_origin": str(forecast_origin),
+                    "draw_id": draw_id,
+                    "horizon": int(horizon),
+                    "target_quarter": _future_quarter(forecast_origin, horizon),
+                    "value": float(draw_values[position]),
+                }
+            )
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "model_family",
+            "target_column",
+            "forecast_origin",
+            "draw_id",
+            "horizon",
+            "target_quarter",
+            "value",
+        ],
+    )
+
+
+def run_ensemble_path_sample(
+    *,
+    curated_path: Path = CURATED_DATA_PATH,
+    output_path: Path = SIMULATION_PATHS_SAMPLE_ENSEMBLE_OUTPUT_PATH,
+    target_column: str = TARGET_COLUMN,
+    model_family: str = "ensemble",
+    sarima_order: tuple[int, int, int] = SARIMA_DEFAULT_ORDER,
+    sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
+    elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
+    weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
+    horizons: Sequence[int] = DEFAULT_HORIZONS,
+    n_sims: int = DEFAULT_N_SIMS,
+    n_draws: int = 120,
+    seed: int = DEFAULT_SEED,
+    sample_seed: int = 7,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """Export a sample of raw Ensemble Monte Carlo draws for interactive display.
+
+    Reuses the same pinned, recentered ``ensemble.simulate_ensemble_paths`` call
+    as ``run_ensemble_fan`` -- no new modelling, just a different summary of the
+    same draws (individual paths instead of percentiles).
+    """
+    series = load_target_series(
+        curated_path,
+        target_column=target_column,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
+    )
+    frame = _elastic_net_training_frame(
+        curated_path,
+        target_column=target_column,
+        feature_columns=elastic_net_feature_columns,
+    )
+    if series.index[-1] != frame.index[-1]:
+        raise ValueError(
+            f"Ensemble {target_column!r} components end on different quarters: "
+            f"SARIMA={series.index[-1]}, Elastic Net={frame.index[-1]}."
+        )
+    if weights is None:
+        weights = ensemble.horizon_rmse_weights(
+            horizons=tuple(int(h) for h in horizons),
+            path=ensemble.dynamic_weights_source_path(target_column),
+        )
+    paths = ensemble.simulate_ensemble_paths(
+        frame,
+        steps=max(horizons),
+        n_sims=n_sims,
+        weights=weights,
+        seed=seed,
+        target_column=target_column,
+        sarima_order=sarima_order,
+        sarima_seasonal_order=sarima_seasonal_order,
+        elastic_net_feature_columns=elastic_net_feature_columns,
+        sarima_series=series,
+    )
+    sample = sample_paths_frame(
+        paths,
+        model_family=model_family,
+        target_column=target_column,
+        forecast_origin=str(frame.index[-1]),
+        horizons=horizons,
+        n_draws=n_draws,
+        sample_seed=sample_seed,
+    )
+    return _write_fan(sample, output_path, verbose=verbose)
+
+
 def run_svar_fan(
     *,
     curated_path: Path = CURATED_DATA_PATH,
@@ -421,6 +553,27 @@ def run_all_simulation_fans(
             columns=svar.SYSTEM_B_COLUMNS,
             ordering=svar.SYSTEM_B_CHOLESKY_ORDER,
             n_sims=svar_n_sims,
+            seed=seed,
+            verbose=verbose,
+        ),
+        "ensemble_path_sample": run_ensemble_path_sample(
+            curated_path=curated_path,
+            output_path=SIMULATION_PATHS_SAMPLE_ENSEMBLE_OUTPUT_PATH,
+            n_sims=n_sims,
+            seed=seed,
+            verbose=verbose,
+        ),
+        "ensemble_path_sample_trimmed_mean": run_ensemble_path_sample(
+            curated_path=curated_path,
+            output_path=SIMULATION_PATHS_SAMPLE_ENSEMBLE_TRIMMED_MEAN_OUTPUT_PATH,
+            target_column=TRIMMED_MEAN_TARGET_COLUMN,
+            model_family="ensemble_trimmed_mean",
+            sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
+            sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
+            elastic_net_feature_columns=(
+                TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS
+            ),
+            n_sims=n_sims,
             seed=seed,
             verbose=verbose,
         ),
