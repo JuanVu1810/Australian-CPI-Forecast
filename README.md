@@ -713,3 +713,13 @@ Peng, S., Sun, W., Chen, P., Xu, H., Ma, D., Chen, M., Wang, Y., & Li, H.
 (2025). MSP-EDA: Multivariate time series forecasting based on multiscale
 patches and external data augmentation. *Electronics, 14*(13), 2618.
 https://doi.org/10.3390/electronics14132618
+
+Garvin, N., Kurian, S., Major, M., & Norman, D. (2022). *Macrofinancial
+Stress Testing on Australian Banks* (RBA Research Discussion Paper No.
+RDP 2022-03). Reserve Bank of Australia.
+
+National Australia Bank. (2025). *Pillar 3 Disclosure Report — 30 September
+2025* (Table CR6, Credit Risk Exposures).
+
+National Australia Bank. (2025). *Annual Report 2025* (Note 17, Provision
+for Credit Impairment; macroeconomic scenario probability weightings).
