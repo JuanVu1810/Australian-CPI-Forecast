@@ -1,0 +1,19 @@
+/* Long display equations (MathJax v3 CHTML output) can be wider than the
+   content column, especially on narrow viewports. Sphinx's default theme
+   clips the overflow instead of scrolling it, silently hiding part of the
+   equation. Scroll it instead so every formula stays fully readable. */
+mjx-container[display="true"] {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+}
+
+/* Wide pandas DataFrame outputs (common in the EDA appendix) have no scroll
+   container at all by default -- extra columns spill past the viewport with
+   no way to reach them. Making the table itself a scrollable block fixes
+   that without changing how it looks when it already fits. */
+table.dataframe {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}

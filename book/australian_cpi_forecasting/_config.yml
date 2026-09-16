@@ -36,3 +36,11 @@ repository:
 html:
   use_issues_button: true
   use_repository_button: true
+
+# Long display equations (see 4.7's PD_stressed/ECL formulas) can overflow the
+# content column on narrow viewports; custom.css makes them scroll instead of
+# silently clipping.
+sphinx:
+  config:
+    html_css_files:
+      - custom.css

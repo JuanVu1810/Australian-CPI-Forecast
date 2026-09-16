@@ -19,3 +19,20 @@ chapters:
 - file: 05_evaluation
 - file: 06_deployment
 - file: 07_conclusion
+- file: appendix_eda/index
+  sections:
+  - file: appendix_eda/01_data_integrity
+  - file: appendix_eda/02_missing_values
+  - file: appendix_eda/03_cpi_target_inspection
+  - file: appendix_eda/04_external_variables
+  - file: appendix_eda/05_stationarity_tests
+  - file: appendix_eda/06_lead_lag_correlation
+  - file: appendix_eda/07_granger_causality
+  - file: appendix_eda/08_multicollinearity_vif
+  - file: appendix_eda/09_leakage_availability
+  - file: appendix_eda/10_exogenous_screening_headline
+  - file: appendix_eda/11_exogenous_screening_trimmed_mean
+  - file: appendix_eda/12_rolling_correlations
+  - file: appendix_eda/13_raw_frequency_validation
+  - file: appendix_eda/14_rba_forecast_benchmark
+  - file: appendix_eda/15_documented_limitations
