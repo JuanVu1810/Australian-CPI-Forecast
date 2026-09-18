@@ -17,3 +17,14 @@ table.dataframe {
   overflow-x: auto;
   max-width: 100%;
 }
+
+/* With the duplicate search navbar disabled, keep the sidebar search button
+   accessible in the mobile navigation dialog too. The book theme normally
+   hides this field below 992px. */
+.bd-sidebar-primary .search-button-field {
+  display: flex;
+}
+
+.bd-sidebar-primary .search-button-field .search-button__default-text {
+  display: inline;
+}

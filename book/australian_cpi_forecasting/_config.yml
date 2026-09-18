@@ -42,5 +42,11 @@ html:
 # silently clipping.
 sphinx:
   config:
+    html_theme_options:
+      # PyData 0.17 adds a search navbar with a second primary-toggle button.
+      # Both themes attach handlers to only the first button, leaving the
+      # book's article-header toggle unresponsive. Keep search in the sidebar
+      # and use the book theme's single toggle (pydata-sphinx-theme#2451).
+      navbar_persistent: []
     html_css_files:
       - custom.css
