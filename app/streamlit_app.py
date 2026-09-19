@@ -1513,7 +1513,12 @@ st.markdown(
     "the **Taylor rule** (fixed and estimated variants); **ordered logit/probit** "
     "($F$ = logistic or $\\Phi$). Frank–Hall XGBoost decomposes the same ordinal target "
     "into $K{-}1$ cumulative binary classifiers; majority vote takes the mode of the "
-    "first four, tie-broken by threshold's own call."
+    "first four, tie-broken by threshold's own call. The threshold rule takes the "
+    "**headline** CPI forecast because the 2–3% band is a target for CPI inflation; "
+    "trimmed mean enters ordered logit/probit and XGBoost as a feature. Run through the "
+    "same rule instead, the trimmed-mean forecast scores lower on the same 41 test "
+    "quarters (macro-F1 0.696 vs 0.775), mainly by over-calling cuts — a sensitivity "
+    "check on that sample, not a model-selection step."
 )
 if st.button("Refresh RBA action", key="refresh_rba_action"):
     rba_payload, rba_error = api_request("GET", api_base_url, "/rba-action")

@@ -59,6 +59,17 @@ No audited candidate at or above the chosen fit-size floor had a degenerate trai
 
 Macro-F1 is the comparison metric because policy holds are common enough that raw accuracy can overstate usefulness.
 
+## Why The Threshold Rule Uses Headline CPI
+
+The threshold baseline applies the RBA's published 2-3% target band to the headline CPI forecast, because that band is a target for CPI inflation. Trimmed mean is the underlying-inflation measure, and it does enter the ordered logit, ordered probit and Frank-Hall models as a feature. As a sensitivity check, the same rule was also applied to the trimmed-mean forecast over the same test quarters:
+
+| threshold_input       |   macro_f1 |   accuracy |   predicted_cut |   predicted_hold |   predicted_hike |
+|:----------------------|-----------:|-----------:|----------------:|-----------------:|-----------------:|
+| headline (reportable) |      0.775 |      0.756 |              15 |               16 |               10 |
+| trimmed mean          |      0.696 |      0.634 |              22 |               11 |                8 |
+
+The two inputs give different calls in 15 of 41 test quarters; compare each input's predicted-action counts with the actual test counts above to see where the calls differ. This check was run after the model design was fixed and on the same test quarters as every other comparison, so treat it as a sensitivity check rather than a model-selection step; the gap between the two inputs has no bootstrap interval.
+
 ## Prediction Confidence
 
 Confidence is the probability assigned to the predicted action by that model's own class-probability calculation.

@@ -333,6 +333,45 @@ def threshold_baseline_predict(headline_forecast: pd.Series | np.ndarray) -> pd.
     return predictions.astype(ACTION_DTYPE)
 
 
+def threshold_input_sensitivity(test: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Apply the threshold rule to the headline and to the trimmed-mean forecast.
+
+    A sensitivity check on the rule's input over the same rows, not a candidate model:
+    the reportable threshold baseline is defined on ``headline_forecast``. Returns the
+    per-input scores and the number of rows where the two inputs give different calls.
+    """
+    actual = test["policy_action"].astype(str).to_numpy()
+    calls = {}
+    rows = []
+    for column, label in (
+        ("headline_forecast", "headline (reportable)"),
+        ("trimmed_mean_forecast", "trimmed mean"),
+    ):
+        predicted = threshold_baseline_predict(test[column]).astype(str).to_numpy()
+        calls[label] = predicted
+        rows.append(
+            {
+                "threshold_input": label,
+                "macro_f1": float(
+                    f1_score(
+                        actual,
+                        predicted,
+                        labels=list(ACTION_ORDER),
+                        average="macro",
+                        zero_division=0,
+                    )
+                ),
+                "accuracy": float(accuracy_score(actual, predicted)),
+                **{
+                    f"predicted_{action}": int((predicted == action).sum())
+                    for action in ACTION_ORDER
+                },
+            }
+        )
+    disagreements = int((calls["headline (reportable)"] != calls["trimmed mean"]).sum())
+    return pd.DataFrame(rows), disagreements
+
+
 def majority_vote_ensemble_predict(
     voter_predictions: Mapping[str, pd.Series | np.ndarray],
 ) -> tuple[pd.Series, pd.Series]:
@@ -1182,6 +1221,7 @@ def build_evaluation_report(
             "chosen_test": [int(test_counts[label]) for label in ACTION_ORDER],
         }
     )
+    threshold_input_frame, threshold_input_disagreements = threshold_input_sensitivity(test)
     display_audit = split_choice.audit.copy()
     display_metrics = metrics.copy()
     display_metrics["macro_f1"] = display_metrics["macro_f1"].round(3)
@@ -1576,6 +1616,29 @@ def build_evaluation_report(
             (
                 "Macro-F1 is the comparison metric because policy holds are common enough "
                 "that raw accuracy can overstate usefulness."
+            ),
+            "",
+            "## Why The Threshold Rule Uses Headline CPI",
+            "",
+            (
+                "The threshold baseline applies the RBA's published 2-3% target band to the "
+                "headline CPI forecast, because that band is a target for CPI inflation. "
+                "Trimmed mean is the underlying-inflation measure, and it does enter the "
+                "ordered logit, ordered probit and Frank-Hall models as a feature. As a "
+                "sensitivity check, the same rule was also applied to the trimmed-mean "
+                "forecast over the same test quarters:"
+            ),
+            "",
+            _markdown_table(threshold_input_frame),
+            "",
+            (
+                f"The two inputs give different calls in {threshold_input_disagreements} of "
+                f"{len(test)} test quarters; compare each input's predicted-action counts "
+                "with the actual test counts above to see where the calls differ. This "
+                "check was run after the model design was "
+                "fixed and on the same test quarters as every other comparison, so treat it "
+                "as a sensitivity check rather than a model-selection step; the gap between "
+                "the two inputs has no bootstrap interval."
             ),
             "",
             "## Prediction Confidence",

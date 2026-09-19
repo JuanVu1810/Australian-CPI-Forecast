@@ -82,6 +82,30 @@ def test_threshold_baseline_uses_open_cut_hike_thresholds_and_closed_hold_band()
     assert predictions.dtype == rba_classifier.ACTION_DTYPE
 
 
+def test_threshold_input_sensitivity_scores_both_inputs_on_the_same_rows():
+    test = pd.DataFrame(
+        {
+            "headline_forecast": [1.5, 2.5, 3.5, 2.5],
+            "trimmed_mean_forecast": [1.5, 1.5, 3.5, 2.5],
+            "policy_action": pd.Categorical(
+                ["cut", "hold", "hike", "hold"], dtype=rba_classifier.ACTION_DTYPE
+            ),
+        },
+        index=[7, 8, 9, 10],  # a non-zero-based slice, like the real test rows
+    )
+
+    frame, disagreements = rba_classifier.threshold_input_sensitivity(test)
+
+    assert frame["threshold_input"].tolist() == ["headline (reportable)", "trimmed mean"]
+    headline, trimmed = frame.iloc[0], frame.iloc[1]
+    assert headline["macro_f1"] == pytest.approx(1.0)
+    assert headline["accuracy"] == pytest.approx(1.0)
+    assert trimmed["accuracy"] == pytest.approx(0.75)
+    assert trimmed["macro_f1"] < headline["macro_f1"]
+    assert (trimmed["predicted_cut"], trimmed["predicted_hold"], trimmed["predicted_hike"]) == (2, 1, 1)
+    assert disagreements == 1
+
+
 def test_majority_vote_ensemble_uses_four_voters_and_threshold_tie_break():
     predictions, tie_breaks = rba_classifier.majority_vote_ensemble_predict(
         {
