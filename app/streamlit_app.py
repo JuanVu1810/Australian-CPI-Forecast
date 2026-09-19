@@ -1872,11 +1872,15 @@ else:
 st.header("7. Conclusion")
 st.markdown(
     """
-    Regularizing the macro block (Elastic Net) edges out plain SARIMA on the shared
-    grid, and blending the two (Ensemble) edges out both — real, if modest, evidence
-    that structure helps at this sample size without over-engineering the model. None
-    of the three forecast-accuracy families beat the RBA's own published forecast
-    outright. The SVAR/scenario layer adds a second, separate kind of value — *why* a
+    Blending SARIMA with the regularized macro model (the Ensemble) edges out either
+    one alone on the shared grid, while Elastic Net on its own does not beat plain
+    SARIMA in pooled RMSE — real, if modest, evidence that structure helps at this
+    sample size without over-engineering the model. Against the RBA's own published
+    headline forecast, scored on the same origins and horizons (each against its own
+    actual), the models are comparable rather than demonstrably better or worse: the
+    Ensemble's pooled RMSE is 1.640 against 1.690, and the gap is within sampling
+    noise. The SVAR/scenario
+    layer adds a second, separate kind of value — *why* a
     shock might move CPI — at the honestly-stated cost of two systems that still fail
     their own residual diagnostics.
 

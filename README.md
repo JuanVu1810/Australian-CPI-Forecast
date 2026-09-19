@@ -142,9 +142,14 @@ no built-in AR structure the way SARIMA does), fitting one
 `l1_ratio` selected by `GridSearchCV` over chronological `TimeSeriesSplit`
 folds -- so the scaler is refit on each fold's training rows only, never once
 on the whole training window before cross-validation begins. On the shared
-8-horizon grid it edges out plain SARIMA, though not the RBA benchmark --
-evidence that regularizing the macro block helps on this sample size without
-adding unnecessary architecture complexity.
+8-horizon grid it does not beat plain SARIMA on pooled RMSE on its own (1.706
+vs 1.653 headline, 1.334 vs 1.299 trimmed mean); the Ensemble blend of the two
+does edge out either alone, so the regularized macro block adds value in
+combination without adding unnecessary architecture complexity. Against the
+RBA's published headline forecast, scored on the same origins and horizons (each
+against its own actual), the ensemble is comparable rather than demonstrably
+better: pooled RMSE 1.640 vs 1.690, with a paired-bootstrap interval that
+includes zero.
 
 **Interpretability:** per-horizon coefficients, intercept, and selected
 `alpha`/`l1_ratio` are reported in `reports/elastic_net_coefficients.csv`.
