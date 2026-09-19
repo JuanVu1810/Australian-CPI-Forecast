@@ -575,12 +575,22 @@ def walk_forward_interval_coverage_backtest(
             interval_lower = float(lower_values[horizon - 1])
             interval_upper = float(upper_values[horizon - 1])
             interval_width = interval_upper - interval_lower
-            half_width = interval_width / 2.0
-            nonconformity_score = (
-                np.inf
-                if np.isclose(half_width, 0.0)
-                else abs(actual - point_forecast_proxy) / half_width
+            # Side-specific score: error relative to the interval's distance from the
+            # point on the side the actual landed. Calibration scales each side around
+            # the point, so a symmetric half-width score under-covers whenever the raw
+            # interval is skewed (Elastic Net's bootstrap intervals often are).
+            error = abs(actual - point_forecast_proxy)
+            side_distance = (
+                point_forecast_proxy - interval_lower
+                if actual < point_forecast_proxy
+                else interval_upper - point_forecast_proxy
             )
+            if error == 0.0:
+                nonconformity_score = 0.0
+            elif side_distance <= 1e-12:
+                nonconformity_score = np.inf
+            else:
+                nonconformity_score = error / side_distance
             rows.append(
                 {
                     "model": model_name,
@@ -867,6 +877,125 @@ def compute_conformal_scale_factors(
     return factors.sort_values(["model", "horizon"]).reset_index(drop=True)
 
 
+DEFAULT_CALIBRATION_WINDOW_QUARTERS = 12
+DEFAULT_MIN_CALIBRATION_SCORES = 8
+
+
+def _pooled_conformal_scale(scores: np.ndarray, target_coverage: float) -> float:
+    """Finite-sample-corrected conformal quantile of ``scores``, floored at 1.0."""
+    finite = np.sort(scores[np.isfinite(scores)])
+    n = len(finite)
+    rank = min(n, int(np.ceil((n + 1) * target_coverage)))
+    return max(1.0, float(finite[rank - 1]))
+
+
+def _quarter_periods(values: pd.Series) -> pd.PeriodIndex:
+    return pd.PeriodIndex(values.astype(str), freq="Q")
+
+
+def _realised_score_window(
+    model_rows: pd.DataFrame,
+    as_of: pd.Period,
+    window_quarters: int | None,
+) -> np.ndarray:
+    """Scores for forecasts whose target quarter was already observed at ``as_of``."""
+    target_quarters = _quarter_periods(model_rows["target_quarter"])
+    keep = target_quarters <= as_of
+    if window_quarters is not None:
+        keep &= target_quarters > as_of - window_quarters
+    return model_rows.loc[keep, "nonconformity_score"].astype(float).to_numpy()
+
+
+def compute_rolling_conformal_scale_factors(
+    predictions: pd.DataFrame,
+    target_coverage: float,
+    window_quarters: int | None = DEFAULT_CALIBRATION_WINDOW_QUARTERS,
+    min_scores: int = DEFAULT_MIN_CALIBRATION_SCORES,
+) -> pd.DataFrame:
+    """Ex-ante interval scale factor per model, forecast origin and horizon.
+
+    Each origin's factor uses only scores whose target quarter was already
+    observed at that origin (no look-ahead), pooled across horizons and limited
+    to the most recent ``window_quarters`` target quarters so the interval width
+    can follow a change in error volatility. Origins with fewer than
+    ``min_scores`` realised scores get no factor row and stay uncalibrated.
+    """
+    required = {"model", "forecast_origin", "target_quarter", "horizon", "nonconformity_score"}
+    missing = required.difference(predictions.columns)
+    if missing:
+        raise ValueError(f"interval predictions missing required columns: {sorted(missing)}")
+    if not 0 < target_coverage < 1:
+        raise ValueError("target_coverage must satisfy 0 < target_coverage < 1.")
+
+    rows: list[dict[str, object]] = []
+    for model, model_rows in predictions.groupby("model", sort=True):
+        origins = pd.Series(model_rows["forecast_origin"].unique())
+        for origin, period in zip(origins, _quarter_periods(origins)):
+            scores = _realised_score_window(model_rows, period, window_quarters)
+            n_finite = int(np.isfinite(scores).sum())
+            if n_finite < min_scores:
+                continue
+            scale_factor = _pooled_conformal_scale(scores, target_coverage)
+            at_origin = model_rows.loc[model_rows["forecast_origin"] == origin, "horizon"]
+            for horizon in sorted(at_origin.astype(int).unique()):
+                rows.append(
+                    {
+                        "model": str(model),
+                        "forecast_origin": origin,
+                        "horizon": int(horizon),
+                        "n": n_finite,
+                        "target_coverage": float(target_coverage),
+                        "scale_factor": scale_factor,
+                    }
+                )
+    return pd.DataFrame(
+        rows,
+        columns=["model", "forecast_origin", "horizon", "n", "target_coverage", "scale_factor"],
+    )
+
+
+def compute_current_conformal_scale_factors(
+    predictions: pd.DataFrame,
+    target_coverage: float,
+    window_quarters: int | None = DEFAULT_CALIBRATION_WINDOW_QUARTERS,
+    min_scores: int = DEFAULT_MIN_CALIBRATION_SCORES,
+) -> pd.DataFrame:
+    """Scale factors as of the latest observed target quarter, for serving.
+
+    Same pooled rolling window as ``compute_rolling_conformal_scale_factors``,
+    evaluated once at the last quarter with a realised forecast error and
+    reported per model and horizon (the factor is shared across horizons).
+    """
+    required = {"model", "target_quarter", "horizon", "nonconformity_score"}
+    missing = required.difference(predictions.columns)
+    if missing:
+        raise ValueError(f"interval predictions missing required columns: {sorted(missing)}")
+    if not 0 < target_coverage < 1:
+        raise ValueError("target_coverage must satisfy 0 < target_coverage < 1.")
+
+    as_of = _quarter_periods(predictions["target_quarter"]).max()
+    rows: list[dict[str, object]] = []
+    for model, model_rows in predictions.groupby("model", sort=True):
+        scores = _realised_score_window(model_rows, as_of, window_quarters)
+        n_finite = int(np.isfinite(scores).sum())
+        if n_finite < min_scores:
+            continue
+        scale_factor = _pooled_conformal_scale(scores, target_coverage)
+        for horizon in sorted(model_rows["horizon"].astype(int).unique()):
+            rows.append(
+                {
+                    "model": str(model),
+                    "horizon": int(horizon),
+                    "n": n_finite,
+                    "target_coverage": float(target_coverage),
+                    "scale_factor": scale_factor,
+                }
+            )
+    return pd.DataFrame(
+        rows, columns=["model", "horizon", "n", "target_coverage", "scale_factor"]
+    )
+
+
 def run_sarima_comparison(
     curated_path: Path = CURATED_DATA_PATH,
     rba_path: Path = RBA_FORECAST_PATH,
@@ -880,6 +1009,7 @@ def run_sarima_comparison(
     run_name: str = "sarima_comparison",
     model_family_tag: str = "sarima",
     selection_criterion: str = "fixed_cpi_yoy_default",
+    max_quarter: pd.Period | None = None,
 ) -> pd.DataFrame:
     """Run SARIMA, seasonal naive, and RBA comparison and save the metric table."""
     from src.models import tracking
@@ -893,7 +1023,7 @@ def run_sarima_comparison(
     horizons = tuple(horizons)
     order = DEFAULT_ORDER if order is None else order
     seasonal_order = DEFAULT_SEASONAL_ORDER if seasonal_order is None else seasonal_order
-    target = load_target_series(curated_path, target_column=target_column)
+    target = load_target_series(curated_path, target_column=target_column, max_quarter=max_quarter)
     sarima = walk_forward_backtest(
         target,
         lambda train, steps: forecast_sarima(
@@ -948,5 +1078,7 @@ def run_sarima_comparison(
 
 
 if __name__ == "__main__":
-    table = run_sarima_comparison()
+    from src.models import svar
+
+    table = run_sarima_comparison(max_quarter=svar.FORECAST_ORIGIN_PIN)
     print(table.round({"rmse": 3, "mae": 3}).to_string(index=False))

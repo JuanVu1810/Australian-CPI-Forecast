@@ -1,4 +1,4 @@
-"""Split-conformal-style interval scale calibration for served CPI families."""
+"""Rolling conformal-style interval scale calibration for served CPI families."""
 
 from __future__ import annotations
 
@@ -12,8 +12,9 @@ from src.models.evaluation import (
     CURATED_DATA_PATH,
     DEFAULT_HORIZONS,
     PROJECT_ROOT,
-    compute_conformal_scale_factors,
+    compute_current_conformal_scale_factors,
     compute_interval_coverage_table,
+    compute_rolling_conformal_scale_factors,
 )
 from src.models.interval_coverage import (
     DEFAULT_INITIAL_TRAIN_SIZE,
@@ -22,9 +23,7 @@ from src.models.interval_coverage import (
     DEFAULT_SEED,
     DEFAULT_UPPER_QUANTILE,
     INTERVAL_CALIBRATION_FACTORS_PATH,
-    INTERVAL_COVERAGE_OUTPUT_PATH,
     TARGET_COLUMN,
-    TRIMMED_MEAN_INTERVAL_COVERAGE_OUTPUT_PATH,
     apply_interval_calibration,
     run_family_interval_backtests,
 )
@@ -46,32 +45,6 @@ TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_OUTPUT_PATH = (
 )
 DEFAULT_CALIBRATION_FRACTION = 0.7
 DEFAULT_FAMILIES = ("sarima", "elastic_net", "ensemble")
-
-
-def _origin_counts_from_coverage_report(
-    path: Path = INTERVAL_COVERAGE_OUTPUT_PATH,
-    families: tuple[str, ...] = DEFAULT_FAMILIES,
-) -> dict[str, int]:
-    """Read per-family origin counts from the existing interval coverage report."""
-    if not path.exists():
-        raise FileNotFoundError(
-            f"{path} is required to choose calibration/validation split sizes. "
-            "Run python -m src.models.interval_coverage first."
-        )
-    report = pd.read_csv(path)
-    required = {"model", "horizon", "n"}
-    missing = required.difference(report.columns)
-    if missing:
-        raise ValueError(f"{path} missing required columns: {sorted(missing)}")
-
-    counts: dict[str, int] = {}
-    rows = report.loc[~report["horizon"].astype(str).eq("overall")].copy()
-    for family in families:
-        family_rows = rows.loc[rows["model"].eq(family)]
-        if family_rows.empty:
-            raise ValueError(f"{path} has no horizon rows for model {family!r}.")
-        counts[family] = int(family_rows["n"].astype(int).max())
-    return counts
 
 
 def _calibration_origin_count(total_origins: int, calibration_fraction: float) -> int:
@@ -183,7 +156,6 @@ def run_interval_calibration(
     curated_path: Path = CURATED_DATA_PATH,
     factors_output_path: Path = INTERVAL_CALIBRATION_FACTORS_PATH,
     validation_output_path: Path = INTERVAL_CALIBRATION_VALIDATION_OUTPUT_PATH,
-    origin_count_report_path: Path = INTERVAL_COVERAGE_OUTPUT_PATH,
     initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
     lower_quantile: float = DEFAULT_LOWER_QUANTILE,
@@ -199,117 +171,86 @@ def run_interval_calibration(
     weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
     verbose: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fit interval scale factors on early origins and validate on later origins."""
-    target_coverage = float(upper_quantile - lower_quantile)
-    origin_counts = _origin_counts_from_coverage_report(
-        origin_count_report_path,
-        families=families,
-    )
-    factor_frames: list[pd.DataFrame] = []
-    comparison_frames: list[pd.DataFrame] = []
-    started = time.perf_counter()
+    """Write serving scale factors and an ex-ante held-out before/after comparison.
 
+    One raw walk-forward interval backtest supplies everything. The serving
+    factors are the pooled rolling factors as of the latest observed target
+    quarter. The held-out comparison covers the last ``1 - calibration_fraction``
+    of each family's origins; every origin there is calibrated only with scores
+    already observed at that origin, so it is a true out-of-sample check that
+    includes the post-2020 volatility shift.
+    """
+    target_coverage = float(upper_quantile - lower_quantile)
+    started = time.perf_counter()
+    predictions = run_family_interval_backtests(
+        curated_path=curated_path,
+        initial_train_size=initial_train_size,
+        horizons=horizons,
+        lower_quantile=lower_quantile,
+        upper_quantile=upper_quantile,
+        n_sims=n_sims,
+        seed=seed,
+        families=families,
+        target_column=target_column,
+        **({"sarima_order": sarima_order} if sarima_order is not None else {}),
+        **(
+            {"sarima_seasonal_order": sarima_seasonal_order}
+            if sarima_seasonal_order is not None
+            else {}
+        ),
+        **(
+            {"elastic_net_feature_columns": elastic_net_feature_columns}
+            if elastic_net_feature_columns is not None
+            else {}
+        ),
+        weights=weights,
+        verbose=verbose,
+    )
+    if predictions.empty:
+        raise ValueError("Interval calibration backtests produced no forecast origins.")
+
+    serving_factors = compute_current_conformal_scale_factors(
+        predictions, target_coverage=target_coverage
+    )
+    rolling_factors = compute_rolling_conformal_scale_factors(
+        predictions, target_coverage=target_coverage
+    )
+
+    comparison_frames: list[pd.DataFrame] = []
     for family in families:
-        total_origins = origin_counts[family]
-        calibration_origins = _calibration_origin_count(total_origins, calibration_fraction)
-        validation_origins = total_origins - calibration_origins
+        family_rows = predictions.loc[predictions["model"].eq(family)]
+        origins = sorted(family_rows["forecast_origin"].unique())
+        calibration_origins = _calibration_origin_count(len(origins), calibration_fraction)
+        held_out_origins = origins[calibration_origins:]
+        raw_validation = family_rows.loc[family_rows["forecast_origin"].isin(held_out_origins)]
+        family_factors = rolling_factors.loc[
+            rolling_factors["model"].eq(family)
+            & rolling_factors["forecast_origin"].isin(held_out_origins)
+        ]
         if verbose:
             print(
-                f"Running {family} calibration split: "
-                f"{calibration_origins} calibration origins, "
-                f"{validation_origins} held-out origins...",
+                f"{family}: {len(origins)} origins, {len(held_out_origins)} held out "
+                "and calibrated ex-ante from prior realised scores only.",
                 flush=True,
             )
-
-        calibration_predictions = run_family_interval_backtests(
-            curated_path=curated_path,
-            initial_train_size=initial_train_size,
-            horizons=horizons,
-            lower_quantile=lower_quantile,
-            upper_quantile=upper_quantile,
-            n_sims=n_sims,
-            seed=seed,
-            max_origins=calibration_origins,
-            skip_origins=0,
-            families=(family,),
-            target_column=target_column,
-            **({"sarima_order": sarima_order} if sarima_order is not None else {}),
-            **(
-                {"sarima_seasonal_order": sarima_seasonal_order}
-                if sarima_seasonal_order is not None
-                else {}
-            ),
-            **(
-                {"elastic_net_feature_columns": elastic_net_feature_columns}
-                if elastic_net_feature_columns is not None
-                else {}
-            ),
-            weights=weights,
-            verbose=verbose,
-        )
-        factors = compute_conformal_scale_factors(
-            calibration_predictions,
-            target_coverage=target_coverage,
-        )
-        factor_frames.append(factors)
-
-        validation_predictions = run_family_interval_backtests(
-            curated_path=curated_path,
-            initial_train_size=initial_train_size,
-            horizons=horizons,
-            lower_quantile=lower_quantile,
-            upper_quantile=upper_quantile,
-            n_sims=n_sims,
-            seed=seed,
-            max_origins=None,
-            skip_origins=calibration_origins,
-            families=(family,),
-            target_column=target_column,
-            **({"sarima_order": sarima_order} if sarima_order is not None else {}),
-            **(
-                {"sarima_seasonal_order": sarima_seasonal_order}
-                if sarima_seasonal_order is not None
-                else {}
-            ),
-            **(
-                {"elastic_net_feature_columns": elastic_net_feature_columns}
-                if elastic_net_feature_columns is not None
-                else {}
-            ),
-            weights=weights,
-            verbose=verbose,
-        )
-        actual_validation_origins = (
-            validation_predictions["forecast_origin"].nunique()
-            if "forecast_origin" in validation_predictions
-            else 0
-        )
-        if actual_validation_origins < validation_origins:
-            raise ValueError(
-                f"{family}: expected {validation_origins} held-out validation origins "
-                f"(from {origin_count_report_path}'s stale-relative-to-data origin count "
-                f"of {total_origins}), but only {actual_validation_origins} were actually "
-                f"available after loading -- regenerate {origin_count_report_path} first "
-                "(python -m src.models.interval_coverage) so its origin counts match the "
-                "current curated data before running calibration."
-            )
         calibrated_validation = _calibrated_validation_predictions(
-            validation_predictions,
-            factors,
+            raw_validation, rolling_factors.loc[rolling_factors["model"].eq(family)]
+        )
+        factor_summary = (
+            family_factors.groupby(["model", "horizon"], as_index=False)
+            .agg(n=("n", "median"), scale_factor=("scale_factor", "mean"))
         )
         comparison_frames.append(
             _held_out_comparison(
-                raw_validation=validation_predictions,
+                raw_validation=raw_validation,
                 calibrated_validation=calibrated_validation,
-                factors=factors,
+                factors=factor_summary,
                 lower_quantile=lower_quantile,
                 upper_quantile=upper_quantile,
             )
         )
 
-    all_factors = pd.concat(factor_frames, ignore_index=True, sort=False)
-    all_factors = all_factors.rename(columns={"n": "calibration_n"})
-    all_factors = all_factors[
+    all_factors = serving_factors.rename(columns={"n": "calibration_n"})[
         ["model", "horizon", "scale_factor", "calibration_n", "target_coverage"]
     ].sort_values(["model", "horizon"])
 
@@ -352,7 +293,6 @@ def run_trimmed_mean_interval_calibration(
     curated_path: Path = CURATED_DATA_PATH,
     factors_output_path: Path = TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH,
     validation_output_path: Path = TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_OUTPUT_PATH,
-    origin_count_report_path: Path = TRIMMED_MEAN_INTERVAL_COVERAGE_OUTPUT_PATH,
     initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
     lower_quantile: float = DEFAULT_LOWER_QUANTILE,
@@ -367,7 +307,6 @@ def run_trimmed_mean_interval_calibration(
         curated_path=curated_path,
         factors_output_path=factors_output_path,
         validation_output_path=validation_output_path,
-        origin_count_report_path=origin_count_report_path,
         initial_train_size=initial_train_size,
         horizons=horizons,
         lower_quantile=lower_quantile,
@@ -395,11 +334,6 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         default=None,
     )
-    parser.add_argument(
-        "--origin-count-report",
-        type=Path,
-        default=None,
-    )
     parser.add_argument("--initial-train-size", type=int, default=DEFAULT_INITIAL_TRAIN_SIZE)
     parser.add_argument("--n-sims", type=int, default=DEFAULT_N_SIMS)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
@@ -415,7 +349,6 @@ def main(argv: list[str] | None = None) -> None:
             validation_output_path=(
                 args.validation_output or TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_OUTPUT_PATH
             ),
-            origin_count_report_path=args.origin_count_report or TRIMMED_MEAN_INTERVAL_COVERAGE_OUTPUT_PATH,
             initial_train_size=args.initial_train_size,
             lower_quantile=args.lower_quantile,
             upper_quantile=args.upper_quantile,
@@ -429,7 +362,6 @@ def main(argv: list[str] | None = None) -> None:
             curated_path=args.data,
             factors_output_path=args.factors_output or INTERVAL_CALIBRATION_FACTORS_PATH,
             validation_output_path=args.validation_output or INTERVAL_CALIBRATION_VALIDATION_OUTPUT_PATH,
-            origin_count_report_path=args.origin_count_report or INTERVAL_COVERAGE_OUTPUT_PATH,
             initial_train_size=args.initial_train_size,
             lower_quantile=args.lower_quantile,
             upper_quantile=args.upper_quantile,

@@ -56,7 +56,28 @@ ELASTIC_NET_FEATURE_COLUMNS = (
     "cpi_yoy_lag4",
     *ELASTIC_NET_MACRO_FEATURE_COLUMNS,
 )
+# Originally scoped for the now-removed SARIMAX "primary WTI vs Brent-alt"
+# oil-proxy comparison, this macro block only ever carried the two oil/
+# commodity terms -- `cash_rate_change_lag1`, `unemployment_rate_change_lag1`,
+# and `inflation_expectations_business_lag1` were screened in
+# reports/model_refit_phase1_decisions.md (Trimmed-Mean Exogenous Feature
+# Decision) but flagged "retain only for nested/diagnostic spec" and never
+# promoted into this Elastic Net block, unlike the headline block above where
+# the equivalent variables (plus a PPI term) are primary features. That gap
+# left the trimmed-mean model with 5 macro features against headline's 9,
+# and was found (2026-09-19) to cause the live full-sample fit to collapse to
+# an intercept-only model (every coefficient zero) at horizons 5-8 -- see the
+# dated note in .ai/PROJECT_BRIEF.md. All four candidates are `I(0)` per the
+# same phase-1 stationarity table and pass a VIF re-check (max 5.58 across
+# the full 11-feature matrix, 101 complete rows 2001Q1-2026Q1) with no drop
+# in usable sample (wti_growth_lag1 was already the binding availability
+# constraint). `ppi_growth_lag1` (not `_lag2`) matches trimmed mean's own
+# phase-1 lag screening, not headline's.
 TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_MACRO_FEATURE_COLUMNS = (
+    "cash_rate_change_lag1",
+    "unemployment_rate_change_lag1",
+    "inflation_expectations_business_lag1",
+    "ppi_growth_lag1",
     "commodity_growth_lag1",
     "wti_growth_lag1",
     "commodity_growth_lag1_sq",
@@ -69,6 +90,10 @@ TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS = (
     *TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_MACRO_FEATURE_COLUMNS,
 )
 TRIMMED_MEAN_ELASTIC_NET_BRENT_ALT_MACRO_FEATURE_COLUMNS = (
+    "cash_rate_change_lag1",
+    "unemployment_rate_change_lag1",
+    "inflation_expectations_business_lag1",
+    "ppi_growth_lag1",
     "commodity_growth_lag1",
     "brent_growth_lag1",
     "commodity_growth_lag1_sq",
@@ -493,6 +518,7 @@ def run_elastic_net_comparison(
     model_family_tag: str = "elastic_net",
     feature_set_label: str = "macro_core",
     verbose: bool = False,
+    max_quarter: pd.Period | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, float]:
     """Run the Elastic Net walk-forward backtest, comparison, and coefficient report."""
     from src.models import tracking
@@ -504,8 +530,10 @@ def run_elastic_net_comparison(
     sarima_seasonal_order = (
         DEFAULT_SEASONAL_ORDER if sarima_seasonal_order is None else sarima_seasonal_order
     )
-    series = load_target_series(curated_path, target_column=target_column)
-    exog = load_elastic_net_feature_frame(curated_path, feature_columns=feature_columns)
+    series = load_target_series(curated_path, target_column=target_column, max_quarter=max_quarter)
+    exog = load_elastic_net_feature_frame(
+        curated_path, feature_columns=feature_columns, max_quarter=max_quarter
+    )
 
     if verbose:
         print("Running Elastic Net direct-multihorizon walk-forward backtest...", flush=True)
@@ -625,6 +653,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--max-origins", type=int, default=None)
     args = parser.parse_args(argv)
 
+    from src.models import svar
+
     comparison, coefficients, runtime_seconds = run_elastic_net_comparison(
         curated_path=args.data,
         rba_path=args.rba_data,
@@ -634,6 +664,7 @@ def main(argv: list[str] | None = None) -> None:
         seed=args.seed,
         max_origins=args.max_origins,
         verbose=True,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
     )
     print(ELASTIC_NET_MODEL_NOTE)
     print(f"Runtime seconds: {runtime_seconds:.1f}")

@@ -6,8 +6,10 @@ from src.models.evaluation import (
     align_rba_forecasts_to_grid,
     compute_baseline_predictions,
     compute_conformal_scale_factors,
+    compute_current_conformal_scale_factors,
     compute_interval_coverage_table,
     compute_metric_table,
+    compute_rolling_conformal_scale_factors,
     load_target_series,
     seasonal_naive_forecast,
     walk_forward_backtest,
@@ -530,3 +532,143 @@ def test_skip_origins_produces_a_chronologically_disjoint_origin_set():
     assert len(screen_origins) == 5
     assert screen_origins.isdisjoint(held_out_origins)
     assert max(screen_origins) < min(held_out_origins)
+
+
+def test_interval_backtest_nonconformity_score_uses_the_side_the_actual_landed_on():
+    # Skewed raw interval: 1 below the point, 4 above. Actual = point - 2, i.e. outside
+    # the lower side by 2x. A symmetric half-width score (2.5) would call it covered.
+    series = pd.Series(
+        [10.0, 10.0, 10.0, 10.0, 8.0],
+        index=pd.period_range("2020Q1", periods=5, freq="Q"),
+    )
+
+    def simulator(train, steps, n_sims, seed):
+        return np.column_stack([np.linspace(9.0, 14.0, n_sims)])
+
+    result = walk_forward_interval_coverage_backtest(
+        series=series,
+        simulate_func=simulator,
+        initial_train_size=4,
+        horizons=(1,),
+        model_name="skewed",
+        lower_quantile=0.0,
+        upper_quantile=1.0,
+        n_sims=51,
+        seed=1,
+    )
+
+    point = result["point_forecast_proxy"].iloc[0]
+    lower_side = point - result["interval_lower"].iloc[0]
+    assert result["actual"].iloc[0] < point
+    np.testing.assert_allclose(
+        result["nonconformity_score"].iloc[0], (point - 8.0) / lower_side
+    )
+    assert result["nonconformity_score"].iloc[0] > 1.0
+    assert not result["hit"].iloc[0]
+
+
+def _score_frame(rows):
+    return pd.DataFrame(
+        rows, columns=["model", "forecast_origin", "target_quarter", "horizon", "nonconformity_score"]
+    )
+
+
+def test_rolling_conformal_factors_never_use_scores_not_yet_observed_at_the_origin():
+    # Origin 2020Q4 sees only scores with target_quarter <= 2020Q4. The huge score
+    # targets 2021Q2, so it must not raise the 2020Q4 factor.
+    rows = [("m", "2020Q1", f"2020Q{q}", q, 0.5) for q in (2, 3, 4)]
+    rows += [("m", "2020Q4", "2021Q1", 1, 0.5), ("m", "2020Q4", "2021Q2", 2, 50.0)]
+    rows += [("m", "2020Q3", "2020Q4", 1, 0.5)]
+    predictions = _score_frame(rows)
+
+    factors = compute_rolling_conformal_scale_factors(
+        predictions, target_coverage=0.8, window_quarters=None, min_scores=3
+    )
+
+    at_2020q4 = factors.loc[factors["forecast_origin"].eq("2020Q4")]
+    assert not at_2020q4.empty
+    assert at_2020q4["scale_factor"].eq(1.0).all()
+
+
+def test_rolling_conformal_factors_window_drops_old_scores_and_floor_is_one():
+    rows = []
+    for i, quarter in enumerate(pd.period_range("2018Q1", "2019Q4", freq="Q")):
+        rows.append(("m", str(quarter - 1), str(quarter), 1, 9.0))  # old, large
+    for quarter in pd.period_range("2020Q1", "2021Q4", freq="Q"):
+        rows.append(("m", str(quarter - 1), str(quarter), 1, 0.3))  # recent, small
+    predictions = _score_frame(rows)
+
+    windowed = compute_rolling_conformal_scale_factors(
+        predictions, target_coverage=0.8, window_quarters=4, min_scores=4
+    )
+    expanding = compute_rolling_conformal_scale_factors(
+        predictions, target_coverage=0.8, window_quarters=None, min_scores=4
+    )
+
+    last = "2021Q3"
+    assert windowed.loc[windowed["forecast_origin"].eq(last), "scale_factor"].iloc[0] == 1.0
+    assert expanding.loc[expanding["forecast_origin"].eq(last), "scale_factor"].iloc[0] > 1.0
+    assert windowed["scale_factor"].ge(1.0).all()
+
+
+def test_rolling_conformal_factors_skip_origins_with_too_little_history():
+    predictions = _score_frame(
+        [("m", "2020Q1", "2020Q2", 1, 2.0), ("m", "2020Q2", "2020Q3", 1, 2.0)]
+    )
+
+    factors = compute_rolling_conformal_scale_factors(
+        predictions, target_coverage=0.8, min_scores=5
+    )
+
+    assert factors.empty
+
+
+def test_current_conformal_factors_use_latest_observed_quarter_and_share_across_horizons():
+    rows = [
+        ("m", "2021Q1", "2021Q2", 1, 1.0),
+        ("m", "2021Q1", "2021Q3", 2, 1.0),
+        ("m", "2021Q2", "2021Q3", 1, 3.0),
+        ("m", "2021Q2", "2021Q4", 2, 3.0),
+    ]
+    predictions = _score_frame(rows)
+
+    factors = compute_current_conformal_scale_factors(
+        predictions, target_coverage=0.8, window_quarters=None, min_scores=2
+    )
+
+    assert set(factors["horizon"]) == {1, 2}
+    assert factors["scale_factor"].nunique() == 1
+    assert factors["scale_factor"].iloc[0] == 3.0
+    assert factors["n"].iloc[0] == 4
+
+
+def test_apply_interval_calibration_with_origin_keyed_factors_scales_each_side_separately():
+    predictions = pd.DataFrame(
+        {
+            "model": ["m", "m"],
+            "forecast_origin": ["2020Q1", "2020Q2"],
+            "horizon": [1, 1],
+            "actual": [12.0, 12.0],
+            "point_forecast_proxy": [10.0, 10.0],
+            "interval_lower": [9.0, 9.0],
+            "interval_upper": [11.0, 11.0],
+            "hit": [False, False],
+            "interval_width": [2.0, 2.0],
+        }
+    )
+    factors = pd.DataFrame(
+        {
+            "model": ["m"],
+            "forecast_origin": ["2020Q2"],
+            "horizon": [1],
+            "scale_factor": [3.0],
+        }
+    )
+
+    calibrated = apply_interval_calibration(predictions, factors)
+
+    early, late = calibrated.iloc[0], calibrated.iloc[1]
+    assert not early["interval_calibrated"] and early["interval_upper"] == 11.0
+    assert late["interval_calibrated"]
+    assert late["interval_lower"] == 7.0 and late["interval_upper"] == 13.0
+    assert late["hit"] and not early["hit"]

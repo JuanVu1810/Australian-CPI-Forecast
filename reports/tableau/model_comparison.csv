@@ -4,6 +4,6 @@ Headline,elastic_net,424,1.705798,1.245831
 Headline,ensemble,424,1.640356,1.15985
 Headline,seasonal_naive,424,2.163358,1.518632
 Trimmed mean,sarima,424,1.298886,0.776841
-Trimmed mean,elastic_net,424,1.426453,0.989237
-Trimmed mean,ensemble,424,1.273097,0.804664
+Trimmed mean,elastic_net,424,1.333597,0.915858
+Trimmed mean,ensemble,424,1.249152,0.802744
 Trimmed mean,seasonal_naive,424,1.580535,0.926179

@@ -351,6 +351,7 @@ def refresh_trimmed_mean_served_model_runs(
         run_name="trimmed_mean_sarima_comparison",
         model_family_tag="trimmed_mean_sarima",
         selection_criterion="fixed_trimmed_mean_default",
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
     )
 
     if verbose:
@@ -373,6 +374,7 @@ def refresh_trimmed_mean_served_model_runs(
         model_family_tag="trimmed_mean_elastic_net",
         feature_set_label="trimmed_mean_primary_wti",
         verbose=verbose,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
     )
 
 

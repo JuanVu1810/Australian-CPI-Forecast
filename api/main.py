@@ -533,10 +533,9 @@ def _calibrated_interval_bounds_for_family(
             calibrated_upper.append(float(raw_upper))
             continue
 
-        raw_half_width = (float(raw_upper) - float(raw_lower)) / 2.0
-        calibrated_half_width = float(row["scale_factor"]) * raw_half_width
-        calibrated_lower.append(float(point) - calibrated_half_width)
-        calibrated_upper.append(float(point) + calibrated_half_width)
+        scale_factor = float(row["scale_factor"])
+        calibrated_lower.append(float(point) - scale_factor * (float(point) - float(raw_lower)))
+        calibrated_upper.append(float(point) + scale_factor * (float(raw_upper) - float(point)))
     return calibrated_lower, calibrated_upper
 
 

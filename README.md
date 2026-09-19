@@ -533,12 +533,14 @@ POST /forecast/all
 
 `POST /forecast/all` includes empirical interval-coverage diagnostics from
 `reports/model_interval_calibration_validation.csv` only for the validated
-10th-90th percentile interval. The served default intervals apply the static
-calibration factors in `reports/model_interval_calibration_factors.csv` when
-available; the coverage diagnostics describe held-out validation performance
-for the calibrated intervals currently returned by the API. On the current
-held-out validation slice, elastic_net, ensemble, and sarima all remain below
-nominal 80% coverage after calibration -- see
+10th-90th percentile interval. The served default intervals scale each side of
+the raw interval around the point forecast by the factor in
+`reports/model_interval_calibration_factors.csv`: a rolling, ex-ante factor
+computed from the last 12 quarters of already-observed forecast errors as of
+the latest observed quarter. The coverage diagnostics describe held-out
+(2020-23) validation performance for calibrated intervals built the same way.
+On that slice elastic_net, ensemble, and sarima all remain below nominal 80%
+coverage after calibration, at roughly twice the raw interval width -- see
 `reports/model_interval_calibration_remediation_decisions.md` for what has
 been tried and why coverage remains under nominal.
 

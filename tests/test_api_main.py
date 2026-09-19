@@ -812,6 +812,46 @@ def test_forecast_all_applies_interval_calibration_for_validated_bounds(
     np.testing.assert_allclose(model["interval_upper"], [11.6, 20.8])
 
 
+def test_forecast_all_scales_a_skewed_interval_on_each_side_around_the_point(
+    monkeypatch,
+    tmp_path,
+):
+    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-calibration-skewed")
+    curated_path = tmp_path / "curated.csv"
+    factors_path = tmp_path / "calibration_factors.csv"
+    _write_curated_frame(curated_path, end_quarter="2021Q4")
+    _write_interval_calibration_factors(factors_path)
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+    monkeypatch.setattr(api_main, "INTERVAL_CALIBRATION_FACTORS_PATH", factors_path)
+    api_main._load_interval_calibration_factors.cache_clear()
+    _log_run_with_model("sarima", 1.25)
+
+    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
+        # raw 10th/90th percentiles land at about 9.8 and 12.0 around a point of 10.0
+        return api_main.FamilyForecastData(
+            forecast=[10.0],
+            draws=np.linspace(9.75, 12.25, n_sims).reshape(n_sims, 1),
+            quarters=["2022Q1"],
+            forecast_origin="2021Q4",
+            horizon_served=requested_horizon,
+            horizon_cap=None,
+        )
+
+    monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"sarima": fake_sarima_family_forecast})
+
+    payload = api_main.forecast_all(
+        api_main.AllForecastsRequest(horizon=1, n_sims=1000)
+    ).model_dump()
+
+    model = payload["models"][0]
+    raw_lower, raw_upper = np.quantile(np.linspace(9.75, 12.25, 1000), [0.1, 0.9])
+    np.testing.assert_allclose(model["interval_lower"], [10.0 - 2.0 * (10.0 - raw_lower)])
+    np.testing.assert_allclose(model["interval_upper"], [10.0 + 2.0 * (raw_upper - 10.0)])
+    lower_dist = 10.0 - model["interval_lower"][0]
+    upper_dist = model["interval_upper"][0] - 10.0
+    assert upper_dist > 3 * lower_dist
+
+
 def test_forecast_all_keeps_raw_intervals_when_calibration_report_missing(
     monkeypatch,
     tmp_path,

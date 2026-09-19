@@ -280,3 +280,113 @@ measure. It is not a proper asymmetric conformalized quantile regression
 score. Pooling calibration across nearby horizons, using a larger/rolling
 calibration window, or switching to a genuinely asymmetric conformal score are
 future work, not implemented.
+
+
+## Adopted Fix: Side-Specific Score + Ex-Ante Rolling Calibration (2026-09-19)
+
+This implements the "future work" named at the end of the previous section: an
+asymmetric conformal score, pooling across horizons, and a rolling window. It
+applies to headline and trimmed-mean alike.
+
+**What was wrong.**
+
+1. *Score/application mismatch.* Calibration scaled each side of the interval
+   around the point forecast, but `nonconformity_score` used the symmetric
+   half-width. For a skewed raw interval the score calls a miss "covered": for
+   trimmed-mean Elastic Net the raw interval's larger side is a median 2.56x the
+   smaller (headline 1.42x, ensemble 1.13-1.33x, SARIMA 1.05x), and about half
+   of its misses had a score <= 1. In the quiet pre-2020 period calibrated
+   Elastic Net coverage was ~49% against an 80% target.
+2. *Non-exchangeable calibration split.* The 70/30 split fitted factors on the
+   quiet 2010-2019 origins and judged them on the 2020-2023 origins, where
+   forecast errors were 2.4-2.6x (headline) and 2.9-3.7x (trimmed mean) their
+   pre-2020 size. Trimmed mean was calmer before 2020, so its raw intervals
+   (ensemble width 1.2 vs headline 2.3) absorbed the shock worse.
+3. *Serving mismatch.* `api/main.py` rebuilt a symmetric `point +/- factor *
+   half_width` interval while the coverage report scaled each side separately,
+   so the API did not serve what the report evaluated.
+4. *Reporting mismatch.* The trimmed-mean coverage report was written with
+   `apply_calibration=False` (raw) while headline's was calibrated.
+
+**What shipped.**
+
+- Score = error / the interval's distance from the point on the side the
+  actual landed (`evaluation.walk_forward_interval_coverage_backtest`).
+- `compute_rolling_conformal_scale_factors`: each origin's factor uses only
+  scores whose target quarter was already observed at that origin (no
+  look-ahead), pooled across horizons over the last 12 target quarters,
+  finite-sample-corrected 80th percentile, floored at 1.0, none below 8 scores.
+- `compute_current_conformal_scale_factors`: the same window evaluated at the
+  latest observed quarter; written to the factors CSV the API already reads
+  (schema unchanged).
+- `interval_coverage.py` derives its calibration from its own backtest (no
+  dependency on a previously written factors file, so no two-pass ordering);
+  `interval_calibration.py` runs one backtest instead of a calibration run plus
+  a validation run and reports an ex-ante held-out comparison on the last 30%
+  of origins. The stale-coverage-report origin-count guard was removed with the
+  dependency it protected. The trimmed-mean coverage report is now calibrated.
+- API scales each side around the point.
+
+**Selection protocol.** Window and pooling were compared on saved raw backtests
+(offline, no project reports written), with one shared window for both targets.
+Averages over 3 families x 2 targets, pooled across horizons:
+
+| Window (quarters) | Dev (<2020) mean abs. coverage error | Post-2020 coverage | Post-2020 width vs raw | Factor served as of latest quarter (mean / max) |
+| --- | --- | --- | --- | --- |
+| 4 | 0.068 | 66.1% | 3.32x | 1.00 / 1.00 |
+| 8 | 0.072 | 61.5% | 2.92x | 1.34 / 1.81 |
+| **12 (shipped)** | 0.058 | 58.7% | 2.58x | 2.61 / 3.61 |
+| 16 | 0.050 | 57.3% | 2.29x | 3.94 / 5.51 |
+| 20 | 0.051 | 54.4% | 2.04x | 3.33 / 4.28 |
+| 24 | 0.051 | 53.0% | 1.88x | 3.10 / 4.21 |
+| expanding | 0.057 | 50.9% | 1.48x | 1.64 / 2.00 |
+
+The evidence does not identify a single best window. Development-only error is
+flat (0.050-0.072); 16-24 quarters are marginally lowest, and 4-8 are noisier
+because they pool few scores. Post-2020 coverage falls steadily as the window
+lengthens, at the price of narrower intervals. 12 quarters was kept as a
+middle choice: it is at least as good as the longer windows on post-2020
+coverage, avoids the small-sample noise of 4-8, and serves a smaller factor
+today than 16-24 (which still contain the 2022 error peak). An earlier version
+of this note claimed 12 had the lowest development error; that held only
+against the few alternatives compared first and is corrected here.
+
+**Held-out result** (80% target, last 16 origins, 2020-2023, every origin
+calibrated only from errors already observed; calibrated coverage / mean width):
+
+| Target | Family | Old static split | New rolling |
+| --- | --- | --- | --- |
+| Trimmed mean | Elastic Net | 49.2% / 2.15 | 71.9% / 4.61 |
+| Trimmed mean | Ensemble | 39.1% / 1.69 | 56.2% / 3.78 |
+| Trimmed mean | SARIMA | 63.0% / 1.88 | 69.3% / 3.41 |
+| Headline | Elastic Net | 48.4% / 2.71 | 59.4% / 5.76 |
+| Headline | Ensemble | 46.9% / 2.54 | 55.5% / 6.18 |
+| Headline | SARIMA | 58.3% / 2.77 | 62.0% / 4.29 |
+
+All-origin coverage reports (80% nominal): trimmed mean SARIMA 77.8%, Elastic
+Net 67.9%, ensemble 66.3% (previously raw 67.9/47.9/45.0); headline SARIMA
+78.1%, Elastic Net 68.4%, ensemble 66.5% (previously 75.3/67.7/66.3).
+
+**Limitations, stated plainly.**
+
+- Coverage is still below 80% after 2020 for every family. No interval built
+  from past errors can anticipate the 2021-23 error jump; the rolling method
+  only follows it with a lag, and pays for it in width.
+- Widths roughly double in the held-out period (headline ensemble 2.54 -> 6.18).
+  Served factors as of the latest quarter are large because the last 12
+  quarters still contain the 2023-25 disinflation errors: trimmed mean
+  Elastic Net/ensemble/SARIMA 2.58/3.02/2.67, headline 2.13/3.62/1.64.
+- The factor is pooled across horizons, so short-horizon intervals are widened
+  by long-horizon errors (headline ensemble h1 80% interval is ~4.6 wide).
+  Per-horizon rolling calibration was compared: it fixes trimmed mean's
+  normal-period h1-2 over-coverage (81-84% vs 88%) but under-covers long
+  horizons and headline; no variant dominated, so the simpler pooled design
+  was kept. A longer window narrows the post-2020 backtest intervals (20
+  quarters: 2.04x raw width vs 2.58x) at lower coverage (54% vs 59%), but does
+  not narrow what would be served today, because it still contains the 2022
+  error peak (see the table above). `DEFAULT_CALIBRATION_WINDOW_QUARTERS` in `evaluation.py` is the single
+  knob; changing it needs one rerun of `interval_coverage` and
+  `interval_calibration` per target.
+- The window was chosen on quiet-period data that contains no volatility shock,
+  so the choice among windows is weakly identified; the post-2020 numbers above
+  are out-of-sample for it but they are one episode, not a distribution.

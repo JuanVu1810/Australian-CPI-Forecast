@@ -1348,7 +1348,8 @@ if sample_path.exists() and fan_path.exists():
                 f"80% band is {raw_width:.2f} points wide; the calibrated interval actually "
                 f"served is {h1_width:.2f} points wide. <code>interval_calibration.py</code> "
                 f"found the raw simulated interval under-covers historically, so serving "
-                f"rescales it per horizon. The reported point forecast ({h1_reported:.2f}%) and "
+                f"widens each side of it by a factor learned from the last 12 quarters of "
+                f"observed forecast errors. The reported point forecast ({h1_reported:.2f}%) and "
                 f"this simulation's median ({h1_median:.2f}%) agree exactly at horizon 1 — "
                 f"<code>ensemble.recenter_paths_to_median</code> guarantees that by construction."
             )

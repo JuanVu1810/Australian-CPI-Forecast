@@ -28,6 +28,7 @@ from src.models.evaluation import (
     DEFAULT_HORIZONS,
     PROJECT_ROOT,
     compute_interval_coverage_table,
+    compute_rolling_conformal_scale_factors,
     load_target_series,
     walk_forward_interval_coverage_backtest,
 )
@@ -67,32 +68,16 @@ def _normalise_families(families: tuple[str, ...] | None) -> tuple[str, ...]:
     return requested
 
 
-def load_interval_calibration_factors(
-    path: Path = INTERVAL_CALIBRATION_FACTORS_PATH,
-) -> pd.DataFrame:
-    """Load interval calibration factors, returning an empty frame when absent."""
-    columns = ["model", "horizon", "scale_factor", "calibration_n", "target_coverage"]
-    if not path.exists():
-        return pd.DataFrame(columns=columns)
-    factors = pd.read_csv(path)
-    required = {"model", "horizon", "scale_factor"}
-    missing = required.difference(factors.columns)
-    if missing:
-        raise ValueError(f"{path} missing required calibration columns: {sorted(missing)}")
-    factors = factors.copy()
-    factors["horizon"] = pd.to_numeric(factors["horizon"], errors="coerce")
-    factors["scale_factor"] = pd.to_numeric(factors["scale_factor"], errors="coerce")
-    factors = factors.dropna(subset=["model", "horizon", "scale_factor"])
-    factors = factors.loc[np.isfinite(factors["scale_factor"]) & factors["scale_factor"].ge(0)]
-    factors["horizon"] = factors["horizon"].astype(int)
-    return factors
-
-
 def apply_interval_calibration(
     predictions: pd.DataFrame,
     factors: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Apply per-model/horizon multiplicative half-width calibration."""
+    """Apply multiplicative per-side calibration around the point forecast.
+
+    Factors are keyed by model and horizon, plus ``forecast_origin`` when the
+    factor frame carries it (rolling, ex-ante factors). Rows with no matching
+    factor keep their raw interval.
+    """
     if predictions.empty or factors.empty:
         return predictions.copy()
 
@@ -115,12 +100,17 @@ def apply_interval_calibration(
         raise ValueError(f"calibration factors missing required columns: {sorted(missing_factors)}")
 
     result = predictions.copy()
-    factor_frame = pd.DataFrame(factors).loc[:, ["model", "horizon", "scale_factor"]].copy()
+    keys = ["model", "horizon"]
+    if "forecast_origin" in factors.columns:
+        keys = ["model", "forecast_origin", "horizon"]
+        if "forecast_origin" not in predictions.columns:
+            raise ValueError("origin-keyed calibration factors need forecast_origin in predictions.")
+    factor_frame = pd.DataFrame(factors).loc[:, [*keys, "scale_factor"]].copy()
     factor_frame["horizon"] = factor_frame["horizon"].astype(int)
     result["horizon"] = result["horizon"].astype(int)
     result = result.merge(
         factor_frame,
-        on=["model", "horizon"],
+        on=keys,
         how="left",
         validate="many_to_one",
     )
@@ -298,7 +288,6 @@ def run_interval_coverage(
     skip_origins: int = 0,
     families: tuple[str, ...] | None = None,
     apply_calibration: bool = True,
-    calibration_factors_path: Path = INTERVAL_CALIBRATION_FACTORS_PATH,
     target_column: str = TARGET_COLUMN,
     sarima_order: tuple[int, int, int] = SARIMA_DEFAULT_ORDER,
     sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
@@ -311,6 +300,10 @@ def run_interval_coverage(
     This report intentionally keeps each family's achievable origin grid instead
     of intersecting all families onto a common grid. It judges each model's own
     interval calibration; cross-model sample sizes can therefore differ.
+
+    With ``apply_calibration`` each origin's interval is widened by a rolling,
+    ex-ante factor (see ``compute_rolling_conformal_scale_factors``); origins
+    without enough realised history stay raw.
     """
     started = time.perf_counter()
     predictions = run_family_interval_backtests(
@@ -335,15 +328,11 @@ def run_interval_coverage(
     if predictions.empty:
         raise ValueError("Interval coverage backtests produced no forecast origins.")
     if apply_calibration:
-        factors = load_interval_calibration_factors(calibration_factors_path)
-        if not factors.empty:
-            predictions = apply_interval_calibration(predictions, factors)
-        elif verbose:
-            print(
-                f"Calibration factors not found at {calibration_factors_path}; "
-                "reporting raw interval coverage.",
-                flush=True,
-            )
+        factors = compute_rolling_conformal_scale_factors(
+            predictions,
+            target_coverage=float(upper_quantile - lower_quantile),
+        )
+        predictions = apply_interval_calibration(predictions, factors)
 
     coverage = compute_interval_coverage_table(
         predictions,
@@ -381,9 +370,10 @@ def run_trimmed_mean_interval_coverage(
     seed: int = DEFAULT_SEED,
     max_origins: int | None = None,
     skip_origins: int = 0,
+    apply_calibration: bool = True,
     verbose: bool = False,
 ) -> pd.DataFrame:
-    """Reproduce the Phase 3 raw trimmed-mean interval coverage report."""
+    """Trimmed-mean interval coverage report, calibrated like the headline report."""
     return run_interval_coverage(
         curated_path=curated_path,
         output_path=output_path,
@@ -396,7 +386,7 @@ def run_trimmed_mean_interval_coverage(
         max_origins=max_origins,
         skip_origins=skip_origins,
         families=("sarima", "elastic_net", "ensemble"),
-        apply_calibration=False,
+        apply_calibration=apply_calibration,
         target_column=TRIMMED_MEAN_TARGET_COLUMN,
         sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
         sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
@@ -419,11 +409,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--max-origins", type=int, default=None)
     parser.add_argument("--skip-origins", type=int, default=0)
     parser.add_argument("--raw", action="store_true", help="Report raw, uncalibrated intervals.")
-    parser.add_argument(
-        "--calibration-factors",
-        type=Path,
-        default=INTERVAL_CALIBRATION_FACTORS_PATH,
-    )
     args = parser.parse_args(argv)
 
     if args.target == "trimmed_mean":
@@ -437,6 +422,7 @@ def main(argv: list[str] | None = None) -> None:
             seed=args.seed,
             max_origins=args.max_origins,
             skip_origins=args.skip_origins,
+            apply_calibration=not args.raw,
             verbose=True,
         )
     else:
@@ -451,7 +437,6 @@ def main(argv: list[str] | None = None) -> None:
             max_origins=args.max_origins,
             skip_origins=args.skip_origins,
             apply_calibration=not args.raw,
-            calibration_factors_path=args.calibration_factors,
             verbose=True,
         )
     print("\nInterval coverage:")
