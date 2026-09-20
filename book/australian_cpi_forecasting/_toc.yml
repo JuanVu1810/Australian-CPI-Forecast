@@ -4,6 +4,10 @@
 format: jb-book
 root: intro
 chapters:
+- url: https://cpi-forecast-demo.streamlit.app/
+  title: Live demo (Streamlit)
+- url: https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs
+  title: Forecast API docs
 - file: 00_results_at_a_glance
 - file: 01_business_understanding
 - file: 02_data_understanding

@@ -7,10 +7,18 @@ against seasonal naive and the RBA's own forecasts, a structural VAR with a
 scenario engine, an RBA policy-action classifier, an illustrative credit-stress
 test, and a FastAPI + Streamlit app with a Cloud Run deployment.
 
-- **Results and methodology:** the [Jupyter Book](https://juanvu1810.github.io/CPI-Forecast/)
-  (start with *Key Findings*). This README only covers status and how to run the project.
-- **Try it without installing anything:** the live
-  [API docs](https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs).
+**Live links** (nothing to install):
+
+| | |
+|---|---|
+| Interactive demo | https://cpi-forecast-demo.streamlit.app/ |
+| Jupyter Book (results and methodology) | https://juanvu1810.github.io/CPI-Forecast/ |
+| Forecast API docs | https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs |
+| Source code | https://github.com/JuanVu1810/CPI-Forecast |
+
+Start the book with *Key Findings*. The demo lets you run a live forecast, watch the
+Ensemble's simulated paths, try your own shock in the scenario engine and see the RBA
+call. This README only covers status and how to run the project.
 
 ## Status
 
