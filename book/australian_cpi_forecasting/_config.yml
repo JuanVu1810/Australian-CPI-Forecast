@@ -52,5 +52,12 @@ sphinx:
       # sidebar entry. It has to be set here because this block replaces Jupyter Book's own
       # html_theme_options, so the html.home_page_in_navbar shortcut never reaches the theme.
       home_page_in_toc: true
+      # The GitHub buttons in the page header. Set here for the same reason: the html.use_*_button
+      # and repository: settings above never reach the theme once this block exists.
+      repository_url: https://github.com/JuanVu1810/CPI-Forecast
+      repository_branch: main
+      path_to_docs: book/australian_cpi_forecasting
+      use_repository_button: true
+      use_issues_button: true
     html_css_files:
       - custom.css
