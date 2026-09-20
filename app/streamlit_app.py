@@ -5,11 +5,12 @@ Single-page Streamlit report, sized on screen like a wide institutional site
 every other page previously under ``app/pages/`` (now archived at
 ``app/pages_archive/`` -- moved, not deleted, and no longer auto-discovered
 since Streamlit only scans a directory literally named ``pages``). This is
-the technical-audience counterpart to the Tableau executive dashboard
-(``.ai/TABLEAU_DASHBOARD_GUIDE.md``, fixed at 6 short stakeholder-facing
-tabs): this report is deliberately longer and carries the math, the
-diagnostics, and every live interactive tool the project has, not a
-one-tab-per-page grand tour.
+the technical-audience report: it carries the math, the diagnostics, and
+every live interactive tool the project has, not a one-tab-per-page grand
+tour. A six-tab stakeholder Tableau dashboard is specified in
+``.ai/TABLEAU_DASHBOARD_GUIDE.md`` and its data exports are built under
+``reports/tableau/``, but no workbook is in this repo, so nothing here
+describes a built dashboard.
 
 Static sections read local report CSVs/metadata only and never fit models
 in-process. Three sections (the Ensemble flagship demo aside) call the
@@ -38,6 +39,20 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.lib.curated_data import load_curated_data  # noqa: E402
 from app.lib.rba_reports import render_historical_backtest_panel  # noqa: E402
+from app.lib.report_frames import (  # noqa: E402
+    MACRO_DRIVER,
+    OWN_SHOCK,
+    SVAR_SYSTEMS,
+    UNUSUAL_Z,
+    decomposition_for_quarter,
+    decomposition_totals,
+    drift_summary,
+    flagged_quarters,
+    strongest_flagged_quarter,
+    system_shock_events,
+    with_quarter_date,
+    z_axis_bound,
+)
 from src.eda_export import restrict_to_eda_window  # noqa: E402
 
 
@@ -166,6 +181,18 @@ DIAGNOSTICS_TARGET_CONFIG = {
             "is an NSA headline CPI forecast series, not a trimmed-mean target."
         ),
     },
+}
+
+# Streamlit fits charts to a fixed total height (axes and legend included), so these
+# builders size for that, and pad the right edge so the last axis label is not clipped.
+CHART_PADDING = {"left": 5, "right": 24, "top": 5, "bottom": 5}
+UNUSUAL_LABEL = "Unusual (|z| > 2)"
+TYPICAL_LABEL = "Within the usual range"
+SVAR_COMPONENT_LABELS = {
+    "commodity_growth": "Commodity growth",
+    "unemployment_rate": "Unemployment rate",
+    "inflation_expectations_business": "Business inflation expectations",
+    "cash_rate": "Cash rate",
 }
 
 PALETTE = {
@@ -585,6 +612,209 @@ def build_svar_irf_chart(irf: pd.DataFrame, max_horizon: int, theme_type: str) -
         .resolve_scale(y="independent")
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_header(labelColor=colors["ink"], labelFontWeight="bold")
+    )
+
+
+def _reading_label(z_scores: pd.Series) -> pd.Series:
+    return (z_scores.abs() > UNUSUAL_Z).map({True: UNUSUAL_LABEL, False: TYPICAL_LABEL})
+
+
+def build_shock_z_chart(events: pd.DataFrame, selected_quarter: str, theme_type: str) -> alt.LayerChart:
+    """Target-shock z-score by quarter, unusual quarters highlighted, chosen quarter marked."""
+    colors = PALETTE[theme_type]
+    frame = events.assign(reading=_reading_label(events["shock_z"]))
+    selected = frame.loc[frame["quarter"] == selected_quarter, ["quarter_date"]]
+    edges = alt.Chart(pd.DataFrame({"z": [-UNUSUAL_Z, UNUSUAL_Z]})).mark_rule(
+        color=colors["muted"], strokeDash=[4, 3]
+    ).encode(y="z:Q")
+    zero = alt.Chart(pd.DataFrame({"z": [0.0]})).mark_rule(color=colors["muted"]).encode(y="z:Q")
+    bars = (
+        alt.Chart(frame)
+        .mark_bar(size=4)
+        .encode(
+            x=alt.X("quarter_date:T", title=None),
+            y=alt.Y("shock_z:Q", title="Shock z-score"),
+            color=alt.Color(
+                "reading:N",
+                title=None,
+                scale=alt.Scale(domain=[UNUSUAL_LABEL, TYPICAL_LABEL], range=[colors["fan"], colors["muted"]]),
+                legend=alt.Legend(orient="top"),
+            ),
+            tooltip=["quarter:N", alt.Tooltip("shock_z:Q", format=".2f", title="z-score")],
+        )
+    )
+    marker = alt.Chart(selected).mark_rule(color=colors["ink"], strokeWidth=1.5).encode(x="quarter_date:T")
+    return (
+        alt.layer(zero, edges, bars, marker)
+        .properties(height=260, padding=CHART_PADDING)
+        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
+        .configure_view(strokeWidth=0)
+        .configure_legend(labelColor=colors["ink"])
+    )
+
+
+def build_decomposition_chart(parts: pd.DataFrame, theme_type: str) -> alt.LayerChart:
+    """Each shock's accumulated contribution to the target level in one quarter."""
+    colors = PALETTE[theme_type]
+    shocks = parts.loc[parts["kind"] != "baseline"].copy()
+    shocks["driver"] = [
+        "Own CPI shock" if kind == OWN_SHOCK else SVAR_COMPONENT_LABELS.get(name, name.replace("_", " "))
+        for name, kind in zip(shocks["component"], shocks["kind"])
+    ]
+    zero = alt.Chart(pd.DataFrame({"x": [0.0]})).mark_rule(color=colors["muted"]).encode(x="x:Q")
+    bars = (
+        alt.Chart(shocks)
+        .mark_bar()
+        .encode(
+            x=alt.X(
+                "contribution:Q",
+                title="Contribution to the CPI YoY level (percentage points)",
+                axis=alt.Axis(tickCount=6),
+            ),
+            y=alt.Y("driver:N", title=None, sort="-x", axis=alt.Axis(labelLimit=260)),
+            color=alt.Color(
+                "kind:N",
+                title=None,
+                scale=alt.Scale(domain=[MACRO_DRIVER, OWN_SHOCK], range=[colors["accent2"], colors["fan"]]),
+                legend=alt.Legend(orient="top"),
+            ),
+            tooltip=["driver:N", alt.Tooltip("contribution:Q", format=".3f", title="Contribution (pp)")],
+        )
+    )
+    return (
+        alt.layer(zero, bars)
+        .properties(height=300, padding=CHART_PADDING)
+        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
+        .configure_view(strokeWidth=0)
+        .configure_legend(labelColor=colors["ink"])
+    )
+
+
+def build_drift_z_chart(error_check: pd.DataFrame, bound: float, theme_type: str) -> alt.LayerChart:
+    """Where each newly graded forecast error sits against that model's own error history."""
+    colors = PALETTE[theme_type]
+    x_scale = alt.Scale(domain=[-bound, bound])
+    quarters = sorted(error_check["target_quarter"].unique())
+    quarter_palette = [colors["headline"], colors["fan"], colors["accent2"], colors["muted"]]
+    typical = (
+        alt.Chart(pd.DataFrame({"lo": [-1.0], "hi": [1.0]}))
+        .mark_rect(color=colors["muted"], opacity=0.18)
+        .encode(
+            x=alt.X("lo:Q", scale=x_scale, title="z-score against the model's own error history", axis=alt.Axis(tickCount=7)),
+            x2="hi:Q",
+        )
+    )
+    edges = (
+        alt.Chart(pd.DataFrame({"z": [-UNUSUAL_Z, UNUSUAL_Z]}))
+        .mark_rule(color=colors["miscalibrated"], strokeDash=[4, 3])
+        .encode(x=alt.X("z:Q", scale=x_scale))
+    )
+    dots = (
+        alt.Chart(error_check)
+        .mark_point(filled=True, size=140, opacity=0.9)
+        .encode(
+            x=alt.X("z_score:Q", scale=x_scale),
+            y=alt.Y("model:N", title=None),
+            color=alt.Color(
+                "target_quarter:N",
+                title="Quarter graded",
+                scale=alt.Scale(domain=quarters, range=[quarter_palette[i % len(quarter_palette)] for i in range(len(quarters))]),
+                legend=alt.Legend(orient="top"),
+            ),
+            tooltip=[
+                "model:N", "target_quarter:N", "horizon:Q",
+                alt.Tooltip("actual:Q", format=".2f"), alt.Tooltip("forecast:Q", format=".2f"),
+                alt.Tooltip("error:Q", format=".2f", title="error (actual - forecast)"),
+                alt.Tooltip("z_score:Q", format=".2f"),
+                alt.Tooltip("error_percentile:Q", format=".0f", title="percentile in history"),
+            ],
+        )
+    )
+    return (
+        alt.layer(typical, edges, dots)
+        .properties(height=240, padding=CHART_PADDING)
+        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
+        .configure_view(strokeWidth=0)
+        .configure_legend(labelColor=colors["ink"])
+    )
+
+
+def build_drift_history_chart(history: pd.DataFrame, theme_type: str) -> alt.LayerChart:
+    """One-step-ahead errors over time, with the newly graded quarter(s) picked out."""
+    colors = PALETTE[theme_type]
+    frame = with_quarter_date(history, "target_quarter")
+    zero = alt.Chart(pd.DataFrame({"y": [0.0]})).mark_rule(color=colors["muted"], strokeDash=[3, 3]).encode(y="y:Q")
+    lines = (
+        alt.Chart(frame)
+        .mark_line(strokeWidth=1.5, opacity=0.85)
+        .encode(
+            x=alt.X("quarter_date:T", title=None),
+            y=alt.Y("error:Q", title="Error, actual minus forecast (pp)"),
+            color=alt.Color("model:N", title="Model", legend=alt.Legend(orient="top")),
+            tooltip=["model:N", "target_quarter:N", alt.Tooltip("error:Q", format=".2f")],
+        )
+    )
+    recent = (
+        alt.Chart(frame.loc[frame["is_recent"].astype(str).eq("True")])
+        .mark_point(filled=True, shape="diamond", size=170, stroke=colors["ink"], strokeWidth=1)
+        .encode(
+            x="quarter_date:T",
+            y="error:Q",
+            color="model:N",
+            tooltip=["model:N", "target_quarter:N", alt.Tooltip("error:Q", format=".2f")],
+        )
+    )
+    return (
+        alt.layer(zero, lines, recent)
+        .properties(height=300, padding=CHART_PADDING)
+        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
+        .configure_view(strokeWidth=0)
+        .configure_legend(labelColor=colors["ink"])
+    )
+
+
+def build_covariate_z_chart(covariate: pd.DataFrame, theme_type: str) -> alt.LayerChart:
+    """Each macro input's latest value, in standard deviations from its own history."""
+    colors = PALETTE[theme_type]
+    frame = covariate.assign(reading=_reading_label(covariate["value_standardized"]))
+    x_scale = alt.Scale(domain=[-z_axis_bound(frame["value_standardized"]), z_axis_bound(frame["value_standardized"])])
+    edges = (
+        alt.Chart(pd.DataFrame({"z": [-UNUSUAL_Z, UNUSUAL_Z]}))
+        .mark_rule(color=colors["miscalibrated"], strokeDash=[4, 3])
+        .encode(x=alt.X("z:Q", scale=x_scale))
+    )
+    bars = (
+        alt.Chart(frame)
+        .mark_bar()
+        .encode(
+            x=alt.X(
+                "value_standardized:Q",
+                scale=x_scale,
+                title="Latest value, in standard deviations from its own history",
+                axis=alt.Axis(tickCount=7),
+            ),
+            y=alt.Y("variable_label:N", title=None, sort="-x", axis=alt.Axis(labelLimit=260, labelOverlap=False)),
+            color=alt.Color(
+                "reading:N",
+                title=None,
+                scale=alt.Scale(domain=[UNUSUAL_LABEL, TYPICAL_LABEL], range=[colors["fan"], colors["muted"]]),
+                legend=alt.Legend(orient="top"),
+            ),
+            tooltip=[
+                alt.Tooltip("variable_label:N", title="input"),
+                alt.Tooltip("latest_quarter:N", title="latest quarter"),
+                alt.Tooltip("value:Q", format=".2f"),
+                alt.Tooltip("value_standardized:Q", format=".2f", title="z-score"),
+                alt.Tooltip("n_obs:Q", title="quarters of history"),
+            ],
+        )
+    )
+    return (
+        alt.layer(edges, bars)
+        .properties(height=420, padding=CHART_PADDING)
+        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
+        .configure_view(strokeWidth=0)
+        .configure_legend(labelColor=colors["ink"])
     )
 
 
@@ -1026,8 +1256,7 @@ st.title("How this project forecasts Australian inflation")
 dek(
     "Seven methodologies, one CRISP-DM story — the math behind every model, every "
     "interactive tool the project has, and a live look at what “simulating a "
-    "forecast” actually means. This report is the technical-audience counterpart to "
-    "the six-tab Tableau executive dashboard, and is deliberately longer."
+    "forecast” actually means. This is the long, technical version of the project."
 )
 download_pdf_button()
 
@@ -1389,12 +1618,95 @@ st.markdown(
 irf_path = PROJECT_ROOT / "reports/tableau/svar_irf.csv"
 if irf_path.exists():
     irf = load_report(irf_path)
-    irf = irf[(irf["system"] == "System A") & (irf["response"] == "cpi_yoy")]
-    max_horizon = st.slider("Horizons shown", 1, 8, value=8, key="svar_horizon")
+    irf_control_cols = st.columns([2, 1])
+    irf_system_label = irf_control_cols[0].radio(
+        "System", options=list(SVAR_SYSTEMS), horizontal=True, key="svar_system"
+    )
+    irf_system, irf_target = SVAR_SYSTEMS[irf_system_label]
+    irf = irf[(irf["system"] == irf_system) & (irf["response"] == irf_target)]
+    max_horizon = irf_control_cols[1].slider("Horizons shown", 1, 8, value=8, key="svar_horizon")
     st.altair_chart(build_svar_irf_chart(irf, max_horizon, theme_type), width="stretch")
+    st.caption(
+        "Each panel is the response of the CPI measure to a one-standard-deviation structural "
+        "shock in that driver, not a one-unit change in the raw variable. Read the cash-rate "
+        "panel with care: CPI rising after a rate increase is the well-documented “price "
+        "puzzle” (Sims, 1992) that this model class produces, not a data or implementation error. "
+        "To try a shock size of your own, use the Scenario Engine in §4.5 below."
+    )
 else:
     st.error(f"Missing: `{_display_path(irf_path)}`")
 source_line("`src/models/svar.py`, exported to `reports/tableau/svar_irf.csv`")
+
+st.subheader("4.4b SVAR shock attribution: when CPI surprised, and what was behind it")
+st.markdown(
+    "The same two systems, run backwards over history. For every fitted quarter the model "
+    "recovers the **shock to the CPI measure itself**, the part its own past and the four "
+    "macro drivers could not explain, and scores it against that system's own history. "
+    "Quarters beyond ±2 standard deviations are flagged. The decomposition then splits the "
+    "CPI level in any quarter you pick into a **zero-shock baseline** (where the fitted VAR "
+    "would have sat with every shock switched off) plus the accumulated effect of each shock."
+)
+st.warning(
+    "**Illustration, not attribution.** Both systems still reject residual whiteness and "
+    "normality, and the recursive Cholesky ordering is a documented judgment call. Saying a "
+    "named shock is the reason a particular quarter moved is a stronger claim than the "
+    "hypothetical impulse responses above, not a weaker one. A flagged quarter means the CPI "
+    "measure itself moved unusually; it does not say a macro driver caused it."
+)
+shock_events_path = PROJECT_ROOT / "reports/tableau/svar_shock_events.csv"
+decomposition_path = PROJECT_ROOT / "reports/tableau/svar_historical_decomposition.csv"
+shock_missing = [_display_path(p) for p in (shock_events_path, decomposition_path) if not p.exists()]
+if shock_missing:
+    st.error("Missing: " + ", ".join(f"`{path}`" for path in shock_missing))
+else:
+    shock_system_label = st.radio("System", options=list(SVAR_SYSTEMS), horizontal=True, key="svar_shock_system")
+    shock_system, _shock_target = SVAR_SYSTEMS[shock_system_label]
+    shock_events = system_shock_events(load_report(shock_events_path), shock_system)
+    shock_quarters = shock_events["quarter"].tolist()
+    shock_flagged = flagged_quarters(shock_events)
+    default_quarter = strongest_flagged_quarter(shock_events) or shock_quarters[-1]
+    shock_quarter = st.selectbox(
+        "Quarter to decompose",
+        options=shock_quarters,
+        index=shock_quarters.index(default_quarter),
+        format_func=lambda q: f"{q} (flagged)" if q in shock_flagged else q,
+        key=f"svar_shock_quarter_{shock_system}",
+    )
+    st.altair_chart(build_shock_z_chart(shock_events, shock_quarter, theme_type), width="stretch")
+    st.caption(
+        f"Flagged quarters ({len(shock_flagged)} of {len(shock_events)}): "
+        + (", ".join(shock_flagged) if shock_flagged else "none")
+        + ". The black line marks the quarter chosen above."
+        + (
+            " The 2020 COVID quarters themselves are not flagged: these are year-on-year series, "
+            "so the 2020 fall is spread over four quarters and only reads as unusual once the "
+            "low 2020 base drops out of the trailing window, about a year later."
+            if not any(q.startswith("2020") for q in shock_flagged)
+            else ""
+        )
+    )
+
+    shock_parts = decomposition_for_quarter(load_report(decomposition_path), shock_system, shock_quarter)
+    if shock_parts.empty:
+        st.info(f"No decomposition is available for {shock_quarter}.")
+    else:
+        totals = decomposition_totals(shock_parts)
+        metric_cols = st.columns(3)
+        metric_cols[0].metric(f"CPI YoY, {shock_quarter}", f"{totals['actual']:.2f}%")
+        metric_cols[1].metric("Zero-shock baseline", f"{totals['baseline']:.2f}%")
+        metric_cols[2].metric("All shocks combined", f"{totals['shocks']:+.2f} pp")
+        st.altair_chart(build_decomposition_chart(shock_parts, theme_type), width="stretch")
+        st.caption(
+            "Bars add up to the gap between the actual CPI level and the baseline. Each bar is the "
+            "accumulated effect of that shock's whole history up to the chosen quarter, not only "
+            "what happened in that quarter. The baseline is left out of the chart so its size "
+            "does not swamp the shocks, and the own-CPI-shock bar is kept in so the macro drivers "
+            "are not made to look like they explain more than they do."
+        )
+source_line(
+    "`src/models/svar.py` (`structural_shocks`, `historical_decomposition`), exported to "
+    "`reports/tableau/svar_shock_events.csv` and `svar_historical_decomposition.csv`"
+)
 
 st.subheader("4.5 Scenario Engine — SVAR shocks meet the Ensemble, live")
 st.latex(
@@ -1738,6 +2050,102 @@ render_historical_backtest_panel(
         "interval reports with an 80% nominal target."
     ),
 )
+
+st.subheader("5.2 Drift monitor: is the latest miss unusual?")
+st.latex(
+    r"z=\dfrac{e-\bar e_{m,h}}{s_{m,h}},\qquad e=\text{actual}-\text{forecast}"
+    r"\qquad \bar e_{m,h},\,s_{m,h}=\text{model }m\text{'s own walk-forward error mean and s.d. at horizon }h"
+)
+st.markdown(
+    "Once a forecast's quarter has a real outcome, this checks the miss against how the same "
+    "model erred in its own walk-forward history, then checks whether any macro input is "
+    "itself sitting at an unusual level. It only compares reports that already exist and "
+    "never refits a model."
+)
+drift_paths = {
+    "error check": PROJECT_ROOT / "reports/tableau/drift_error_check.csv",
+    "error history": PROJECT_ROOT / "reports/tableau/drift_error_history.csv",
+    "covariate check": PROJECT_ROOT / "reports/tableau/drift_covariate_check.csv",
+}
+drift_missing = [_display_path(path) for path in drift_paths.values() if not path.exists()]
+if drift_missing:
+    st.error("Missing: " + ", ".join(f"`{path}`" for path in drift_missing))
+else:
+    drift_errors = load_report(drift_paths["error check"])
+    drift_history = load_report(drift_paths["error history"])
+    drift_covariates = load_report(drift_paths["covariate check"])
+    drift = drift_summary(drift_errors, drift_covariates)
+
+    drift_kpis = st.columns(4)
+    drift_kpis[0].metric("Forecasts graded", f"{drift['graded_forecasts']}", help=", ".join(drift["graded_quarters"]))
+    drift_kpis[1].metric(f"Unusual misses (|z| > {UNUSUAL_Z:.0f})", f"{drift['unusual_misses']} of {drift['graded_forecasts']}")
+    drift_kpis[2].metric("Came in below the outcome", f"{drift['undershot']} of {drift['graded_forecasts']}")
+    drift_kpis[3].metric(
+        "Inputs at unusual levels",
+        f"{len(drift['unusual_inputs'])} of {len(drift_covariates)}",
+        help=", ".join(drift["unusual_inputs"]) or None,
+    )
+
+    reading = (
+        f"No single miss is unusual for the model that made it (largest |z| is {drift['largest_abs_z']:.2f}). "
+        if drift["unusual_misses"] == 0
+        else f"{drift['unusual_misses']} miss(es) fall beyond ±{UNUSUAL_Z:.0f} standard deviations of that model's own norm. "
+    )
+    lean = drift["undershot"] / drift["graded_forecasts"] if drift["graded_forecasts"] else 0.5
+    if lean >= 0.75 or lean <= 0.25:
+        reading += (
+            f"Direction is the thing to watch: {drift['undershot']} of {drift['graded_forecasts']} forecasts landed "
+            "on the same side of the outcome, and small misses that all lean one way are exactly what a "
+            "size-only check under-reads. "
+        )
+    if drift["unusual_inputs"]:
+        reading += (
+            "Unusually high or low inputs now: " + ", ".join(drift["unusual_inputs"])
+            + ". The served forecasts were made before those readings arrived, so they could not have used them."
+        )
+    st.markdown(reading)
+
+    st.markdown("**How unusual was each miss?**")
+    st.caption(
+        "Each dot is one graded forecast. Inside the grey band (±1) is a typical error for that model; "
+        "outside the dashed lines (±2) would be unusual."
+    )
+    z_bound = z_axis_bound(drift_errors["z_score"])
+    for target_col, target_name in zip(st.columns(2), sorted(drift_errors["target"].unique())):
+        with target_col:
+            st.markdown(f"*{target_name}*")
+            st.altair_chart(
+                build_drift_z_chart(drift_errors.loc[drift_errors["target"] == target_name], z_bound, theme_type),
+                width="stretch",
+            )
+
+    st.markdown("**Has a miss this size happened before?**")
+    drift_history_target = st.radio(
+        "Target", options=sorted(drift_history["target"].unique()), horizontal=True, key="drift_history_target"
+    )
+    st.altair_chart(
+        build_drift_history_chart(drift_history.loc[drift_history["target"] == drift_history_target], theme_type),
+        width="stretch",
+    )
+    st.caption(
+        "One-step-ahead errors from the walk-forward backtest, with the newly graded quarter marked by "
+        "diamonds. Positive means the forecast came in below the outcome."
+    )
+
+    st.markdown("**Are any inputs at unusual levels?**")
+    st.altair_chart(build_covariate_z_chart(drift_covariates, theme_type), width="stretch")
+    st.caption(
+        "Every input is standardised against its own history, so the bars are comparable. The latest "
+        "quarter differs by input (see the tooltip), because the sources publish on different schedules."
+    )
+
+    st.info(
+        "**A diagnostic monitor, not a formal drift test.** It currently grades "
+        f"{drift['graded_forecasts']} forecasts across {len(drift['graded_quarters'])} quarter(s) "
+        f"({', '.join(drift['graded_quarters'])}), which is too few for any single reading to justify "
+        "retraining on its own."
+    )
+source_line("`src/models/drift_monitor.py`, exported to `reports/tableau/drift_*.csv`")
 
 # --- 6. Deployment -------------------------------------------------
 st.header("6. Deployment")

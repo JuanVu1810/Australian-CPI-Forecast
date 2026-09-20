@@ -100,7 +100,7 @@ def main() -> int:
                 else "dependency_missing"
             ),
             "evidence": "src/models/tracking.py; src/models/registry.py; mlruns/ (local)",
-            "next_step": "Wire MLflow-served forecasts into the planned Streamlit Forecasting Interface.",
+            "next_step": "Train the models first so mlruns/ exists; FastAPI then serves the latest runs to the Streamlit live forecast tool.",
         },
         {
             "platform": "FastAPI",
