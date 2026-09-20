@@ -24,7 +24,7 @@ test, and a FastAPI + Streamlit app with a Cloud Run deployment.
 | MLflow tracking | implemented locally (file store in `mlruns/`, gitignored); no champion model or Model Registry |
 | FastAPI | implemented locally, 7 endpoints |
 | Docker and Google Cloud Run | deployed, verified live 2026-08-29 (image `redeploy-20260829-d3102c9`). Serves `/forecast/all`, `/forecast/trimmed-mean/all` and `/forecast/scenario`; redeploy is manual |
-| Streamlit | implemented locally: a single-page methodology report with live tools |
+| Streamlit | implemented locally: a four-tab interactive demo that goes with the book (live forecast, Ensemble path reveal, scenario engine, RBA call) |
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
 | GitHub Actions (tests, monthly scheduled ETL) | scaffolded; no Cloud Run deploy step |
 | BigQuery | target architecture only; optional load hook, not deployed |
@@ -118,7 +118,7 @@ The models and the EDA are pinned at the 2025Q4 forecast origin
 (`svar.FORECAST_ORIGIN_PIN`), so newly downloaded quarters do not change their
 results. The curated table keeps the 2026 quarters only so the pinned forecasts
 can be benchmarked against them. The EDA (`notebooks/EDA.ipynb`, the book's
-appendix, Streamlit section 2 and `python -m src.eda_export`, which writes
+appendix and `python -m src.eda_export`, which writes
 `reports/eda_*.csv`) never sees them.
 
 ### 3. Run the tests
@@ -198,9 +198,9 @@ In a second terminal, with the same virtual environment active:
 streamlit run app/streamlit_app.py               # http://localhost:8501
 ```
 
-The app is a single-page report. Its static sections read local files. The
-Scenario Engine, RBA classifier and live forecast sections call the API, so
-start the API first. The "API base URL" box defaults to
+The app is a four-tab demo to go with the book: Live forecast, 4.3 Ensemble,
+4.5 Scenario Engine and 4.6 RBA Policy Classifier. All but the Ensemble tab call
+the API, so start the API first (a scenario takes about 40 seconds). The "API base URL" box defaults to
 `http://localhost:8000`; set `API_BASE_URL` to change the default.
 
 ### 7. Build the book
@@ -277,7 +277,7 @@ API changes is manual.
 | `/forecast/trimmed-mean/all` lists only `ensemble` as unavailable | The last command in step 4 was skipped. |
 | `docker build` fails at `COPY mlruns` | `mlruns/` does not exist. Train first. |
 | Import errors, or syntax errors from `src/models` | Wrong Python version. Use 3.11. |
-| Streamlit shows an API-unavailable banner in a section | Start the API, or fix the "API base URL" box. |
+| Streamlit shows an API-unavailable banner in a tab | Start the API, or fix the "API base URL" box. |
 | `Address already in use` | Pass a different port, for example `uvicorn api.main:app --port 8001`. |
 
 ## Repository layout
@@ -285,7 +285,7 @@ API changes is manual.
 ```text
 .
 +-- api/                 FastAPI service (api/main.py)
-+-- app/                 Streamlit report (streamlit_app.py); pages_archive/ holds the retired multi-page version
++-- app/                 Streamlit demo (streamlit_app.py); pages_archive/ holds the retired multi-page version
 +-- book/                Jupyter Book source (book/australian_cpi_forecasting)
 +-- data/                processed series, curated dataset, metadata; analytics/ holds the DuckDB file built by the ETL
 +-- dataset/             raw downloads from ABS, RBA, APRA and Yahoo Finance

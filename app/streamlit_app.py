@@ -1,29 +1,19 @@
-"""Australian CPI Forecast -- consolidated Methodology report.
+"""Australian CPI Forecast: interactive demo.
 
-Single-page Streamlit report, sized on screen like a wide institutional site
-(after opdi.aero) but paginating to true A4 pages on export, that folds in
-every other page previously under ``app/pages/`` (now archived at
-``app/pages_archive/`` -- moved, not deleted, and no longer auto-discovered
-since Streamlit only scans a directory literally named ``pages``). This is
-the technical-audience report: it carries the math, the diagnostics, and
-every live interactive tool the project has, not a one-tab-per-page grand
-tour. A six-tab stakeholder Tableau dashboard is specified in
-``.ai/TABLEAU_DASHBOARD_GUIDE.md`` and its data exports are built under
-``reports/tableau/``, but no workbook is in this repo, so nothing here
-describes a built dashboard.
+A hands-on companion to the Jupyter Book (``book/australian_cpi_forecasting/``). The
+book explains the methods and reports the results; this app only holds the parts a
+static page cannot show: a live forecast, the Ensemble's Monte-Carlo path reveal, a
+what-if shock scenario, and the RBA policy-action call. Tab names match the book's
+chapter names so its "open 4.3 Ensemble" style pointers land on the right tab.
 
-Static sections read local report CSVs/metadata only and never fit models
-in-process. Three sections (the Ensemble flagship demo aside) call the
-running FastAPI service directly -- the Scenario Engine, the RBA Classifier,
-and the "live forecast tool" in Deployment -- and degrade to a soft banner
-(never a page-blanking ``st.stop()``) if the API is unreachable, since one
-section failing must not blank the rest of the report.
+Three tabs call the running FastAPI service (live forecast, scenario, RBA) and show a
+soft banner if it is unreachable; the Ensemble tab reads pinned report CSVs. Nothing
+here fits a model in-process.
 """
 
 from __future__ import annotations
 
 import os
-import re
 import sys
 import time
 from pathlib import Path
@@ -38,51 +28,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.lib.curated_data import load_curated_data  # noqa: E402
-from app.lib.rba_reports import render_historical_backtest_panel  # noqa: E402
-from app.lib.report_frames import (  # noqa: E402
-    MACRO_DRIVER,
-    OWN_SHOCK,
-    SVAR_SYSTEMS,
-    UNUSUAL_Z,
-    decomposition_for_quarter,
-    decomposition_totals,
-    drift_summary,
-    flagged_quarters,
-    strongest_flagged_quarter,
-    system_shock_events,
-    with_quarter_date,
-    z_axis_bound,
-)
-from src.eda_export import restrict_to_eda_window  # noqa: E402
 
 
 DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 MAX_FORECAST_HORIZON = 8
 HISTORY_QUARTERS_SHOWN = 16
 INTERVAL_LABEL = "calibrated simulation interval (80% nominal target)"
-LIVE_API_TIMEOUT_SECONDS = 8
-REPORT_SECTIONS = (
-    "1. Business Understanding",
-    "2. Data Understanding",
-    "3. Data Preparation",
-    "4. Modeling",
-    "5. Evaluation",
-    "6. Deployment",
-    "7. Conclusion",
-)
-
-REPORT_PATHS = {
-    "SARIMA (headline)": PROJECT_ROOT / "reports/simulation_fan_sarima.csv",
-    "SARIMA (trimmed mean)": PROJECT_ROOT / "reports/simulation_fan_sarima_trimmed_mean.csv",
-    "Elastic Net (headline)": PROJECT_ROOT / "reports/simulation_fan_elastic_net.csv",
-    "Elastic Net (trimmed mean)": (
-        PROJECT_ROOT / "reports/simulation_fan_elastic_net_trimmed_mean.csv"
-    ),
-    "Ensemble (headline)": PROJECT_ROOT / "reports/simulation_fan_ensemble.csv",
-    "Ensemble (trimmed mean)": PROJECT_ROOT / "reports/simulation_fan_ensemble_trimmed_mean.csv",
-    "SVAR (headline)": PROJECT_ROOT / "reports/simulation_fan_svar_headline.csv",
-    "SVAR (trimmed mean)": PROJECT_ROOT / "reports/simulation_fan_svar_trimmed_mean.csv",
-}
+LIVE_API_TIMEOUT_SECONDS = 30
+# The scenario endpoint takes ~40s and /rba-action ~10s on a laptop, so they get longer.
+SLOW_API_TIMEOUT_SECONDS = 120
 
 ENSEMBLE_FLAGSHIP_CONFIG = {
     "Headline": {
@@ -119,16 +73,6 @@ MODEL_LABELS = {
     "elastic_net": "Elastic Net",
 }
 MODEL_ORDER = ("ensemble", "sarima", "elastic_net")
-MACRO_INPUT_COLUMNS = {
-    "cpi_yoy": "Headline CPI YoY",
-    "trimmed_mean_cpi_yoy": "Trimmed Mean CPI YoY",
-    "unemployment_rate": "Unemployment Rate",
-    "cash_rate": "Cash Rate",
-    "commodity_growth": "Commodity Growth",
-    "inflation_expectations_business": "Business Inflation Expectations",
-}
-ACCURACY_REPORT_PATH = PROJECT_ROOT / "reports/forecast_snapshot_accuracy.csv"
-
 SCENARIO_SHOCK_VARIABLES = (
     "unemployment_rate",
     "cash_rate",
@@ -150,7 +94,6 @@ SCENARIO_TARGET_CONFIG = {
     },
 }
 
-RBA_CLASSIFIER_REPORT_PATH = PROJECT_ROOT / "reports/rba_classifier_evaluation.md"
 SECONDARY_MODELS = (
     "taylor_rule",
     "taylor_rule_estimated",
@@ -161,39 +104,6 @@ SECONDARY_MODELS = (
 )
 ACTION_LABELS = {"cut": "P(Cut)", "hold": "P(Hold)", "hike": "P(Hike)"}
 ACTION_COLORS = {"cut": "#2a78d6", "hold": "#898781", "hike": "#eb6834"}
-
-DIAGNOSTICS_TARGET_CONFIG = {
-    "Headline": {
-        "comparison": PROJECT_ROOT / "reports/model_comparison_all.csv",
-        "coverage": PROJECT_ROOT / "reports/model_interval_coverage.csv",
-        "backtests": PROJECT_ROOT / "reports/backtest_predictions.csv",
-        "caption": (
-            "Headline comparisons include the RBA benchmark where available, "
-            "but the SA-basis model comparison excludes incompatible NSA rows."
-        ),
-    },
-    "Trimmed mean": {
-        "comparison": PROJECT_ROOT / "reports/model_comparison_trimmed_mean_all.csv",
-        "coverage": PROJECT_ROOT / "reports/model_interval_coverage_trimmed_mean.csv",
-        "backtests": PROJECT_ROOT / "reports/backtest_predictions_trimmed_mean.csv",
-        "caption": (
-            "Trimmed-mean diagnostics exclude RBA rows because the RBA workbook "
-            "is an NSA headline CPI forecast series, not a trimmed-mean target."
-        ),
-    },
-}
-
-# Streamlit fits charts to a fixed total height (axes and legend included), so these
-# builders size for that, and pad the right edge so the last axis label is not clipped.
-CHART_PADDING = {"left": 5, "right": 24, "top": 5, "bottom": 5}
-UNUSUAL_LABEL = "Unusual (|z| > 2)"
-TYPICAL_LABEL = "Within the usual range"
-SVAR_COMPONENT_LABELS = {
-    "commodity_growth": "Commodity growth",
-    "unemployment_rate": "Unemployment rate",
-    "inflation_expectations_business": "Business inflation expectations",
-    "cash_rate": "Cash rate",
-}
 
 PALETTE = {
     "light": {
@@ -214,7 +124,7 @@ PALETTE = {
 
 
 # ---------------------------------------------------------------------------
-# Generic helpers
+# Helpers
 # ---------------------------------------------------------------------------
 @st.cache_data
 def load_report(path: Path) -> pd.DataFrame:
@@ -244,28 +154,40 @@ def _request_error_detail(exc: requests.RequestException) -> str | None:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def _fetch_json(method: str, base_url: str, path: str, timeout: int, **kwargs) -> dict:
+    """Call the API and return its JSON, caching successes only.
+
+    It raises on failure, and ``st.cache_data`` never caches an exception, so an API
+    that was down a moment ago is retried on the next click instead of being remembered
+    as down for five minutes.
+    """
+    response = requests.request(method, f"{base_url}{path}", timeout=timeout, **kwargs)
+    response.raise_for_status()
+    return response.json()
+
+
 def api_request(method: str, base_url: str, path: str, **kwargs) -> tuple[dict | None, str | None]:
     """Call the FastAPI service; return ``(payload, None)`` or ``(None, error_banner_text)``.
 
-    One shared helper for every live section (Scenario Engine, RBA Classifier,
-    live forecast tool) so a single unreachable API produces one consistent
-    soft-fallback banner instead of three different error paths -- and so it
-    never blanks the rest of this single-page report the way ``st.stop()``
-    would. Cached briefly so unrelated widget reruns elsewhere on the page
-    don't refire every live call.
+    One shared helper for the three live tabs, so a problem with the API produces one
+    consistent soft banner instead of blanking the page. Pass ``timeout=`` for slow
+    calls (the scenario endpoint takes about 40 seconds).
     """
     timeout = kwargs.pop("timeout", LIVE_API_TIMEOUT_SECONDS)
     try:
-        response = requests.request(method, f"{base_url}{path}", timeout=timeout, **kwargs)
-        response.raise_for_status()
-        return response.json(), None
+        return _fetch_json(method, base_url, path, timeout, **kwargs), None
+    except requests.Timeout:
+        return None, (
+            f"The API at `{base_url}{path}` did not answer within {timeout} seconds. "
+            "It may still be working, so try again in a moment."
+        )
     except requests.RequestException as exc:
         detail = _request_error_detail(exc)
         detail_text = f" API detail: {detail}" if detail else ""
         return None, (
             f"Could not reach the FastAPI service at `{base_url}{path}`: {exc}.{detail_text} "
             "Start it locally with `uvicorn api.main:app --reload`, or point the API base URL "
-            "in the sidebar at a running deployment. Showing the static fallback below instead."
+            "in the sidebar at a running deployment."
         )
 
 
@@ -278,307 +200,38 @@ def _anchor_value(
     return float(fallback) if fallback is not None else float(target.iloc[-1])
 
 
-def _fan_frame(report: pd.DataFrame) -> pd.DataFrame:
-    frame = report.copy()
-    frame["quarter_date"] = (
-        pd.PeriodIndex(frame["target_quarter"], freq="Q").to_timestamp(how="end").normalize()
-    )
-    frame["horizon"] = pd.to_numeric(frame["horizon"], errors="coerce")
-    return frame.sort_values("horizon")
-
-
-def caveat_for(label: str) -> tuple[str, str]:
-    if label.startswith("SVAR"):
-        return (
-            "warning",
-            "SVAR simulation fans come from Phase 1b VAR(2)-in-levels systems "
-            "that still fail multivariate residual whiteness and normality "
-            "diagnostics after COVID treatment checks and the block-bootstrap "
-            "IRF fix; treat them as illustrative structural simulations, not "
-            "precise causal estimates.",
-        )
-    return (
-        "info",
-        "This fan is an unconditional forward simulation from a model fit fresh "
-        "on the full available history. It is distinct from the walk-forward "
-        "accuracy and interval-coverage diagnostics shown in §5 Evaluation.",
-    )
-
-
-# ---------------------------------------------------------------------------
-# Article + A4 print presentation layer
-# ---------------------------------------------------------------------------
-def slugify(text: str) -> str:
-    """Match Streamlit's own header-anchor slug exactly (verified against the
-    rendered DOM: lowercase, non-alphanumeric runs collapsed to one hyphen)."""
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-
-
-# NOTE: every string below is passed to ``st.html()``, never ``st.markdown()``.
-# ``st.markdown(..., unsafe_allow_html=True)`` runs the content through a
-# CommonMark HTML-block parser first; a blank line inside a large <style>
-# block can make that parser bail out of "raw HTML" mode partway through and
-# dump the remainder as literal visible text (this is exactly what happened
-# before this fix -- the tail of this CSS was rendering as text at the top of
-# the page). ``st.html()`` (Streamlit >= 1.36) inserts the string as-is, no
-# markdown parsing, so this class of bug can't recur.
-def inject_article_css(theme_type: str) -> None:
-    colors = PALETTE[theme_type]
-    st.html(
-        f"""
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet">
-        <style>
-          [data-testid="stMarkdownContainer"] p,
-          [data-testid="stMarkdownContainer"] li,
-          [data-testid="stMarkdownContainer"] h1,
-          [data-testid="stMarkdownContainer"] h2,
-          [data-testid="stMarkdownContainer"] h3,
-          [data-testid="stMarkdownContainer"] h4,
-          .cpi-kicker, .cpi-dek, .cpi-source {{
-            font-family: 'Source Serif 4', Georgia, serif;
-          }}
-          [data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li {{
-            font-size: 1.05rem;
-            line-height: 1.72;
-            max-width: 760px;
-          }}
-          [data-testid="stMarkdownContainer"] h2 {{
-            font-weight: 700;
-            border-top: 1px solid {colors['border']};
-            padding-top: 1.6rem;
-            margin-top: 0.6rem;
-            scroll-margin-top: 90px;
-          }}
-          [data-testid="stMarkdownContainer"] h3 {{
-            font-weight: 600;
-            scroll-margin-top: 90px;
-          }}
-          .cpi-kicker {{
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            font-size: 0.8rem;
-            color: {colors['fan']};
-            font-style: italic;
-            margin-bottom: -0.4rem;
-          }}
-          .cpi-dek {{
-            font-size: 1.2rem;
-            line-height: 1.6;
-            color: {colors['muted']};
-            font-style: italic;
-            max-width: 760px;
-          }}
-          .cpi-source {{
-            font-size: 0.85rem;
-            color: {colors['muted']};
-            font-style: italic;
-          }}
-          .cpi-callout {{
-            border-left: 3px solid {colors['fan']};
-            background: color-mix(in srgb, {colors['fan']} 8%, transparent);
-            padding: 0.9rem 1.1rem;
-            border-radius: 4px;
-            font-family: 'Source Serif 4', Georgia, serif;
-            max-width: 760px;
-            margin: 0.5rem 0 1rem 0;
-          }}
-          .cpi-eq-caption {{
-            font-size: 0.85rem;
-            color: {colors['muted']};
-            font-style: italic;
-            max-width: 760px;
-          }}
-
-          /* --- Wide institutional-site report shell, after opdi.aero --------
-             The page uses Streamlit's sidebar as the persistent side rail for
-             the table of contents and live API control. The report body stays
-             capped and centered so charts never sit under navigation chrome.
-             The print pass further down still renders true A4 pages for the
-             PDF export regardless of this on-screen width. ---------------- */
-          [data-testid="stAppViewContainer"] .block-container {{
-            max-width: 1120px !important;
-            margin: 1.5rem auto !important;
-            padding: 2.5rem 3rem 4rem 3rem !important;
-            background: {colors['paper']};
-            box-shadow: 0 0 0 1px {colors['border']};
-            border-radius: 2px;
-            position: relative;
-          }}
-
-          .cpi-print-btn {{
-            font-family: 'Source Serif 4', Georgia, serif;
-            background: {colors['fan']};
-            color: #fff;
-            border: none;
-            padding: 0.55rem 1.15rem;
-            border-radius: 6px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            cursor: pointer;
-          }}
-          .cpi-print-btn:hover {{ filter: brightness(1.08); }}
-
-          /* --- Print / "Download PDF" pass --------------------------------- */
-          @media print {{
-            @page {{ size: A4; margin: 2cm; }}
-            [data-testid="stSidebar"], [data-testid="stHeader"], [data-testid="stToolbar"],
-            [data-testid="stDecoration"], [data-testid="collapsedControl"],
-            #MainMenu, footer, .cpi-print-hide {{
-              display: none !important;
-            }}
-            [data-testid="stAppViewContainer"] .block-container {{
-              max-width: 100% !important;
-              box-shadow: none !important;
-              border: none !important;
-              margin: 0 !important;
-              padding: 0 !important;
-            }}
-          }}
-        </style>
-        """
-    )
-
-
-def kicker(text: str) -> None:
-    st.html(f"<div class='cpi-kicker'>{text}</div>")
-
-
-def dek(text: str) -> None:
-    st.html(f"<div class='cpi-dek'>{text}</div>")
-
-
-def source_line(text: str) -> None:
-    st.html(f"<div class='cpi-source'>Source: {text}</div>")
-
-
-def callout(text: str) -> None:
-    st.html(f"<div class='cpi-callout'>{text}</div>")
-
-
-def download_pdf_button() -> None:
-    st.html(
-        """
-        <div class="cpi-print-hide" style="margin: 0.75rem 0 1.5rem 0;">
-          <button class="cpi-print-btn" onclick="window.print()">Download as PDF</button>
-          <div class="cpi-source" style="margin-top: 0.5rem;">
-            Opens your browser's print dialog &mdash; choose &ldquo;Save as PDF&rdquo; as the
-            destination. The export paginates to true A4 pages, with every chart, table,
-            and control rendered exactly as shown on screen.
-          </div>
-        </div>
-        """
-    )
-
-
-def render_sidebar_table_of_contents(sections: tuple[str, ...]) -> None:
-    st.markdown("### On this page")
-    for section in sections:
-        st.markdown(f"- [{section}](#{slugify(section)})")
-    st.divider()
-
-
 # ---------------------------------------------------------------------------
 # Chart builders
 # ---------------------------------------------------------------------------
-def build_fan_chart(report: pd.DataFrame, theme_type: str) -> alt.LayerChart:
-    colors = PALETTE[theme_type]
-    outer_band = (
-        alt.Chart(report)
-        .mark_area(opacity=0.14, color=colors["fan"])
-        .encode(
-            x=alt.X("quarter_date:T", title="Target Quarter"),
-            y=alt.Y("p10:Q", title="Simulated CPI YoY (%)"),
-            y2="p90:Q",
-            tooltip=["target_quarter:N", "horizon:Q", "p10:Q", "p90:Q"],
-        )
-    )
-    inner_band = (
-        alt.Chart(report)
-        .mark_area(opacity=0.28, color=colors["fan"])
-        .encode(
-            x=alt.X("quarter_date:T", title="Target Quarter"),
-            y=alt.Y("p25:Q", title="Simulated CPI YoY (%)"),
-            y2="p75:Q",
-            tooltip=["target_quarter:N", "horizon:Q", "p25:Q", "p75:Q"],
-        )
-    )
-    median_line = (
-        alt.Chart(report)
-        .mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=45), color=colors["median"])
-        .encode(
-            x=alt.X("quarter_date:T", title="Target Quarter"),
-            y=alt.Y("median:Q", title="Simulated CPI YoY (%)"),
-            tooltip=["target_quarter:N", "horizon:Q", "median:Q"],
-        )
-    )
-    return (
-        (outer_band + inner_band + median_line)
-        .properties(height=300)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-    )
-
-
-def build_cpi_history_chart(curated: pd.DataFrame, theme_type: str) -> alt.LayerChart:
-    colors = PALETTE[theme_type]
-    history = curated[["quarter", "quarter_date", "cpi_yoy", "trimmed_mean_cpi_yoy"]].dropna(
-        subset=["cpi_yoy"], how="all"
-    )
-    band = (
-        alt.Chart(pd.DataFrame({"lo": [2.0], "hi": [3.0]}))
-        .mark_rect(opacity=0.12, color=colors["accent2"])
-        .encode(y="lo:Q", y2="hi:Q")
-    )
-    headline = (
-        alt.Chart(history)
-        .mark_line(strokeWidth=1.8, color=colors["ink"])
-        .encode(
-            x=alt.X("quarter_date:T", title="Quarter"),
-            y=alt.Y("cpi_yoy:Q", title="YoY inflation (%)"),
-            tooltip=["quarter:N", "cpi_yoy:Q"],
-        )
-    )
-    trimmed = (
-        alt.Chart(history)
-        .mark_line(strokeWidth=1.8, color=colors["fan"])
-        .encode(x="quarter_date:T", y="trimmed_mean_cpi_yoy:Q", tooltip=["quarter:N", "trimmed_mean_cpi_yoy:Q"])
-    )
-    return (
-        (band + headline + trimmed)
-        .properties(height=280)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-    )
-
-
 def build_ensemble_path_chart(
     sample: pd.DataFrame, fan: pd.DataFrame, n_reveal: int, theme_type: str, value_label: str
 ) -> alt.LayerChart:
     colors = PALETTE[theme_type]
+    # One shared x definition so every layer agrees on the title and on whole-quarter ticks.
+    horizon_axis = alt.X("horizon:Q", title="Horizon (quarters ahead)", axis=alt.Axis(tickMinStep=1))
     revealed = sample[sample["draw_id"] < n_reveal]
     final_step = n_reveal >= int(sample["draw_id"].max()) + 1
     layers = [
         alt.Chart(revealed)
         .mark_line(strokeWidth=0.8, opacity=0.35, color=colors["fan"])
-        .encode(x="horizon:Q", y=alt.Y("value:Q", title=value_label), detail="draw_id:N")
+        .encode(x=horizon_axis, y=alt.Y("value:Q", title=value_label), detail="draw_id:N")
     ]
     if final_step:
         outer_band = (
             alt.Chart(fan)
             .mark_area(opacity=0.14, color=colors["fan"])
-            .encode(x=alt.X("horizon:Q", title="Horizon (quarters ahead)"), y="p10:Q", y2="p90:Q")
+            .encode(x=horizon_axis, y="p10:Q", y2="p90:Q")
         )
         inner_band = (
             alt.Chart(fan)
             .mark_area(opacity=0.28, color=colors["fan"])
-            .encode(x="horizon:Q", y="p25:Q", y2="p75:Q")
+            .encode(x=horizon_axis, y="p25:Q", y2="p75:Q")
         )
         median_line = (
             alt.Chart(fan)
             .mark_line(strokeWidth=2.2, point=alt.OverlayMarkDef(size=40), color=colors["median"])
             .encode(
-                x="horizon:Q",
+                x=horizon_axis,
                 y="median:Q",
                 tooltip=["target_quarter:N", "horizon:Q", alt.Tooltip("median:Q", title="Forecast", format=".2f")],
             )
@@ -589,232 +242,6 @@ def build_ensemble_path_chart(
         .properties(height=300)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
         .configure_view(strokeWidth=0)
-    )
-
-
-def build_svar_irf_chart(irf: pd.DataFrame, max_horizon: int, theme_type: str) -> alt.Chart:
-    colors = PALETTE[theme_type]
-    subset = irf[irf["horizon"] <= max_horizon]
-    zero_line = alt.Chart().mark_rule(color=colors["muted"], strokeDash=[3, 3]).encode(y=alt.datum(0))
-    band = (
-        alt.Chart()
-        .mark_area(opacity=0.22, color=colors["fan"])
-        .encode(x=alt.X("horizon:Q", title="Horizon"), y=alt.Y("lower:Q", title="IRF"), y2="upper:Q")
-    )
-    line = (
-        alt.Chart()
-        .mark_line(strokeWidth=2, point=True, color=colors["median"])
-        .encode(x="horizon:Q", y="irf:Q", tooltip=["shock:N", "horizon:Q", "irf:Q"])
-    )
-    layered = alt.layer(zero_line, band, line, data=subset).properties(height=150, width=300)
-    return (
-        layered.facet(facet=alt.Facet("shock:N", title=None), columns=2)
-        .resolve_scale(y="independent")
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_header(labelColor=colors["ink"], labelFontWeight="bold")
-    )
-
-
-def _reading_label(z_scores: pd.Series) -> pd.Series:
-    return (z_scores.abs() > UNUSUAL_Z).map({True: UNUSUAL_LABEL, False: TYPICAL_LABEL})
-
-
-def build_shock_z_chart(events: pd.DataFrame, selected_quarter: str, theme_type: str) -> alt.LayerChart:
-    """Target-shock z-score by quarter, unusual quarters highlighted, chosen quarter marked."""
-    colors = PALETTE[theme_type]
-    frame = events.assign(reading=_reading_label(events["shock_z"]))
-    selected = frame.loc[frame["quarter"] == selected_quarter, ["quarter_date"]]
-    edges = alt.Chart(pd.DataFrame({"z": [-UNUSUAL_Z, UNUSUAL_Z]})).mark_rule(
-        color=colors["muted"], strokeDash=[4, 3]
-    ).encode(y="z:Q")
-    zero = alt.Chart(pd.DataFrame({"z": [0.0]})).mark_rule(color=colors["muted"]).encode(y="z:Q")
-    bars = (
-        alt.Chart(frame)
-        .mark_bar(size=4)
-        .encode(
-            x=alt.X("quarter_date:T", title=None),
-            y=alt.Y("shock_z:Q", title="Shock z-score"),
-            color=alt.Color(
-                "reading:N",
-                title=None,
-                scale=alt.Scale(domain=[UNUSUAL_LABEL, TYPICAL_LABEL], range=[colors["fan"], colors["muted"]]),
-                legend=alt.Legend(orient="top"),
-            ),
-            tooltip=["quarter:N", alt.Tooltip("shock_z:Q", format=".2f", title="z-score")],
-        )
-    )
-    marker = alt.Chart(selected).mark_rule(color=colors["ink"], strokeWidth=1.5).encode(x="quarter_date:T")
-    return (
-        alt.layer(zero, edges, bars, marker)
-        .properties(height=260, padding=CHART_PADDING)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-        .configure_legend(labelColor=colors["ink"])
-    )
-
-
-def build_decomposition_chart(parts: pd.DataFrame, theme_type: str) -> alt.LayerChart:
-    """Each shock's accumulated contribution to the target level in one quarter."""
-    colors = PALETTE[theme_type]
-    shocks = parts.loc[parts["kind"] != "baseline"].copy()
-    shocks["driver"] = [
-        "Own CPI shock" if kind == OWN_SHOCK else SVAR_COMPONENT_LABELS.get(name, name.replace("_", " "))
-        for name, kind in zip(shocks["component"], shocks["kind"])
-    ]
-    zero = alt.Chart(pd.DataFrame({"x": [0.0]})).mark_rule(color=colors["muted"]).encode(x="x:Q")
-    bars = (
-        alt.Chart(shocks)
-        .mark_bar()
-        .encode(
-            x=alt.X(
-                "contribution:Q",
-                title="Contribution to the CPI YoY level (percentage points)",
-                axis=alt.Axis(tickCount=6),
-            ),
-            y=alt.Y("driver:N", title=None, sort="-x", axis=alt.Axis(labelLimit=260)),
-            color=alt.Color(
-                "kind:N",
-                title=None,
-                scale=alt.Scale(domain=[MACRO_DRIVER, OWN_SHOCK], range=[colors["accent2"], colors["fan"]]),
-                legend=alt.Legend(orient="top"),
-            ),
-            tooltip=["driver:N", alt.Tooltip("contribution:Q", format=".3f", title="Contribution (pp)")],
-        )
-    )
-    return (
-        alt.layer(zero, bars)
-        .properties(height=300, padding=CHART_PADDING)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-        .configure_legend(labelColor=colors["ink"])
-    )
-
-
-def build_drift_z_chart(error_check: pd.DataFrame, bound: float, theme_type: str) -> alt.LayerChart:
-    """Where each newly graded forecast error sits against that model's own error history."""
-    colors = PALETTE[theme_type]
-    x_scale = alt.Scale(domain=[-bound, bound])
-    quarters = sorted(error_check["target_quarter"].unique())
-    quarter_palette = [colors["headline"], colors["fan"], colors["accent2"], colors["muted"]]
-    typical = (
-        alt.Chart(pd.DataFrame({"lo": [-1.0], "hi": [1.0]}))
-        .mark_rect(color=colors["muted"], opacity=0.18)
-        .encode(
-            x=alt.X("lo:Q", scale=x_scale, title="z-score against the model's own error history", axis=alt.Axis(tickCount=7)),
-            x2="hi:Q",
-        )
-    )
-    edges = (
-        alt.Chart(pd.DataFrame({"z": [-UNUSUAL_Z, UNUSUAL_Z]}))
-        .mark_rule(color=colors["miscalibrated"], strokeDash=[4, 3])
-        .encode(x=alt.X("z:Q", scale=x_scale))
-    )
-    dots = (
-        alt.Chart(error_check)
-        .mark_point(filled=True, size=140, opacity=0.9)
-        .encode(
-            x=alt.X("z_score:Q", scale=x_scale),
-            y=alt.Y("model:N", title=None),
-            color=alt.Color(
-                "target_quarter:N",
-                title="Quarter graded",
-                scale=alt.Scale(domain=quarters, range=[quarter_palette[i % len(quarter_palette)] for i in range(len(quarters))]),
-                legend=alt.Legend(orient="top"),
-            ),
-            tooltip=[
-                "model:N", "target_quarter:N", "horizon:Q",
-                alt.Tooltip("actual:Q", format=".2f"), alt.Tooltip("forecast:Q", format=".2f"),
-                alt.Tooltip("error:Q", format=".2f", title="error (actual - forecast)"),
-                alt.Tooltip("z_score:Q", format=".2f"),
-                alt.Tooltip("error_percentile:Q", format=".0f", title="percentile in history"),
-            ],
-        )
-    )
-    return (
-        alt.layer(typical, edges, dots)
-        .properties(height=240, padding=CHART_PADDING)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-        .configure_legend(labelColor=colors["ink"])
-    )
-
-
-def build_drift_history_chart(history: pd.DataFrame, theme_type: str) -> alt.LayerChart:
-    """One-step-ahead errors over time, with the newly graded quarter(s) picked out."""
-    colors = PALETTE[theme_type]
-    frame = with_quarter_date(history, "target_quarter")
-    zero = alt.Chart(pd.DataFrame({"y": [0.0]})).mark_rule(color=colors["muted"], strokeDash=[3, 3]).encode(y="y:Q")
-    lines = (
-        alt.Chart(frame)
-        .mark_line(strokeWidth=1.5, opacity=0.85)
-        .encode(
-            x=alt.X("quarter_date:T", title=None),
-            y=alt.Y("error:Q", title="Error, actual minus forecast (pp)"),
-            color=alt.Color("model:N", title="Model", legend=alt.Legend(orient="top")),
-            tooltip=["model:N", "target_quarter:N", alt.Tooltip("error:Q", format=".2f")],
-        )
-    )
-    recent = (
-        alt.Chart(frame.loc[frame["is_recent"].astype(str).eq("True")])
-        .mark_point(filled=True, shape="diamond", size=170, stroke=colors["ink"], strokeWidth=1)
-        .encode(
-            x="quarter_date:T",
-            y="error:Q",
-            color="model:N",
-            tooltip=["model:N", "target_quarter:N", alt.Tooltip("error:Q", format=".2f")],
-        )
-    )
-    return (
-        alt.layer(zero, lines, recent)
-        .properties(height=300, padding=CHART_PADDING)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-        .configure_legend(labelColor=colors["ink"])
-    )
-
-
-def build_covariate_z_chart(covariate: pd.DataFrame, theme_type: str) -> alt.LayerChart:
-    """Each macro input's latest value, in standard deviations from its own history."""
-    colors = PALETTE[theme_type]
-    frame = covariate.assign(reading=_reading_label(covariate["value_standardized"]))
-    x_scale = alt.Scale(domain=[-z_axis_bound(frame["value_standardized"]), z_axis_bound(frame["value_standardized"])])
-    edges = (
-        alt.Chart(pd.DataFrame({"z": [-UNUSUAL_Z, UNUSUAL_Z]}))
-        .mark_rule(color=colors["miscalibrated"], strokeDash=[4, 3])
-        .encode(x=alt.X("z:Q", scale=x_scale))
-    )
-    bars = (
-        alt.Chart(frame)
-        .mark_bar()
-        .encode(
-            x=alt.X(
-                "value_standardized:Q",
-                scale=x_scale,
-                title="Latest value, in standard deviations from its own history",
-                axis=alt.Axis(tickCount=7),
-            ),
-            y=alt.Y("variable_label:N", title=None, sort="-x", axis=alt.Axis(labelLimit=260, labelOverlap=False)),
-            color=alt.Color(
-                "reading:N",
-                title=None,
-                scale=alt.Scale(domain=[UNUSUAL_LABEL, TYPICAL_LABEL], range=[colors["fan"], colors["muted"]]),
-                legend=alt.Legend(orient="top"),
-            ),
-            tooltip=[
-                alt.Tooltip("variable_label:N", title="input"),
-                alt.Tooltip("latest_quarter:N", title="latest quarter"),
-                alt.Tooltip("value:Q", format=".2f"),
-                alt.Tooltip("value_standardized:Q", format=".2f", title="z-score"),
-                alt.Tooltip("n_obs:Q", title="quarters of history"),
-            ],
-        )
-    )
-    return (
-        alt.layer(edges, bars)
-        .properties(height=420, padding=CHART_PADDING)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-        .configure_legend(labelColor=colors["ink"])
     )
 
 
@@ -862,7 +289,7 @@ def build_threshold_probability_bar(probabilities: pd.DataFrame) -> alt.Chart:
         alt.Chart(probabilities)
         .mark_bar(height=42)
         .encode(
-            x=alt.X("probability:Q", stack="normalize", axis=alt.Axis(format="%"), title=None),
+            x=alt.X("probability:Q", stack="normalize", axis=alt.Axis(format="%", tickCount=5), title=None),
             color=alt.Color(
                 "label:N",
                 scale=alt.Scale(domain=list(ACTION_LABELS.values()), range=list(ACTION_COLORS.values())),
@@ -874,74 +301,7 @@ def build_threshold_probability_bar(probabilities: pd.DataFrame) -> alt.Chart:
                 alt.Tooltip("probability:Q", title="Probability", format=".1%"),
             ],
         )
-        .properties(height=86)
-        .configure_view(strokeWidth=0)
-    )
-
-
-def build_credit_stress_chart(credit: pd.DataFrame, scenario: str, theme_type: str) -> alt.Chart:
-    colors = PALETTE[theme_type]
-    subset = credit[credit["scenario"] == scenario]
-    return (
-        alt.Chart(subset)
-        .mark_bar(color=colors["fan"])
-        .encode(
-            x=alt.X("segment:N", title=None),
-            y=alt.Y("ecl_aud_m:Q", title="12-month ECL ($AUDm)"),
-            tooltip=["segment:N", "ecl_aud_m:Q", "pd_stressed:Q"],
-        )
-        .properties(height=240)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-    )
-
-
-def build_rmse_bar_chart(comparison: pd.DataFrame, theme_type: str) -> alt.Chart:
-    colors = PALETTE[theme_type]
-    overall = comparison[comparison["horizon"] == "overall"].sort_values("rmse")
-    overall = overall.assign(
-        highlight=overall["model"].apply(lambda m: "ensemble" if m == "ensemble" else "other")
-    )
-    return (
-        alt.Chart(overall)
-        .mark_bar()
-        .encode(
-            y=alt.Y("model:N", title=None, sort="x"),
-            x=alt.X("rmse:Q", title="Overall RMSE (horizons 1-8, shared grid)"),
-            color=alt.Color(
-                "highlight:N",
-                scale=alt.Scale(domain=["ensemble", "other"], range=[colors["fan"], colors["muted"]]),
-                legend=None,
-            ),
-            tooltip=["model:N", "rmse:Q", "n:Q"],
-        )
-        .properties(height=200)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-    )
-
-
-def build_coverage_bar_chart(coverage: pd.DataFrame, theme_type: str) -> alt.LayerChart:
-    colors = PALETTE[theme_type]
-    overall = coverage[coverage["horizon"] == "overall"]
-    bars = (
-        alt.Chart(overall)
-        .mark_bar(color=colors["fan"], opacity=0.75)
-        .encode(
-            x=alt.X("model:N", title=None),
-            y=alt.Y("empirical_coverage:Q", title="Empirical coverage", scale=alt.Scale(domain=[0, 1])),
-            tooltip=["model:N", "empirical_coverage:Q", "n:Q"],
-        )
-    )
-    nominal = (
-        alt.Chart(pd.DataFrame({"y": [0.8]}))
-        .mark_rule(color=colors["ink"], strokeDash=[4, 2])
-        .encode(y="y:Q")
-    )
-    return (
-        (bars + nominal)
-        .properties(height=220)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
+        .properties(height=150)
         .configure_view(strokeWidth=0)
     )
 
@@ -1060,86 +420,6 @@ def build_scenario_chart(forecast: pd.DataFrame, theme_type: str, y_axis_title: 
     )
 
 
-def _horizon_rows(report: pd.DataFrame) -> pd.DataFrame:
-    rows = report.loc[report["horizon"].astype(str).ne("overall")].copy()
-    rows["horizon_num"] = pd.to_numeric(rows["horizon"], errors="coerce")
-    return rows.dropna(subset=["horizon_num"]).sort_values(["model", "horizon_num"])
-
-
-def build_accuracy_chart(report: pd.DataFrame, theme_type: str) -> alt.LayerChart:
-    colors = PALETTE[theme_type]
-    return (
-        alt.Chart(report)
-        .mark_line(point=alt.OverlayMarkDef(size=45), strokeWidth=2)
-        .encode(
-            x=alt.X("horizon_num:O", title="Horizon"),
-            y=alt.Y("rmse:Q", title="RMSE"),
-            color=alt.Color("model:N", title="Model"),
-            tooltip=["model:N", "horizon:N", "rmse:Q", "mae:Q", "n:Q"],
-        )
-        .properties(height=300)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-    )
-
-
-def build_coverage_chart(report: pd.DataFrame, theme_type: str) -> alt.LayerChart:
-    colors = PALETTE[theme_type]
-    nominal = (
-        alt.Chart(report)
-        .mark_line(strokeDash=[4, 3], color=colors["nominal"], strokeWidth=1.5)
-        .encode(x=alt.X("horizon_num:O", title="Horizon"), y=alt.Y("nominal_coverage:Q"))
-    )
-    empirical = (
-        alt.Chart(report)
-        .mark_line(point=alt.OverlayMarkDef(size=45), strokeWidth=2)
-        .encode(
-            x=alt.X("horizon_num:O", title="Horizon"),
-            y=alt.Y("empirical_coverage:Q", title="Coverage"),
-            color=alt.Color("model:N", title="Model"),
-            tooltip=["model:N", "horizon:N", "empirical_coverage:Q", "nominal_coverage:Q", "significantly_miscalibrated:N"],
-        )
-    )
-    flagged = (
-        alt.Chart(report.loc[report["significantly_miscalibrated"].astype(str).eq("True")])
-        .mark_point(filled=True, size=110, color=colors["miscalibrated"], shape="diamond")
-        .encode(x="horizon_num:O", y="empirical_coverage:Q")
-    )
-    return (
-        (nominal + empirical + flagged)
-        .properties(height=300)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-    )
-
-
-def build_scatter_chart(report: pd.DataFrame, theme_type: str) -> alt.LayerChart:
-    colors = PALETTE[theme_type]
-    lower = float(min(report["actual"].min(), report["forecast"].min()))
-    upper = float(max(report["actual"].max(), report["forecast"].max()))
-    diagonal = pd.DataFrame({"actual": [lower, upper], "forecast": [lower, upper]})
-    points = (
-        alt.Chart(report)
-        .mark_circle(size=42, opacity=0.55)
-        .encode(
-            x=alt.X("actual:Q", title="Actual"),
-            y=alt.Y("forecast:Q", title="Forecast"),
-            color=alt.Color("model:N", title="Model"),
-            tooltip=["model:N", "forecast_origin:N", "target_quarter:N", "horizon:Q", "actual:Q", "forecast:Q"],
-        )
-    )
-    reference = alt.Chart(diagonal).mark_line(strokeDash=[4, 3], color=colors["nominal"], strokeWidth=1.5).encode(x="actual:Q", y="forecast:Q")
-    return (
-        (points + reference)
-        .properties(height=300)
-        .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
-        .configure_view(strokeWidth=0)
-    )
-
-
-# ---------------------------------------------------------------------------
-# Forecasts-page helpers (live "6.1 Live forecast tool" section)
-# ---------------------------------------------------------------------------
 def _family_map(payload: dict) -> dict[str, dict]:
     return {model["model_family"]: model for model in payload.get("models", [])}
 
@@ -1151,12 +431,6 @@ def _ordered_families(families: set[str]) -> list[str]:
 
 def _model_label(model_family: str) -> str:
     return MODEL_LABELS.get(model_family, model_family.replace("_", " ").title())
-
-
-def _latest_macro_inputs(curated: pd.DataFrame) -> pd.Series:
-    available_columns = [column for column in MACRO_INPUT_COLUMNS if column in curated.columns]
-    rows = curated.dropna(subset=available_columns, how="all")
-    return rows.iloc[-1]
 
 
 def _history_frame(curated: pd.DataFrame) -> pd.DataFrame:
@@ -1247,1064 +521,361 @@ def _scenario_frame(payload: dict, anchor_quarter_date, anchor_value: float, ser
 # ===========================================================================
 # Page
 # ===========================================================================
-st.set_page_config(page_title="Methodology | Australian CPI Forecast", layout="wide")
+st.set_page_config(page_title="Australian CPI Forecast Demo", layout="wide")
 theme_type = _current_theme()
-inject_article_css(theme_type)
 
-kicker("Australian CPI Forecasting Project · Methodology Report")
-st.title("How this project forecasts Australian inflation")
-dek(
-    "Seven methodologies, one CRISP-DM story — the math behind every model, every "
-    "interactive tool the project has, and a live look at what “simulating a "
-    "forecast” actually means. This is the long, technical version of the project."
+st.title("Australian CPI forecast demo")
+st.write(
+    "Try the live parts of the project. The Jupyter Book explains how each one works; "
+    "this app is only for playing with them."
 )
-download_pdf_button()
 
 with st.sidebar:
-    render_sidebar_table_of_contents(REPORT_SECTIONS)
-    st.subheader("Live API connection")
+    st.subheader("API connection")
     api_base_url = st.text_input("API base URL", value=DEFAULT_API_BASE_URL, key="api_base_url").rstrip("/")
     st.caption(
-        "Used by §4.5 Scenario Engine, §4.6 RBA Classifier, and §6 Deployment's "
-        "live forecast tool. Every other section reads local report CSVs and needs no API."
+        "Live forecast, 4.5 Scenario Engine and 4.6 RBA Policy Classifier call this service. "
+        "Start it with `uvicorn api.main:app --reload`. 4.3 Ensemble reads local files and "
+        "needs no API."
     )
 
 curated = load_curated_data()
 
-# --- 1. Business Understanding -------------------------------------------------
-st.header("1. Business Understanding")
-st.markdown(
-    """
-    **Core question.** Can external macroeconomic indicators — unemployment, the cash
-    rate, producer prices, commodity/oil prices, and business inflation expectations —
-    improve Australian CPI forecasts relative to a seasonal-naive baseline and the RBA's
-    own published forecasts, for both headline (`cpi_yoy`) and trimmed-mean
-    (`trimmed_mean_cpi_yoy`) inflation?
-    """
+forecast_tab, ensemble_tab, scenario_tab, rba_tab = st.tabs(
+    ["Live forecast", "4.3 Ensemble", "4.5 Scenario Engine", "4.6 RBA Policy Classifier"]
 )
 
-st.subheader("Current state at a glance")
-overview_cols = st.columns(4)
-overview_cols[0].metric("Curated quarters", f"{len(curated):,}")
-overview_cols[1].metric("Start", curated["quarter"].iloc[0])
-overview_cols[2].metric("End", curated["quarter"].iloc[-1])
-latest_cpi_yoy = curated["cpi_yoy"].dropna().iloc[-1]
-overview_cols[3].metric("Latest headline CPI YoY", f"{latest_cpi_yoy:.2f}%")
-st.line_chart(curated.set_index("quarter_date")[["cpi_yoy"]], height=220)
-
-st.markdown("**Success criteria** — defined precisely in §5 Evaluation, previewed here:")
-criteria_cols = st.columns(3)
-with criteria_cols[0]:
-    st.latex(r"\mathrm{RMSE} = \sqrt{\frac{1}{n}\sum_{i=1}^n (y_i - \hat y_i)^2}")
-    st.caption("Point-forecast accuracy, per horizon, vs. seasonal-naive and RBA")
-with criteria_cols[1]:
-    st.latex(r"P(\text{lower} \le y \le \text{upper}) \approx 0.80")
-    st.caption("Nominal 80% prediction-interval coverage")
-with criteria_cols[2]:
-    st.latex(r"\text{macro-F1} = \tfrac{1}{3}\sum_{c \in \{cut,hold,hike\}} F1_c")
-    st.caption("RBA policy-action classifier, class-balanced")
-st.warning(
-    "**Out of scope.** The SVAR/scenario engine produces *illustrative* structural "
-    "simulations, not causal point estimates — both systems fail multivariate residual "
-    "whiteness and normality diagnostics even after COVID treatment and a block-bootstrap "
-    "fix. Every scenario output downstream is labeled accordingly."
-)
-
-# --- 2. Data Understanding -------------------------------------------------
-st.header("2. Data Understanding")
-st.markdown(
-    "A single quarterly table built from ABS CPI, ABS trimmed-mean CPI, RBA cash-rate "
-    "decisions, RBA/ABS labour-force and producer-price series, WTI/Brent crude, and the "
-    "RBA's own published CPI forecast workbook — joined on quarter, no manual pasting."
-)
-# EDA only sees quarters up to the forecast origin; later quarters are held out
-# for benchmarking the pinned forecasts.
-eda_curated = restrict_to_eda_window(curated)
-st.altair_chart(build_cpi_history_chart(eda_curated, theme_type), width="stretch")
-st.caption(
-    f"{len(eda_curated)} quarters, {eda_curated['quarter'].iloc[0]}–{eda_curated['quarter'].iloc[-1]}. "
-    "Later quarters are held out for benchmarking only. "
-    "Shaded band is the RBA's 2–3% target range."
-)
-
-st.subheader("2.1 Explore the macro indicators")
-st.caption("Filter the curated table and browse any combination of indicators.")
-min_date = eda_curated["quarter_date"].min().date()
-max_date = eda_curated["quarter_date"].max().date()
-explorer_cols = st.columns([1.2, 1.8])
-selected_range = explorer_cols[0].date_input(
-    "Quarter range", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="data_explorer_range"
-)
-if isinstance(selected_range, tuple) and len(selected_range) == 2:
-    start_date, end_date = selected_range
-else:
-    start_date, end_date = min_date, max_date
-
-available_columns = [column for column in eda_curated.columns if column != "quarter_date"]
-default_columns = [
-    column
-    for column in [
-        "quarter", "cpi_qoq", "cpi_yoy", "trimmed_mean_cpi_qoq", "trimmed_mean_cpi_yoy",
-        "unemployment_rate", "cash_rate", "wpi_growth", "ppi_growth", "commodity_growth",
-    ]
-    if column in available_columns
-]
-selected_columns = explorer_cols[1].multiselect(
-    "Table columns", options=available_columns, default=default_columns, key="data_explorer_columns"
-)
-
-mask = (eda_curated["quarter_date"].dt.date >= start_date) & (eda_curated["quarter_date"].dt.date <= end_date)
-filtered_curated = eda_curated.loc[mask].copy()
-st.metric("Filtered rows", f"{len(filtered_curated):,}")
-
-candidate_columns = [
-    "unemployment_rate", "cash_rate", "wpi_growth", "ppi_growth",
-    "commodity_growth", "wti_growth", "inflation_expectations_business",
-]
-indicator_options = [column for column in candidate_columns if column in eda_curated.columns]
-default_indicators = [column for column in ["unemployment_rate", "cash_rate", "wpi_growth"] if column in indicator_options]
-selected_indicators = st.multiselect(
-    "Select indicators to plot", options=indicator_options, default=default_indicators, key="data_explorer_indicators"
-)
-if selected_indicators:
-    st.line_chart(filtered_curated.set_index("quarter_date")[selected_indicators], height=300)
-else:
-    st.info("Select one or more indicators to plot.")
-
-quality_report_path = PROJECT_ROOT / "reports/data_quality_report.csv"
-if quality_report_path.exists():
-    with st.expander("Data quality report"):
-        st.dataframe(load_report(quality_report_path), width="stretch")
-
-with st.expander("Filtered curated dataset table"):
-    if selected_columns:
-        st.dataframe(filtered_curated[selected_columns].round(4), width="stretch")
-    else:
-        st.info("Select at least one column to display.")
-source_line("`src/build_curated_dataset.py`, `data/curated/quarterly_macro_features.csv`")
-
-st.subheader("2.2 Exploratory diagnostics")
-st.caption(
-    "Computed directly from the curated dataset by `src/eda_export.py`. See "
-    "`notebooks/EDA.ipynb` for the full leakage-aware exploratory analysis."
-)
-eda_paths = {
-    "stationarity": PROJECT_ROOT / "reports/eda_stationarity.csv",
-    "correlations": PROJECT_ROOT / "reports/eda_correlations.csv",
-    "vif": PROJECT_ROOT / "reports/eda_vif.csv",
-}
-eda_missing = [name for name, path in eda_paths.items() if not path.exists()]
-if eda_missing:
-    st.error(
-        "Missing EDA report artifacts: " + ", ".join(f"`reports/eda_{name}.csv`" for name in eda_missing)
-        + ". Run `python -m src.eda_export` first."
-    )
-else:
-    stationarity = load_report(eda_paths["stationarity"])
-    correlations = load_report(eda_paths["correlations"])
-    vif = load_report(eda_paths["vif"])
-
-    st.markdown("**Stationarity summary**")
-    test_filter = st.multiselect(
-        "Stationarity tests",
-        options=sorted(stationarity["test"].dropna().unique()),
-        default=sorted(stationarity["test"].dropna().unique()),
-        key="eda_stationarity_tests",
-    )
-    st.dataframe(stationarity.loc[stationarity["test"].isin(test_filter)].copy(), width="stretch")
-
-    eda_chart_cols = st.columns(2)
-    with eda_chart_cols[0]:
-        st.markdown("**Correlation with CPI YoY**")
-        correlation_view = correlations.dropna(subset=["correlation_with_cpi_yoy"]).copy().sort_values("correlation_with_cpi_yoy")
-        if not correlation_view.empty:
-            st.bar_chart(correlation_view.set_index("variable")["correlation_with_cpi_yoy"], height=320)
-        with st.expander("Correlation table"):
-            st.dataframe(correlations, width="stretch")
-    with eda_chart_cols[1]:
-        st.markdown("**Variance inflation factors**")
-        vif_view = vif.dropna(subset=["vif"]).copy().sort_values("vif")
-        if not vif_view.empty:
-            st.bar_chart(vif_view.set_index("variable")["vif"], height=320)
-        with st.expander("VIF table"):
-            st.dataframe(vif, width="stretch")
-source_line("`src/eda_export.py`, `reports/eda_*.csv`")
-
-# --- 3. Data Preparation -------------------------------------------------
-st.header("3. Data Preparation")
-st.markdown(
-    "Two rules govern every feature: **leakage-aware lags** (every macro predictor "
-    "enters lagged, never contemporaneously — a forecast made “as of” quarter "
-    "$t$ only ever sees data that would genuinely have been published by then), and "
-    "**documented interventions, not silent dummies** (structural breaks get a named "
-    "column with a cited reason and a genuine forecast-lead-time count)."
-)
-interventions_path = PROJECT_ROOT / "data/metadata/intervention_quarters.csv"
-if interventions_path.exists():
-    interventions = pd.read_csv(interventions_path)
-    display_cols = [c for c in ["quarter", "dummy_name", "lead_quarters", "reason"] if c in interventions.columns]
-    table = interventions[display_cols].copy()
-    if "reason" in table.columns:
-        table["reason"] = table["reason"].str.slice(0, 110) + "…"
-    st.dataframe(table, width="stretch", hide_index=True)
-source_line("`src/features.py`, `data/metadata/intervention_quarters.csv`")
-
-# --- 4. Modeling -------------------------------------------------
-st.header("4. Modeling")
-st.markdown(
-    """
-    Three levels of ambition, in one project: **accuracy** (SARIMA, Elastic Net,
-    Ensemble — forecast the number), **structure** (SVAR, Scenario Engine — explain a
-    shock), and **decisions** (RBA Classifier, Credit Stress — classify policy / stress-test
-    credit losses). Every equation below is taken from the code that actually runs.
-    """
-)
-
-st.subheader("4.1 SARIMA — the univariate baseline")
-st.latex(r"\varphi(B)\Phi(B^4)(1-B)^d(1-B^4)^D y_t = \theta(B)\Theta(B^4)\,\varepsilon_t")
-st.markdown(
-    "The shipped headline order is $(1,0,2)\\times(1,0,2,4)$: last quarter's value and "
-    "shock, an MA(2) memory, and the same pattern echoed four quarters back — the "
-    "seasonal term. Zero exogenous inputs, by design: it answers *how far CPI's own "
-    "history carries a forecast*, before any macro predictor is added."
-)
-source_line("`src/models/sarima.py`")
-
-st.subheader("4.2 Elastic Net — regularized, direct multi-horizon")
-st.latex(
-    r"\hat\beta_h = \operatorname*{argmin}_{\beta}\ \frac{1}{2n}\lVert y_{t+h}-X_t\beta\rVert_2^2"
-    r"+ \alpha\rho\lVert\beta\rVert_1 + \alpha\tfrac{1-\rho}{2}\lVert\beta\rVert_2^2 ,\qquad h=1,\dots,8"
-)
-st.markdown(
-    "One fitted $\\beta_h$ *per horizon* — not one model rolled forward eight times. "
-    "$\\alpha$ and $\\rho$ (`l1_ratio`) are chosen by `GridSearchCV` over chronological "
-    "`TimeSeriesSplit` folds. The $\\ell_1$ term can zero out a weak macro feature "
-    "entirely; the $\\ell_2$ term keeps correlated survivors from cancelling each other out."
-)
-callout(
-    "<b>This argmin does not minimize RMSE, deliberately.</b> The <code>(1/2n)‖·‖²</code> "
-    "term is proportional to MSE, but the ℓ₁/ℓ₂ penalty terms bias β̂ <i>away</i> from the "
-    "MSE-minimizing (OLS) solution on purpose — that trade-off is the entire mechanism of "
-    "regularization. <code>GridSearchCV</code>'s own <code>scoring=\"neg_mean_squared_error\"</code> "
-    "isn't RMSE either, though for <i>ranking</i> candidate (α, l1_ratio) pairs it's "
-    "equivalent — RMSE = √MSE, and √ is monotonic. The project's headline RMSE success "
-    "criterion (§1) only re-enters once β̂ is fixed: it's the walk-forward, out-of-sample "
-    "metric §5 Evaluation uses to compare Elastic Net's <i>resulting forecasts</i> against "
-    "SARIMA, Ensemble, seasonal-naive, and the RBA — not a claim that every family's own "
-    "training loss literally is RMSE."
-)
-coef_path = PROJECT_ROOT / "reports/elastic_net_coefficients.csv"
-if coef_path.exists():
-    coefs = load_report(coef_path)
-    h1 = coefs[coefs["horizon"] == 1].copy()
-    h1["abs_coef"] = h1["coef"].abs()
-    zero_count = int((h1["coef"] == 0).sum())
+with forecast_tab:
     st.caption(
-        f"Horizon 1: α={h1['selected_alpha'].iloc[0]:.4f}, l1_ratio="
-        f"{h1['selected_l1_ratio'].iloc[0]:.2f} ({zero_count} of {len(h1)} features shrunk to zero)."
+        "Pick a horizon and load the forecasts served by the API. Book: section 6, Deployment."
     )
-    with st.expander("Horizon-1 coefficients"):
-        st.dataframe(
-            h1.sort_values("abs_coef", ascending=False)[["feature", "coef"]].reset_index(drop=True),
-            width="stretch",
-        )
-source_line("`src/models/elastic_net.py`")
+    live_control_cols = st.columns(2)
+    with live_control_cols[0]:
+        live_target_label = st.radio("Target detail", options=list(FORECAST_TARGET_CONFIG), horizontal=True, key="live_forecast_target")
+    with live_control_cols[1]:
+        live_horizon = st.slider("Forecast horizon (quarters)", min_value=1, max_value=MAX_FORECAST_HORIZON, value=MAX_FORECAST_HORIZON, key="live_forecast_horizon")
 
-st.subheader("4.3 Ensemble — inverse-RMSE blend, and the flagship demo")
-st.latex(
-    r"\hat y_{ens,h} = w_h\,\hat y_{SARIMA,h} + (1-w_h)\,\hat y_{EN,h}, \qquad "
-    r"w_h \propto \frac{1}{\mathrm{RMSE}_{SARIMA,h}}"
-)
-st.markdown(
-    "Whichever family won at *that specific horizon* in the walk-forward comparison gets "
-    "more say. This is also the project's reportable forecast, so it's the one worth "
-    "watching get built: pick a target, then drag the slider (or press Play) to reveal, "
-    "one by one, a sample of the 1,000 Monte-Carlo draws behind it."
-)
+    if st.button("Load live forecasts", key="load_live_forecasts"):
+        live_payloads_by_target: dict[str, dict] = {}
+        live_fetch_error = None
+        with st.spinner("Loading forecasts..."):
+            for label, config in FORECAST_TARGET_CONFIG.items():
+                payload, error = api_request("POST", api_base_url, config["endpoint"], json={"horizon": live_horizon})
+                if error:
+                    live_fetch_error = error
+                    break
+                live_payloads_by_target[label] = payload
+        st.session_state["live_forecast_result"] = {
+            "payloads_by_target": live_payloads_by_target,
+            "error": live_fetch_error,
+            "horizon": live_horizon,
+        }
 
-ensemble_target = st.radio(
-    "Target", options=list(ENSEMBLE_FLAGSHIP_CONFIG), horizontal=True, key="ensemble_target"
-)
-ensemble_config = ENSEMBLE_FLAGSHIP_CONFIG[ensemble_target]
-sample_path = ensemble_config["sample_path"]
-fan_path = ensemble_config["fan_path"]
-if sample_path.exists() and fan_path.exists():
-    sample = load_report(sample_path)
-    fan = load_report(fan_path)
-    n_draws = int(sample["draw_id"].max()) + 1
-    forecast_origin = str(fan["forecast_origin"].iloc[0])
-
-    metric_cols = st.columns(3)
-    metric_cols[0].metric("Forecast origin", forecast_origin)
-    metric_cols[1].metric("Draws shown", f"{n_draws} of 1,000")
-    metric_cols[2].metric("Horizons", f"{int(fan['horizon'].min())}–{int(fan['horizon'].max())}")
-
-    slider_col, play_col = st.columns([5, 1])
-    with slider_col:
-        n_reveal = st.slider("Paths revealed", 1, n_draws, value=1, key=f"ensemble_reveal_{ensemble_target}")
-    chart_placeholder = st.empty()
-    with play_col:
-        st.write("")
-        play = st.button("▶ Play", key=f"ensemble_play_{ensemble_target}")
-    if play:
-        for step in range(1, n_draws + 1, max(1, n_draws // 60)):
-            chart_placeholder.altair_chart(
-                build_ensemble_path_chart(sample, fan, step, theme_type, ensemble_config["value_label"]),
-                width="stretch",
-            )
-            time.sleep(0.03)
-        chart_placeholder.altair_chart(
-            build_ensemble_path_chart(sample, fan, n_draws, theme_type, ensemble_config["value_label"]),
-            width="stretch",
-        )
+    live_result = st.session_state.get("live_forecast_result")
+    if live_result is None:
+        st.info("Load live forecasts to query the configured FastAPI service.")
+    elif live_result["error"]:
+        st.info(live_result["error"])
     else:
-        chart_placeholder.altair_chart(
-            build_ensemble_path_chart(sample, fan, n_reveal, theme_type, ensemble_config["value_label"]),
-            width="stretch",
-        )
-
-    reported_path = PROJECT_ROOT / "reports/tableau/forecast.csv"
-    if reported_path.exists():
-        reported = load_report(reported_path)
-        reported = reported[
-            (reported["model_family"] == "ensemble") & (reported["target"] == ensemble_config["reported_target"])
-        ].sort_values("horizon")
-        if not reported.empty:
-            h1_reported = float(reported["forecast"].iloc[0])
-            h1_median = float(fan.sort_values("horizon")["median"].iloc[0])
-            h1_width = float(reported["interval_upper"].iloc[0] - reported["interval_lower"].iloc[0])
-            raw_width = float(
-                fan.sort_values("horizon")["p90"].iloc[0] - fan.sort_values("horizon")["p10"].iloc[0]
-            )
-            callout(
-                f"<b>The shaded band above is the raw, uncalibrated simulated interval</b> — "
-                f"not what <code>/forecast/all</code> actually serves. At horizon 1, this raw "
-                f"80% band is {raw_width:.2f} points wide; the calibrated interval actually "
-                f"served is {h1_width:.2f} points wide. <code>interval_calibration.py</code> "
-                f"found the raw simulated interval under-covers historically, so serving "
-                f"widens each side of it by a factor learned from the last 12 quarters of "
-                f"observed forecast errors. The reported point forecast ({h1_reported:.2f}%) and "
-                f"this simulation's median ({h1_median:.2f}%) agree exactly at horizon 1 — "
-                f"<code>ensemble.recenter_paths_to_median</code> guarantees that by construction."
-            )
-    with st.expander("Compare other model families' simulation fans"):
-        selected_label = st.selectbox("Simulation fan", options=list(REPORT_PATHS), key="other_fans")
-        selected_path = REPORT_PATHS[selected_label]
-        if selected_path.exists():
-            other_fan = _fan_frame(load_report(selected_path))
-            st.altair_chart(build_fan_chart(other_fan, theme_type), width="stretch")
-            caveat_level, caveat_text = caveat_for(selected_label)
-            (st.warning if caveat_level == "warning" else st.info)(caveat_text)
-        else:
-            st.error(f"Missing: `{_display_path(selected_path)}`")
-else:
-    st.error(
-        "Missing simulation reports. Run `python -m src.models.simulation_fan` to regenerate them."
-    )
-source_line("`src/models/ensemble.py`")
-
-st.subheader("4.4 SVAR — structural systems for both CPI measures")
-st.latex(
-    r"y_t = c + A_1y_{t-1} + A_2y_{t-2} + u_t,\quad u_t\sim(0,\Sigma) \qquad "
-    r"\Sigma = PP',\ \varepsilon_t = P^{-1}u_t \qquad \Theta_h = \Phi_h P"
-)
-st.markdown(
-    "Two five-variable VAR(2)-in-levels systems (System A → `cpi_yoy`, System B → "
-    "`trimmed_mean_cpi_yoy`), recursive Cholesky ordering commodity growth → "
-    "unemployment → CPI target → business inflation expectations → cash rate, 80% "
-    "block-bootstrap IRF bands. **Read every panel as illustrative, not causal** — both "
-    "systems still reject multivariate residual whiteness and normality."
-)
-irf_path = PROJECT_ROOT / "reports/tableau/svar_irf.csv"
-if irf_path.exists():
-    irf = load_report(irf_path)
-    irf_control_cols = st.columns([2, 1])
-    irf_system_label = irf_control_cols[0].radio(
-        "System", options=list(SVAR_SYSTEMS), horizontal=True, key="svar_system"
-    )
-    irf_system, irf_target = SVAR_SYSTEMS[irf_system_label]
-    irf = irf[(irf["system"] == irf_system) & (irf["response"] == irf_target)]
-    max_horizon = irf_control_cols[1].slider("Horizons shown", 1, 8, value=8, key="svar_horizon")
-    st.altair_chart(build_svar_irf_chart(irf, max_horizon, theme_type), width="stretch")
-    st.caption(
-        "Each panel is the response of the CPI measure to a one-standard-deviation structural "
-        "shock in that driver, not a one-unit change in the raw variable. Read the cash-rate "
-        "panel with care: CPI rising after a rate increase is the well-documented “price "
-        "puzzle” (Sims, 1992) that this model class produces, not a data or implementation error. "
-        "To try a shock size of your own, use the Scenario Engine in §4.5 below."
-    )
-else:
-    st.error(f"Missing: `{_display_path(irf_path)}`")
-source_line("`src/models/svar.py`, exported to `reports/tableau/svar_irf.csv`")
-
-st.subheader("4.4b SVAR shock attribution: when CPI surprised, and what was behind it")
-st.markdown(
-    "The same two systems, run backwards over history. For every fitted quarter the model "
-    "recovers the **shock to the CPI measure itself**, the part its own past and the four "
-    "macro drivers could not explain, and scores it against that system's own history. "
-    "Quarters beyond ±2 standard deviations are flagged. The decomposition then splits the "
-    "CPI level in any quarter you pick into a **zero-shock baseline** (where the fitted VAR "
-    "would have sat with every shock switched off) plus the accumulated effect of each shock."
-)
-st.warning(
-    "**Illustration, not attribution.** Both systems still reject residual whiteness and "
-    "normality, and the recursive Cholesky ordering is a documented judgment call. Saying a "
-    "named shock is the reason a particular quarter moved is a stronger claim than the "
-    "hypothetical impulse responses above, not a weaker one. A flagged quarter means the CPI "
-    "measure itself moved unusually; it does not say a macro driver caused it."
-)
-shock_events_path = PROJECT_ROOT / "reports/tableau/svar_shock_events.csv"
-decomposition_path = PROJECT_ROOT / "reports/tableau/svar_historical_decomposition.csv"
-shock_missing = [_display_path(p) for p in (shock_events_path, decomposition_path) if not p.exists()]
-if shock_missing:
-    st.error("Missing: " + ", ".join(f"`{path}`" for path in shock_missing))
-else:
-    shock_system_label = st.radio("System", options=list(SVAR_SYSTEMS), horizontal=True, key="svar_shock_system")
-    shock_system, _shock_target = SVAR_SYSTEMS[shock_system_label]
-    shock_events = system_shock_events(load_report(shock_events_path), shock_system)
-    shock_quarters = shock_events["quarter"].tolist()
-    shock_flagged = flagged_quarters(shock_events)
-    default_quarter = strongest_flagged_quarter(shock_events) or shock_quarters[-1]
-    shock_quarter = st.selectbox(
-        "Quarter to decompose",
-        options=shock_quarters,
-        index=shock_quarters.index(default_quarter),
-        format_func=lambda q: f"{q} (flagged)" if q in shock_flagged else q,
-        key=f"svar_shock_quarter_{shock_system}",
-    )
-    st.altair_chart(build_shock_z_chart(shock_events, shock_quarter, theme_type), width="stretch")
-    st.caption(
-        f"Flagged quarters ({len(shock_flagged)} of {len(shock_events)}): "
-        + (", ".join(shock_flagged) if shock_flagged else "none")
-        + ". The black line marks the quarter chosen above."
-        + (
-            " The 2020 COVID quarters themselves are not flagged: these are year-on-year series, "
-            "so the 2020 fall is spread over four quarters and only reads as unusual once the "
-            "low 2020 base drops out of the trailing window, about a year later."
-            if not any(q.startswith("2020") for q in shock_flagged)
-            else ""
-        )
-    )
-
-    shock_parts = decomposition_for_quarter(load_report(decomposition_path), shock_system, shock_quarter)
-    if shock_parts.empty:
-        st.info(f"No decomposition is available for {shock_quarter}.")
-    else:
-        totals = decomposition_totals(shock_parts)
-        metric_cols = st.columns(3)
-        metric_cols[0].metric(f"CPI YoY, {shock_quarter}", f"{totals['actual']:.2f}%")
-        metric_cols[1].metric("Zero-shock baseline", f"{totals['baseline']:.2f}%")
-        metric_cols[2].metric("All shocks combined", f"{totals['shocks']:+.2f} pp")
-        st.altair_chart(build_decomposition_chart(shock_parts, theme_type), width="stretch")
-        st.caption(
-            "Bars add up to the gap between the actual CPI level and the baseline. Each bar is the "
-            "accumulated effect of that shock's whole history up to the chosen quarter, not only "
-            "what happened in that quarter. The baseline is left out of the chart so its size "
-            "does not swamp the shocks, and the own-CPI-shock bar is kept in so the macro drivers "
-            "are not made to look like they explain more than they do."
-        )
-source_line(
-    "`src/models/svar.py` (`structural_shocks`, `historical_decomposition`), exported to "
-    "`reports/tableau/svar_shock_events.csv` and `svar_historical_decomposition.csv`"
-)
-
-st.subheader("4.5 Scenario Engine — SVAR shocks meet the Ensemble, live")
-st.latex(
-    r"\Delta_h = \text{shock}\times \mathrm{IRF}_h(\text{driver}\to\text{target}),\quad"
-    r"\text{shock} = \text{input} - \mathrm{SVAR}_{h=1} \qquad"
-    r"\hat y^{*}_{h,i} = \hat y_{ens,h,i} + \Delta_{h,i}"
-)
-st.markdown(
-    "Only the *surprise* over SVAR's own horizon-1 forecast counts, so the expected macro "
-    "path is never double-counted; draws are paired index-for-index, never randomly "
-    "matched. Served live from `POST /forecast/scenario` — pick a target, a shock "
-    "variable, and a shock size below."
-)
-scenario_control_cols = st.columns(4)
-scenario_target_label = scenario_control_cols[0].radio(
-    "Target", options=list(SCENARIO_TARGET_CONFIG), key="scenario_target"
-)
-scenario_shock_variable = scenario_control_cols[1].selectbox(
-    "Shock variable", options=SCENARIO_SHOCK_VARIABLES, format_func=lambda v: v.replace("_", " "), key="scenario_shock_variable"
-)
-scenario_shock_value = scenario_control_cols[2].number_input(
-    "Shock value", value=0.0, step=0.25, key="scenario_shock_value"
-)
-scenario_max_horizon = scenario_control_cols[3].slider(
-    "Max horizon (quarters)", min_value=1, max_value=MAX_FORECAST_HORIZON, value=MAX_FORECAST_HORIZON, key="scenario_max_horizon"
-)
-scenario_target = SCENARIO_TARGET_CONFIG[scenario_target_label]
-scenario_horizons = list(range(1, scenario_max_horizon + 1))
-
-if st.button("Run scenario", key="run_scenario"):
-    scenario_payload, scenario_error = api_request(
-        "POST",
-        api_base_url,
-        "/forecast/scenario",
-        json={
-            "target": scenario_target["request_value"],
-            "shock_variable": scenario_shock_variable,
-            "shock_value": scenario_shock_value,
-            "horizons": scenario_horizons,
-        },
-    )
-    baseline_payload, baseline_error = (None, None)
-    if scenario_payload is not None:
-        baseline_payload, baseline_error = api_request(
-            "POST",
-            api_base_url,
-            scenario_target["baseline_endpoint"],
-            json={"horizon": scenario_max_horizon},
-        )
-    st.session_state["scenario_result"] = {
-        "payload": scenario_payload,
-        "error": scenario_error,
-        "baseline_payload": baseline_payload,
-        "baseline_error": baseline_error,
-        "target": scenario_target,
-    }
-
-scenario_result = st.session_state.get("scenario_result")
-if scenario_result is None:
-    st.info("Run the scenario to fetch the live SVAR-adjusted forecast.")
-else:
-    scenario_payload = scenario_result["payload"]
-    scenario_error = scenario_result["error"]
-    baseline_payload = scenario_result["baseline_payload"]
-    scenario_target = scenario_result["target"]
-
-if scenario_result is not None and scenario_error:
-    st.info(scenario_error)
-elif scenario_result is not None and scenario_payload is not None:
-    scenario_metric_cols = st.columns(4)
-    scenario_metric_cols[0].metric("Forecast origin", scenario_payload["forecast_origin"])
-    scenario_metric_cols[1].metric("Target", scenario_payload["target"])
-    scenario_metric_cols[2].metric("Shock value", f"{scenario_payload['shock_value']:.3f}")
-    scenario_metric_cols[3].metric("Shock size", f"{scenario_payload['shock_size']:.3f}")
-
-    anchor_quarter_date = (
-        pd.PeriodIndex([scenario_payload["forecast_origin"]], freq="Q").to_timestamp(how="end").normalize()[0]
-    )
-    anchor_value = _anchor_value(curated, scenario_target["history_column"], scenario_payload["forecast_origin"])
-    scenario_frame = _scenario_frame(scenario_payload, anchor_quarter_date, anchor_value, "SVAR shock scenario")
-    baseline_ensemble = _baseline_ensemble(baseline_payload) if baseline_payload else None
-    if baseline_ensemble is not None:
-        baseline_anchor_quarter_date = (
-            pd.PeriodIndex([baseline_ensemble["forecast_origin"]], freq="Q").to_timestamp(how="end").normalize()[0]
-        )
-        baseline_anchor_value = _anchor_value(curated, scenario_target["history_column"], baseline_ensemble["forecast_origin"])
-        baseline_frame = _scenario_frame(baseline_ensemble, baseline_anchor_quarter_date, baseline_anchor_value, "Ensemble baseline")
-        scenario_chart_frame = pd.concat([baseline_frame, scenario_frame], ignore_index=True)
-    else:
-        scenario_chart_frame = scenario_frame
-        st.info("The Ensemble baseline is unavailable, so the chart shows only the SVAR shock scenario.")
-
-    st.caption(
-        "Read-only overlay: the dashed Ensemble baseline is SARIMA + Elastic Net only; the "
-        "solid line is the scenario endpoint's SVAR-adjusted Ensemble draw."
-    )
-    st.altair_chart(build_scenario_chart(scenario_chart_frame, theme_type, scenario_target["axis_title"]), width="stretch")
-    st.warning(scenario_payload["caveat"])
-    with st.expander("Scenario forecast table"):
-        scenario_table = pd.DataFrame(
-            {
-                "horizon": scenario_payload["horizons"],
-                "quarter": scenario_payload["quarters"],
-                "forecast": scenario_payload["forecast"],
-                f"lower {INTERVAL_LABEL}": scenario_payload["interval_lower"],
-                f"upper {INTERVAL_LABEL}": scenario_payload["interval_upper"],
-            }
-        ).round(4)
-        st.dataframe(scenario_table, width="stretch")
-source_line("`src/models/scenario.py`, served at `POST /forecast/scenario`")
-
-st.subheader("4.6 RBA Policy Classifier — seven readings of one decision")
-st.latex(
-    r"\text{action} = \begin{cases}\text{cut} & \hat y < 2.0 \\ \text{hike} & \hat y > 3.0 \\"
-    r"\text{hold} & \text{otherwise}\end{cases} \qquad "
-    r"i^{*} = r^{*} + \pi + \varphi_\pi(\pi-2.5) + \varphi_u\,\Delta u_{t-1} \qquad "
-    r"P(Y\le j) = F(\theta_j - x'\beta)"
-)
-st.markdown(
-    "Left to right: the transparent **threshold** baseline (reportable, macro-F1 0.775); "
-    "the **Taylor rule** (fixed and estimated variants); **ordered logit/probit** "
-    "($F$ = logistic or $\\Phi$). Frank–Hall XGBoost decomposes the same ordinal target "
-    "into $K{-}1$ cumulative binary classifiers; majority vote takes the mode of the "
-    "first four, tie-broken by threshold's own call. The threshold rule takes the "
-    "**headline** CPI forecast because the 2–3% band is a target for CPI inflation; "
-    "trimmed mean enters ordered logit/probit and XGBoost as a feature. Run through the "
-    "same rule instead, the trimmed-mean forecast scores lower on the same 41 test "
-    "quarters (macro-F1 0.696 vs 0.775), mainly by over-calling cuts — a sensitivity "
-    "check on that sample, not a model-selection step."
-)
-if st.button("Refresh RBA action", key="refresh_rba_action"):
-    rba_payload, rba_error = api_request("GET", api_base_url, "/rba-action")
-    st.session_state["rba_action_result"] = {"payload": rba_payload, "error": rba_error}
-
-rba_result = st.session_state.get("rba_action_result")
-if rba_result and rba_result["error"]:
-    st.info(rba_result["error"])
-
-if rba_result and rba_result["payload"] is not None:
-    rba_payload = rba_result["payload"]
-    rba_headline_cols = st.columns(5)
-    rba_headline_cols[0].metric("Threshold action", rba_payload["reportable_action"])
-    rba_headline_cols[1].metric("Target quarter", rba_payload["target_quarter"])
-    rba_headline_cols[2].metric("Forecast origin", rba_payload["forecast_origin"])
-    rba_headline_cols[3].metric("Headline forecast", f"{rba_payload['headline_forecast']:.2f}%")
-    rba_headline_cols[4].metric("Trimmed mean forecast", f"{rba_payload['trimmed_mean_forecast']:.2f}%")
-    st.warning(rba_payload["caveat"])
-
-    rba_models = pd.DataFrame(rba_payload.get("models", []))
-    if rba_models.empty:
-        st.warning("No RBA policy-action model predictions were returned by `/rba-action`.")
-    else:
-        reportable_model = rba_payload.get("reportable_model", "threshold")
-        threshold_rows = rba_models.loc[rba_models["model"].eq(reportable_model)].copy()
-        if threshold_rows.empty:
-            threshold_rows = rba_models.loc[rba_models["reportable"].astype(bool)].copy()
-        if threshold_rows.empty:
-            st.error("The `/rba-action` response did not include the threshold reportable row.")
-        else:
-            threshold = threshold_rows.iloc[0]
-            probabilities = _threshold_probability_frame(threshold)
-            st.success(f"Winning class: {str(threshold['predicted_action']).upper()}")
-            st.altair_chart(build_threshold_probability_bar(probabilities), width="stretch")
-            probability_cols = st.columns(3)
-            for index, row in probabilities.iterrows():
-                probability_cols[index].metric(row["label"], f"{row['probability']:.1%}")
-
-            comparison = rba_models.loc[rba_models["model"].ne(reportable_model)].copy()
-            comparison["model_order"] = comparison["model"].apply(
-                lambda value: SECONDARY_MODELS.index(value) if value in SECONDARY_MODELS else len(SECONDARY_MODELS)
-            )
-            comparison = comparison.sort_values(["model_order", "model"])
-            secondary_table = comparison[
-                ["model", "predicted_action", "confidence", "p_cut", "p_hold", "p_hike", "reportable", "majority_vote_tie_break"]
-            ].copy()
-            for column in ["confidence", "p_cut", "p_hold", "p_hike"]:
-                secondary_table[column] = secondary_table[column].astype(float).round(4)
-            st.markdown("**Secondary classifier comparison**")
-            st.dataframe(secondary_table, width="stretch", hide_index=True)
-else:
-    rba_path = PROJECT_ROOT / "reports/tableau/rba_action.csv"
-    if rba_path.exists():
-        rba_static = load_report(rba_path)
-        origin = str(rba_static["forecast_origin"].iloc[0])
-        target_q = str(rba_static["target_quarter"].iloc[0])
-        call = str(rba_static["reportable_action"].iloc[0])
-        st.metric(f"Reportable call for {target_q} (origin {origin})", call.upper())
-        st.altair_chart(build_static_rba_probability_chart(rba_static, theme_type), width="stretch")
-    else:
-        st.error(f"Missing: `{_display_path(rba_path)}`")
-source_line("`src/models/rba_classifier.py`, served at `GET /rba-action`")
-
-st.subheader("4.7 Credit Stress & Illustrative ECL")
-st.latex(
-    r"PD_{stressed} = \operatorname{clip}\!\big(PD_{base} + s\cdot\Delta u_{cum}/100,\ PD_{base},\ 1.0\big)"
-    r"\qquad ECL = \dfrac{PD_{stressed}\times LGD\times EAD}{(1+r)^{0.5}} \qquad "
-    r"ECL_{weighted} = \!\!\sum_{scenario}\!\! w_{scenario}\,ECL_{scenario}"
-)
-st.markdown(
-    "NAB's own disclosed FY2025 Pillar 3 PD/LGD/EAD, stressed with generic RBA "
-    "sensitivity coefficients, mid-year discounted at RBA's published lending rates, and "
-    "combined with NAB's own 55/42.5/2.5 base/downside/upside scenario weights. **This is "
-    "12-month, Stage-1-only and is not a lower bound on NAB's real provision.**"
-)
-credit_path = PROJECT_ROOT / "reports/tableau/credit_stress.csv"
-if credit_path.exists():
-    credit = load_report(credit_path)
-    scenario = st.radio("Scenario", options=["upside", "base", "downside"], index=1, horizontal=True, key="credit_scenario")
-    st.altair_chart(build_credit_stress_chart(credit, scenario, theme_type), width="stretch")
-    weighted = credit.drop_duplicates("segment")[["segment", "ecl_aud_m_12m_probability_weighted"]]
-    weighted.columns = ["Segment", "Probability-weighted 12m ECL ($AUDm)"]
-    st.dataframe(weighted, width="stretch", hide_index=True)
-else:
-    st.error(f"Missing: `{_display_path(credit_path)}`")
-source_line("`src/models/credit_stress.py`, served at `GET /credit-risk/stress-test`")
-
-# --- 5. Evaluation -------------------------------------------------
-st.header("5. Evaluation")
-st.markdown(
-    "Walk-forward comparison on the shared horizon-1-to-8 grid, against seasonal-naive "
-    "and the RBA's own published forecasts."
-)
-comparison_path = PROJECT_ROOT / "reports/model_comparison_all.csv"
-coverage_path = PROJECT_ROOT / "reports/model_interval_coverage.csv"
-eval_cols = st.columns(2)
-if comparison_path.exists():
-    with eval_cols[0]:
-        st.altair_chart(build_rmse_bar_chart(load_report(comparison_path), theme_type), width="stretch")
-        st.caption("Walk-forward accuracy — headline CPI YoY")
-if coverage_path.exists():
-    with eval_cols[1]:
-        st.altair_chart(build_coverage_bar_chart(load_report(coverage_path), theme_type), width="stretch")
-        st.caption("80% interval coverage, overall — all three families sit below nominal")
-st.markdown(
-    "Every family sits below its 80% nominal interval coverage — a known, tracked gap, "
-    "not something papered over here. SARIMA's prediction intervals are closest to "
-    "nominal; the Ensemble wins on point-forecast RMSE."
-)
-
-st.subheader("5.1 Diagnostics by horizon")
-st.caption(
-    "Reads `reports/model_comparison*.csv`, `reports/model_interval_coverage*.csv`, and "
-    "`reports/backtest_predictions*.csv`, generated by the walk-forward evaluation pipeline."
-)
-diagnostics_target_label = st.radio("Target", options=list(DIAGNOSTICS_TARGET_CONFIG), key="diagnostics_target")
-diagnostics_target = DIAGNOSTICS_TARGET_CONFIG[diagnostics_target_label]
-diagnostics_paths = {
-    "model comparison": diagnostics_target["comparison"],
-    "interval coverage": diagnostics_target["coverage"],
-    "backtest predictions": diagnostics_target["backtests"],
-}
-diagnostics_missing = [_display_path(path) for path in diagnostics_paths.values() if not path.exists()]
-if diagnostics_missing:
-    st.error(
-        "Missing diagnostic report artifacts: " + ", ".join(f"`{path}`" for path in diagnostics_missing)
-        + ". Regenerate the model comparison, interval coverage, and walk-forward reports first."
-    )
-else:
-    diag_comparison = load_report(diagnostics_target["comparison"])
-    diag_coverage = load_report(diagnostics_target["coverage"])
-    diag_backtests = load_report(diagnostics_target["backtests"])
-    st.caption(diagnostics_target["caption"])
-
-    st.markdown("**Accuracy by horizon**")
-    accuracy_rows = _horizon_rows(diag_comparison)
-    accuracy_models = sorted(accuracy_rows["model"].dropna().unique())
-    selected_accuracy_models = st.multiselect(
-        "Accuracy models", options=accuracy_models, default=accuracy_models, key="diagnostics_accuracy_models"
-    )
-    accuracy_view = accuracy_rows.loc[accuracy_rows["model"].isin(selected_accuracy_models)].copy()
-    if accuracy_view.empty:
-        st.info("Select at least one model to show the accuracy chart.")
-    else:
-        st.altair_chart(build_accuracy_chart(accuracy_view, theme_type), width="stretch")
-    overall = diag_comparison.loc[
-        diag_comparison["horizon"].astype(str).eq("overall") & diag_comparison["model"].isin(selected_accuracy_models)
-    ].copy()
-    with st.expander("Overall accuracy table"):
-        st.dataframe(overall[["model", "n", "rmse", "mae", "best_model", "evaluation_status"]].round(4), width="stretch", hide_index=True)
-
-    st.markdown("**Calibrated simulation interval coverage**")
-    st.caption(
-        "Empirical coverage vs. the calibrated simulation interval (80% nominal target); "
-        "flagged points mark rows the report's binomial test labels significantly miscalibrated."
-    )
-    coverage_rows = _horizon_rows(diag_coverage)
-    coverage_models = sorted(coverage_rows["model"].dropna().unique())
-    selected_coverage_models = st.multiselect(
-        "Coverage models", options=coverage_models, default=coverage_models, key="diagnostics_coverage_models"
-    )
-    coverage_view = coverage_rows.loc[coverage_rows["model"].isin(selected_coverage_models)].copy()
-    if coverage_view.empty:
-        st.info("Select at least one model to show the coverage chart.")
-    else:
-        st.altair_chart(build_coverage_chart(coverage_view, theme_type), width="stretch")
-    if coverage_models:
-        detail_model = st.selectbox("Coverage detail model", options=coverage_models, key="diagnostics_coverage_detail")
-        detail = coverage_rows.loc[coverage_rows["model"].eq(detail_model)].copy()
-        detail_columns = [
-            c for c in [
-                "horizon", "n", "nominal_coverage", "empirical_coverage", "coverage_ci_lower",
-                "coverage_ci_upper", "significantly_miscalibrated", "mean_interval_width",
-            ] if c in detail.columns
+        live_payloads_by_target = live_result["payloads_by_target"]
+        if live_result["horizon"] != live_horizon:
+            st.info("Loaded forecasts use the previous horizon. Reload to refresh this view.")
+        live_family_maps = {label: _family_map(payload) for label, payload in live_payloads_by_target.items()}
+        common_families = set.intersection(*(set(fm) for fm in live_family_maps.values()))
+        live_unavailable = [
+            {"target": label, **item} for label, payload in live_payloads_by_target.items() for item in payload.get("unavailable", [])
         ]
-        st.dataframe(detail[detail_columns].round(4), width="stretch", hide_index=True)
+        if not common_families:
+            st.warning("No model family is currently servable for both headline and trimmed-mean targets.")
+        else:
+            family_names = _ordered_families(common_families)
+            live_selected_family = st.selectbox(
+                "Model family", options=family_names, format_func=_model_label, index=0, key="live_forecast_family"
+            )
+            live_target_config = FORECAST_TARGET_CONFIG[live_target_label]
+            live_family_forecast = live_family_maps[live_target_label][live_selected_family]
+            origin_cols = st.columns(4)
+            origin_cols[0].metric("Forecast origin", live_family_forecast["forecast_origin"])
+            origin_cols[1].metric("Horizon served", live_family_forecast["horizon"])
+            origin_cols[2].metric(f"Next quarter {live_target_label.lower()}", f"{live_family_forecast['forecast'][0]:.2f}%")
+            origin_cols[3].metric(
+                f"Next quarter {INTERVAL_LABEL}",
+                f"[{live_family_forecast['interval_lower'][0]:.2f}, {live_family_forecast['interval_upper'][0]:.2f}]",
+            )
+            if any(live_family_forecast.get("significantly_miscalibrated") or []):
+                st.warning(
+                    f"`{_model_label(live_selected_family)}` has at least one significantly miscalibrated "
+                    f"horizon for `{live_target_label}` per `{live_target_config['coverage_report']}`. Treat "
+                    "the shaded band as an indicative calibrated simulation interval, not a validated "
+                    "probability guarantee."
+                )
+            live_history = _history_frame(curated)
+            live_forecast_frame = _combined_forecast_frame(curated, live_selected_family, live_payloads_by_target, live_family_maps)
+            st.markdown(f"**{_model_label(live_selected_family)}: headline and trimmed-mean CPI**")
+            st.caption(
+                "The RBA target band is fixed at 2.0-3.0% with a dashed 2.5% midpoint. Forecast "
+                f"uncertainty is shown as a shaded {INTERVAL_LABEL}."
+            )
+            st.altair_chart(build_forecast_chart(live_history, live_forecast_frame, theme_type), width="stretch")
+            st.caption(
+                "Ensemble combines SARIMA and Elastic Net forecasts only. SVAR is kept separate as "
+                "structural scenario evidence and is not blended into this combiner."
+            )
+            with st.expander(f"{live_target_label} forecast table"):
+                live_table = pd.DataFrame(
+                    {
+                        "quarter": live_family_forecast["quarters"],
+                        "forecast": live_family_forecast["forecast"],
+                        f"lower {INTERVAL_LABEL}": live_family_forecast["interval_lower"],
+                        f"upper {INTERVAL_LABEL}": live_family_forecast["interval_upper"],
+                    }
+                ).round(4)
+                st.dataframe(live_table, width="stretch")
+        if live_unavailable:
+            with st.expander(f"Unavailable families ({len(live_unavailable)})"):
+                for item in live_unavailable:
+                    st.write(f"**{item['target']} / {item['model_family']}**: {item['reason']}")
 
-    st.markdown("**Forecast vs. actual (walk-forward backtests)**")
+with ensemble_tab:
     st.caption(
-        "Walk-forward backtest predictions — distinct from §4.3's unconditional "
-        "full-history simulation fans."
+        "Pick a target, then drag the slider or press Play to reveal a sample of the Monte-Carlo "
+        "draws behind the Ensemble forecast. Book: section 4.3."
     )
-    scatter_rows = diag_backtests.dropna(subset=["actual", "forecast"]).copy()
-    scatter_models = sorted(scatter_rows["model"].dropna().unique())
-    selected_scatter_models = st.multiselect(
-        "Forecast-vs-actual models", options=scatter_models, default=scatter_models, key="diagnostics_scatter_models"
+    ensemble_target = st.radio(
+        "Target", options=list(ENSEMBLE_FLAGSHIP_CONFIG), horizontal=True, key="ensemble_target"
     )
-    scatter_view = scatter_rows.loc[scatter_rows["model"].isin(selected_scatter_models)].copy()
-    if scatter_view.empty:
-        st.info("Select at least one model to show the forecast-vs-actual scatter.")
-    else:
-        st.altair_chart(build_scatter_chart(scatter_view, theme_type), width="stretch")
-    with st.expander("Backtest prediction sample"):
-        st.dataframe(scatter_view.head(500).round(4), width="stretch", hide_index=True)
+    ensemble_config = ENSEMBLE_FLAGSHIP_CONFIG[ensemble_target]
+    sample_path = ensemble_config["sample_path"]
+    fan_path = ensemble_config["fan_path"]
+    if sample_path.exists() and fan_path.exists():
+        sample = load_report(sample_path)
+        fan = load_report(fan_path)
+        n_draws = int(sample["draw_id"].max()) + 1
+        forecast_origin = str(fan["forecast_origin"].iloc[0])
 
-render_historical_backtest_panel(
-    rba_classifier_report_path=RBA_CLASSIFIER_REPORT_PATH,
-    missing_report_label="reports/rba_classifier_evaluation.md",
-    coverage_reports=tuple((label, cfg["coverage"]) for label, cfg in DIAGNOSTICS_TARGET_CONFIG.items()),
-    coverage_columns=(
-        "target", "model", "n", "nominal_coverage", "empirical_coverage",
-        "significantly_miscalibrated", "mean_interval_width",
-    ),
-    coverage_metrics=(
-        {"label": "Headline coverage", "target": "Headline", "model": "ensemble", "column": "empirical_coverage", "format": "percent"},
-        {"label": "Trimmed mean coverage", "target": "Trimmed mean", "model": "ensemble", "column": "empirical_coverage", "format": "percent"},
-    ),
-    static_metrics=(("Nominal target", "80%"),),
-    caption=(
-        "The classifier report does not publish a Brier-style score, so this page does "
-        "not recompute one. Coverage rates are from the committed calibrated simulation "
-        "interval reports with an 80% nominal target."
-    ),
-)
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Forecast origin", forecast_origin)
+        metric_cols[1].metric("Draws shown", f"{n_draws} of 1,000")
+        metric_cols[2].metric("Horizons", f"{int(fan['horizon'].min())}–{int(fan['horizon'].max())}")
 
-st.subheader("5.2 Drift monitor: is the latest miss unusual?")
-st.latex(
-    r"z=\dfrac{e-\bar e_{m,h}}{s_{m,h}},\qquad e=\text{actual}-\text{forecast}"
-    r"\qquad \bar e_{m,h},\,s_{m,h}=\text{model }m\text{'s own walk-forward error mean and s.d. at horizon }h"
-)
-st.markdown(
-    "Once a forecast's quarter has a real outcome, this checks the miss against how the same "
-    "model erred in its own walk-forward history, then checks whether any macro input is "
-    "itself sitting at an unusual level. It only compares reports that already exist and "
-    "never refits a model."
-)
-drift_paths = {
-    "error check": PROJECT_ROOT / "reports/tableau/drift_error_check.csv",
-    "error history": PROJECT_ROOT / "reports/tableau/drift_error_history.csv",
-    "covariate check": PROJECT_ROOT / "reports/tableau/drift_covariate_check.csv",
-}
-drift_missing = [_display_path(path) for path in drift_paths.values() if not path.exists()]
-if drift_missing:
-    st.error("Missing: " + ", ".join(f"`{path}`" for path in drift_missing))
-else:
-    drift_errors = load_report(drift_paths["error check"])
-    drift_history = load_report(drift_paths["error history"])
-    drift_covariates = load_report(drift_paths["covariate check"])
-    drift = drift_summary(drift_errors, drift_covariates)
-
-    drift_kpis = st.columns(4)
-    drift_kpis[0].metric("Forecasts graded", f"{drift['graded_forecasts']}", help=", ".join(drift["graded_quarters"]))
-    drift_kpis[1].metric(f"Unusual misses (|z| > {UNUSUAL_Z:.0f})", f"{drift['unusual_misses']} of {drift['graded_forecasts']}")
-    drift_kpis[2].metric("Came in below the outcome", f"{drift['undershot']} of {drift['graded_forecasts']}")
-    drift_kpis[3].metric(
-        "Inputs at unusual levels",
-        f"{len(drift['unusual_inputs'])} of {len(drift_covariates)}",
-        help=", ".join(drift["unusual_inputs"]) or None,
-    )
-
-    reading = (
-        f"No single miss is unusual for the model that made it (largest |z| is {drift['largest_abs_z']:.2f}). "
-        if drift["unusual_misses"] == 0
-        else f"{drift['unusual_misses']} miss(es) fall beyond ±{UNUSUAL_Z:.0f} standard deviations of that model's own norm. "
-    )
-    lean = drift["undershot"] / drift["graded_forecasts"] if drift["graded_forecasts"] else 0.5
-    if lean >= 0.75 or lean <= 0.25:
-        reading += (
-            f"Direction is the thing to watch: {drift['undershot']} of {drift['graded_forecasts']} forecasts landed "
-            "on the same side of the outcome, and small misses that all lean one way are exactly what a "
-            "size-only check under-reads. "
-        )
-    if drift["unusual_inputs"]:
-        reading += (
-            "Unusually high or low inputs now: " + ", ".join(drift["unusual_inputs"])
-            + ". The served forecasts were made before those readings arrived, so they could not have used them."
-        )
-    st.markdown(reading)
-
-    st.markdown("**How unusual was each miss?**")
-    st.caption(
-        "Each dot is one graded forecast. Inside the grey band (±1) is a typical error for that model; "
-        "outside the dashed lines (±2) would be unusual."
-    )
-    z_bound = z_axis_bound(drift_errors["z_score"])
-    for target_col, target_name in zip(st.columns(2), sorted(drift_errors["target"].unique())):
-        with target_col:
-            st.markdown(f"*{target_name}*")
-            st.altair_chart(
-                build_drift_z_chart(drift_errors.loc[drift_errors["target"] == target_name], z_bound, theme_type),
+        slider_col, play_col = st.columns([5, 1])
+        with slider_col:
+            n_reveal = st.slider("Paths revealed", 1, n_draws, value=1, key=f"ensemble_reveal_{ensemble_target}")
+        chart_placeholder = st.empty()
+        with play_col:
+            st.write("")
+            play = st.button("▶ Play", key=f"ensemble_play_{ensemble_target}")
+        if play:
+            for step in range(1, n_draws + 1, max(1, n_draws // 60)):
+                chart_placeholder.altair_chart(
+                    build_ensemble_path_chart(sample, fan, step, theme_type, ensemble_config["value_label"]),
+                    width="stretch",
+                )
+                time.sleep(0.03)
+            chart_placeholder.altair_chart(
+                build_ensemble_path_chart(sample, fan, n_draws, theme_type, ensemble_config["value_label"]),
+                width="stretch",
+            )
+        else:
+            chart_placeholder.altair_chart(
+                build_ensemble_path_chart(sample, fan, n_reveal, theme_type, ensemble_config["value_label"]),
                 width="stretch",
             )
 
-    st.markdown("**Has a miss this size happened before?**")
-    drift_history_target = st.radio(
-        "Target", options=sorted(drift_history["target"].unique()), horizontal=True, key="drift_history_target"
-    )
-    st.altair_chart(
-        build_drift_history_chart(drift_history.loc[drift_history["target"] == drift_history_target], theme_type),
-        width="stretch",
-    )
-    st.caption(
-        "One-step-ahead errors from the walk-forward backtest, with the newly graded quarter marked by "
-        "diamonds. Positive means the forecast came in below the outcome."
-    )
-
-    st.markdown("**Are any inputs at unusual levels?**")
-    st.altair_chart(build_covariate_z_chart(drift_covariates, theme_type), width="stretch")
-    st.caption(
-        "Every input is standardised against its own history, so the bars are comparable. The latest "
-        "quarter differs by input (see the tooltip), because the sources publish on different schedules."
-    )
-
-    st.info(
-        "**A diagnostic monitor, not a formal drift test.** It currently grades "
-        f"{drift['graded_forecasts']} forecasts across {len(drift['graded_quarters'])} quarter(s) "
-        f"({', '.join(drift['graded_quarters'])}), which is too few for any single reading to justify "
-        "retraining on its own."
-    )
-source_line("`src/models/drift_monitor.py`, exported to `reports/tableau/drift_*.csv`")
-
-# --- 6. Deployment -------------------------------------------------
-st.header("6. Deployment")
-st.markdown(
-    """
-    - **FastAPI on Cloud Run** — redeployed and verified live 2026-08-29, serving
-      `/forecast/all`, `/forecast/trimmed-mean/all`, and `/forecast/scenario` from baked
-      local MLflow runs. Pushes do not auto-redeploy; manual rebuild required after
-      serving changes.
-    - **`GET /rba-action`** and **`GET /credit-risk/stress-test`** — implemented locally
-      in `api/main.py` after that verified image; not yet part of the deployed Cloud Run
-      image.
-    - **Streamlit** — this single report calls FastAPI live in three sections above and
-      reads local reports everywhere else; nothing fits models in-process.
-    - **No MLflow champion/registry promotion** — `/forecast/all` serves every family's
-      latest finished run directly.
-    """
-)
-
-st.subheader("6.1 Live forecast tool")
-st.caption(
-    "Served live from `POST /forecast/all` and `POST /forecast/trimmed-mean/all` on the "
-    "FastAPI service configured in the sidebar."
-)
-latest_inputs = _latest_macro_inputs(curated)
-st.markdown(f"**Raw macro inputs** — latest curated quarter: `{latest_inputs['quarter']}`.")
-input_cols = st.columns(3)
-for index, (column, label) in enumerate(MACRO_INPUT_COLUMNS.items()):
-    value = latest_inputs.get(column)
-    display = "n/a" if pd.isna(value) else f"{float(value):.2f}"
-    input_cols[index % 3].metric(label, display)
-
-live_control_cols = st.columns(2)
-with live_control_cols[0]:
-    live_target_label = st.radio("Target detail", options=list(FORECAST_TARGET_CONFIG), horizontal=True, key="live_forecast_target")
-with live_control_cols[1]:
-    live_horizon = st.slider("Forecast horizon (quarters)", min_value=1, max_value=MAX_FORECAST_HORIZON, value=MAX_FORECAST_HORIZON, key="live_forecast_horizon")
-
-if st.button("Load live forecasts", key="load_live_forecasts"):
-    live_payloads_by_target: dict[str, dict] = {}
-    live_fetch_error = None
-    for label, config in FORECAST_TARGET_CONFIG.items():
-        payload, error = api_request("POST", api_base_url, config["endpoint"], json={"horizon": live_horizon})
-        if error:
-            live_fetch_error = error
-            break
-        live_payloads_by_target[label] = payload
-    st.session_state["live_forecast_result"] = {
-        "payloads_by_target": live_payloads_by_target,
-        "error": live_fetch_error,
-        "horizon": live_horizon,
-    }
-
-live_result = st.session_state.get("live_forecast_result")
-if live_result is None:
-    st.info("Load live forecasts to query the configured FastAPI service.")
-elif live_result["error"]:
-    st.info(live_result["error"])
-else:
-    live_payloads_by_target = live_result["payloads_by_target"]
-    if live_result["horizon"] != live_horizon:
-        st.info("Loaded forecasts use the previous horizon. Reload to refresh this view.")
-    live_family_maps = {label: _family_map(payload) for label, payload in live_payloads_by_target.items()}
-    common_families = set.intersection(*(set(fm) for fm in live_family_maps.values()))
-    live_unavailable = [
-        {"target": label, **item} for label, payload in live_payloads_by_target.items() for item in payload.get("unavailable", [])
-    ]
-    if not common_families:
-        st.warning("No model family is currently servable for both headline and trimmed-mean targets.")
+        reported_path = PROJECT_ROOT / "reports/tableau/forecast.csv"
+        if reported_path.exists():
+            reported = load_report(reported_path)
+            reported = reported[
+                (reported["model_family"] == "ensemble") & (reported["target"] == ensemble_config["reported_target"])
+            ].sort_values("horizon")
+            if not reported.empty:
+                h1_reported = float(reported["forecast"].iloc[0])
+                h1_median = float(fan.sort_values("horizon")["median"].iloc[0])
+                h1_width = float(reported["interval_upper"].iloc[0] - reported["interval_lower"].iloc[0])
+                raw_width = float(
+                    fan.sort_values("horizon")["p90"].iloc[0] - fan.sort_values("horizon")["p10"].iloc[0]
+                )
+                st.info(
+                    "**The shaded band is the raw simulated interval, not what the Forecast tab serves.** "
+                    f"At horizon 1 the raw 80% band is {raw_width:.2f} points wide; the calibrated interval "
+                    f"that is served is {h1_width:.2f} points wide, because the raw interval historically "
+                    f"under-covers. The reported point forecast ({h1_reported:.2f}%) and this simulation's "
+                    f"median ({h1_median:.2f}%) agree at horizon 1 by construction."
+                )
     else:
-        family_names = _ordered_families(common_families)
-        live_selected_family = st.selectbox(
-            "Model family", options=family_names, format_func=_model_label, index=0, key="live_forecast_family"
+        st.error(
+            "Missing simulation reports. Run `python -m src.models.simulation_fan` to regenerate them."
         )
-        live_target_config = FORECAST_TARGET_CONFIG[live_target_label]
-        live_family_forecast = live_family_maps[live_target_label][live_selected_family]
-        origin_cols = st.columns(4)
-        origin_cols[0].metric("Forecast origin", live_family_forecast["forecast_origin"])
-        origin_cols[1].metric("Horizon served", live_family_forecast["horizon"])
-        origin_cols[2].metric(f"Next quarter {live_target_label.lower()}", f"{live_family_forecast['forecast'][0]:.2f}%")
-        origin_cols[3].metric(
-            f"Next quarter {INTERVAL_LABEL}",
-            f"[{live_family_forecast['interval_lower'][0]:.2f}, {live_family_forecast['interval_upper'][0]:.2f}]",
-        )
-        if any(live_family_forecast.get("significantly_miscalibrated") or []):
-            st.warning(
-                f"`{_model_label(live_selected_family)}` has at least one significantly miscalibrated "
-                f"horizon for `{live_target_label}` per `{live_target_config['coverage_report']}`. Treat "
-                "the shaded band as an indicative calibrated simulation interval, not a validated "
-                "probability guarantee."
+
+with scenario_tab:
+    st.caption(
+        "Pick a shock variable and size, then run it against the live API. Only the surprise "
+        "relative to the SVAR's own forecast counts. Book: section 4.5."
+    )
+    scenario_control_cols = st.columns(4)
+    scenario_target_label = scenario_control_cols[0].radio(
+        "Target", options=list(SCENARIO_TARGET_CONFIG), key="scenario_target"
+    )
+    scenario_shock_variable = scenario_control_cols[1].selectbox(
+        "Shock variable", options=SCENARIO_SHOCK_VARIABLES, format_func=lambda v: v.replace("_", " "), key="scenario_shock_variable"
+    )
+    scenario_shock_value = scenario_control_cols[2].number_input(
+        "Shock value", value=0.0, step=0.25, key="scenario_shock_value"
+    )
+    scenario_max_horizon = scenario_control_cols[3].slider(
+        "Max horizon (quarters)", min_value=1, max_value=MAX_FORECAST_HORIZON, value=MAX_FORECAST_HORIZON, key="scenario_max_horizon"
+    )
+    scenario_target = SCENARIO_TARGET_CONFIG[scenario_target_label]
+    scenario_horizons = list(range(1, scenario_max_horizon + 1))
+
+    if st.button("Run scenario", key="run_scenario"):
+        with st.spinner("Running the scenario. This can take up to a minute..."):
+            scenario_payload, scenario_error = api_request(
+                "POST",
+                api_base_url,
+                "/forecast/scenario",
+                json={
+                    "target": scenario_target["request_value"],
+                    "shock_variable": scenario_shock_variable,
+                    "shock_value": scenario_shock_value,
+                    "horizons": scenario_horizons,
+                },
+                timeout=SLOW_API_TIMEOUT_SECONDS,
             )
-        live_history = _history_frame(curated)
-        live_forecast_frame = _combined_forecast_frame(curated, live_selected_family, live_payloads_by_target, live_family_maps)
-        st.markdown(f"**{_model_label(live_selected_family)}: headline and trimmed-mean CPI**")
-        st.caption(
-            "The RBA target band is fixed at 2.0-3.0% with a dashed 2.5% midpoint. Forecast "
-            f"uncertainty is shown as a shaded {INTERVAL_LABEL}."
+            baseline_payload, baseline_error = (None, None)
+            if scenario_payload is not None:
+                baseline_payload, baseline_error = api_request(
+                    "POST",
+                    api_base_url,
+                    scenario_target["baseline_endpoint"],
+                    json={"horizon": scenario_max_horizon},
+                )
+        st.session_state["scenario_result"] = {
+            "payload": scenario_payload,
+            "error": scenario_error,
+            "baseline_payload": baseline_payload,
+            "baseline_error": baseline_error,
+            "target": scenario_target,
+        }
+
+    scenario_result = st.session_state.get("scenario_result")
+    if scenario_result is None:
+        st.info("Run the scenario to fetch the live SVAR-adjusted forecast.")
+    else:
+        scenario_payload = scenario_result["payload"]
+        scenario_error = scenario_result["error"]
+        baseline_payload = scenario_result["baseline_payload"]
+        scenario_target = scenario_result["target"]
+
+    if scenario_result is not None and scenario_error:
+        st.info(scenario_error)
+    elif scenario_result is not None and scenario_payload is not None:
+        scenario_metric_cols = st.columns(4)
+        scenario_metric_cols[0].metric("Forecast origin", scenario_payload["forecast_origin"])
+        scenario_metric_cols[1].metric("Target", scenario_payload["target"])
+        scenario_metric_cols[2].metric("Shock value", f"{scenario_payload['shock_value']:.3f}")
+        scenario_metric_cols[3].metric("Shock size", f"{scenario_payload['shock_size']:.3f}")
+
+        anchor_quarter_date = (
+            pd.PeriodIndex([scenario_payload["forecast_origin"]], freq="Q").to_timestamp(how="end").normalize()[0]
         )
-        st.altair_chart(build_forecast_chart(live_history, live_forecast_frame, theme_type), width="stretch")
+        anchor_value = _anchor_value(curated, scenario_target["history_column"], scenario_payload["forecast_origin"])
+        scenario_frame = _scenario_frame(scenario_payload, anchor_quarter_date, anchor_value, "SVAR shock scenario")
+        baseline_ensemble = _baseline_ensemble(baseline_payload) if baseline_payload else None
+        if baseline_ensemble is not None:
+            baseline_anchor_quarter_date = (
+                pd.PeriodIndex([baseline_ensemble["forecast_origin"]], freq="Q").to_timestamp(how="end").normalize()[0]
+            )
+            baseline_anchor_value = _anchor_value(curated, scenario_target["history_column"], baseline_ensemble["forecast_origin"])
+            baseline_frame = _scenario_frame(baseline_ensemble, baseline_anchor_quarter_date, baseline_anchor_value, "Ensemble baseline")
+            scenario_chart_frame = pd.concat([baseline_frame, scenario_frame], ignore_index=True)
+        else:
+            scenario_chart_frame = scenario_frame
+            st.info("The Ensemble baseline is unavailable, so the chart shows only the SVAR shock scenario.")
+
         st.caption(
-            "Ensemble combines SARIMA and Elastic Net forecasts only. SVAR is kept separate as "
-            "structural scenario evidence and is not blended into this combiner."
+            "Read-only overlay: the dashed Ensemble baseline is SARIMA + Elastic Net only; the "
+            "solid line is the scenario endpoint's SVAR-adjusted Ensemble draw."
         )
-        with st.expander(f"{live_target_label} forecast table"):
-            live_table = pd.DataFrame(
+        st.altair_chart(build_scenario_chart(scenario_chart_frame, theme_type, scenario_target["axis_title"]), width="stretch")
+        st.warning(scenario_payload["caveat"])
+        with st.expander("Scenario forecast table"):
+            scenario_table = pd.DataFrame(
                 {
-                    "quarter": live_family_forecast["quarters"],
-                    "forecast": live_family_forecast["forecast"],
-                    f"lower {INTERVAL_LABEL}": live_family_forecast["interval_lower"],
-                    f"upper {INTERVAL_LABEL}": live_family_forecast["interval_upper"],
+                    "horizon": scenario_payload["horizons"],
+                    "quarter": scenario_payload["quarters"],
+                    "forecast": scenario_payload["forecast"],
+                    f"lower {INTERVAL_LABEL}": scenario_payload["interval_lower"],
+                    f"upper {INTERVAL_LABEL}": scenario_payload["interval_upper"],
                 }
             ).round(4)
-            st.dataframe(live_table, width="stretch")
-    if live_unavailable:
-        with st.expander(f"Unavailable families ({len(live_unavailable)})"):
-            for item in live_unavailable:
-                st.write(f"**{item['target']} / {item['model_family']}**: {item['reason']}")
+            st.dataframe(scenario_table, width="stretch")
 
-st.subheader("6.2 Forecast vs. actual (published quarters)")
-st.caption(
-    "From `reports/forecast_snapshot_accuracy.csv`, generated by "
-    "`python -m src.models.forecast_snapshot snapshot` then `compare` once "
-    "`DATABASE_URL` is configured. Actuals are joined at read time only — "
-    "Postgres never stores a copy of the curated CPI series."
-)
-if not ACCURACY_REPORT_PATH.exists():
-    st.info(
-        "No forecast snapshot accuracy report yet. Configure `DATABASE_URL`, then run "
-        "`python -m src.models.forecast_snapshot snapshot` and `python -m src.models.forecast_snapshot compare`."
+with rba_tab:
+    st.caption(
+        "Seven readings of the RBA's next cut, hold or hike call from the same forecasts. "
+        "Book: section 4.6."
     )
-else:
-    accuracy = pd.read_csv(ACCURACY_REPORT_PATH)
-    observed = accuracy["status"].eq("observed")
-    hit_mask = accuracy.loc[observed, "hit"].astype(str).eq("True")
-    accuracy_cols = st.columns(3)
-    accuracy_cols[0].metric("Snapshots observed", f"{int(observed.sum())}")
-    accuracy_cols[1].metric("Snapshots pending", f"{int((~observed).sum())}")
-    accuracy_cols[2].metric("Simulation interval hit rate", f"{hit_mask.mean() * 100:.0f}%" if len(hit_mask) else "n/a")
-    st.dataframe(accuracy.round(4), width="stretch")
+    if st.button("Refresh RBA action", key="refresh_rba_action"):
+        with st.spinner("Asking the seven classifiers..."):
+            rba_payload, rba_error = api_request(
+                "GET", api_base_url, "/rba-action", timeout=SLOW_API_TIMEOUT_SECONDS
+            )
+        st.session_state["rba_action_result"] = {"payload": rba_payload, "error": rba_error}
 
-# --- 7. Conclusion -------------------------------------------------
-st.header("7. Conclusion")
-st.markdown(
-    """
-    Blending SARIMA with the regularized macro model (the Ensemble) edges out either
-    one alone on the shared grid, while Elastic Net on its own does not beat plain
-    SARIMA in pooled RMSE — real, if modest, evidence that structure helps at this
-    sample size without over-engineering the model. Against the RBA's own published
-    headline forecast, scored on the same origins and horizons (each against its own
-    actual), the models are comparable rather than demonstrably better or worse: the
-    Ensemble's pooled RMSE is 1.640 against 1.690, and the gap is within sampling
-    noise. The SVAR/scenario
-    layer adds a second, separate kind of value — *why* a
-    shock might move CPI — at the honestly-stated cost of two systems that still fail
-    their own residual diagnostics.
+    rba_result = st.session_state.get("rba_action_result")
+    if rba_result and rba_result["error"]:
+        st.info(rba_result["error"])
 
-    **Everything above is live in this one report:** the API base URL is configurable in
-    the sidebar; every live section (§4.5, §4.6, §6.1) degrades to a static fallback or
-    a clear banner if that API isn't reachable, rather than blanking the page. The live
-    API's own `/docs` endpoint (see `README.md`) exposes every endpoint directly.
-    """
-)
+    if rba_result and rba_result["payload"] is not None:
+        rba_payload = rba_result["payload"]
+        rba_headline_cols = st.columns(5)
+        rba_headline_cols[0].metric("Threshold action", rba_payload["reportable_action"])
+        rba_headline_cols[1].metric("Target quarter", rba_payload["target_quarter"])
+        rba_headline_cols[2].metric("Forecast origin", rba_payload["forecast_origin"])
+        rba_headline_cols[3].metric("Headline forecast", f"{rba_payload['headline_forecast']:.2f}%")
+        rba_headline_cols[4].metric("Trimmed mean forecast", f"{rba_payload['trimmed_mean_forecast']:.2f}%")
+        st.warning(rba_payload["caveat"])
+
+        rba_models = pd.DataFrame(rba_payload.get("models", []))
+        if rba_models.empty:
+            st.warning("No RBA policy-action model predictions were returned by `/rba-action`.")
+        else:
+            reportable_model = rba_payload.get("reportable_model", "threshold")
+            threshold_rows = rba_models.loc[rba_models["model"].eq(reportable_model)].copy()
+            if threshold_rows.empty:
+                threshold_rows = rba_models.loc[rba_models["reportable"].astype(bool)].copy()
+            if threshold_rows.empty:
+                st.error("The `/rba-action` response did not include the threshold reportable row.")
+            else:
+                threshold = threshold_rows.iloc[0]
+                probabilities = _threshold_probability_frame(threshold)
+                st.success(f"Winning class: {str(threshold['predicted_action']).upper()}")
+                st.altair_chart(build_threshold_probability_bar(probabilities), width="stretch")
+                probability_cols = st.columns(3)
+                for index, row in probabilities.iterrows():
+                    probability_cols[index].metric(row["label"], f"{row['probability']:.1%}")
+
+                comparison = rba_models.loc[rba_models["model"].ne(reportable_model)].copy()
+                comparison["model_order"] = comparison["model"].apply(
+                    lambda value: SECONDARY_MODELS.index(value) if value in SECONDARY_MODELS else len(SECONDARY_MODELS)
+                )
+                comparison = comparison.sort_values(["model_order", "model"])
+                secondary_table = comparison[
+                    ["model", "predicted_action", "confidence", "p_cut", "p_hold", "p_hike", "reportable", "majority_vote_tie_break"]
+                ].copy()
+                for column in ["confidence", "p_cut", "p_hold", "p_hike"]:
+                    secondary_table[column] = secondary_table[column].astype(float).round(4)
+                st.markdown("**Secondary classifier comparison**")
+                st.dataframe(secondary_table, width="stretch", hide_index=True)
+    else:
+        rba_path = PROJECT_ROOT / "reports/tableau/rba_action.csv"
+        if rba_path.exists():
+            rba_static = load_report(rba_path)
+            origin = str(rba_static["forecast_origin"].iloc[0])
+            target_q = str(rba_static["target_quarter"].iloc[0])
+            call = str(rba_static["reportable_action"].iloc[0])
+            st.metric(f"Reportable call for {target_q} (origin {origin})", call.upper())
+            st.altair_chart(build_static_rba_probability_chart(rba_static, theme_type), width="stretch")
+        else:
+            st.error(f"Missing: `{_display_path(rba_path)}`")
