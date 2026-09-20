@@ -31,7 +31,13 @@ from src.features import (
 )
 from src.platform_loads import load_bigquery, load_postgres_quality_report, write_duckdb
 from src.platform_validation import validate_curated_with_pandera
-from src.transform import merge_quarterly_frames, read_csv, save_processed_frame, to_quarterly
+from src.transform import (
+    latest_dataset_path,
+    merge_quarterly_frames,
+    read_csv,
+    save_processed_frame,
+    to_quarterly,
+)
 from src.validation import (
     QualityRecord,
     find_date_column,
@@ -195,8 +201,9 @@ def build_quarterly_frames(
     quality_records: list[QualityRecord] = []
 
     for spec in specs:
-        LOGGER.info("Processing %s", spec.name)
-        source = read_csv(spec.path)
+        source_path = latest_dataset_path(spec.path)
+        LOGGER.info("Processing %s from %s", spec.name, source_path)
+        source = read_csv(source_path)
         date_col = find_date_column(source)
         quality_records.append(
             validate_time_series(

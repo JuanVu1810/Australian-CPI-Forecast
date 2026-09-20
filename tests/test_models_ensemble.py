@@ -470,3 +470,42 @@ def test_run_trimmed_mean_ensemble_comparison_uses_trimmed_logging_config(monkey
     assert calls["weights"] is None
     assert calls["run_name"] == "trimmed_mean_ensemble_comparison"
     assert calls["model_family_tag"] == "trimmed_mean_ensemble"
+
+
+def test_main_runs_the_headline_ensemble_by_default(monkeypatch):
+    calls = {}
+
+    def fake_run_ensemble_comparison(**kwargs):
+        calls.update(kwargs)
+        return pd.DataFrame({"model": ["ensemble"], "rmse": [1.0], "mae": [1.0]})
+
+    def fail_trimmed_mean(**kwargs):
+        raise AssertionError("trimmed-mean ensemble must not run for the default target")
+
+    monkeypatch.setattr(ensemble, "run_ensemble_comparison", fake_run_ensemble_comparison)
+    monkeypatch.setattr(ensemble, "run_trimmed_mean_ensemble_comparison", fail_trimmed_mean)
+
+    ensemble.main([])
+
+    assert calls["comparison_output_path"] == ensemble.ENSEMBLE_COMPARISON_OUTPUT_PATH
+    assert calls["verbose"] is True
+
+
+def test_main_target_trimmed_mean_runs_the_trimmed_mean_ensemble(monkeypatch):
+    calls = {}
+
+    def fake_run_trimmed_mean_ensemble_comparison(**kwargs):
+        calls.update(kwargs)
+        return pd.DataFrame({"model": ["ensemble"], "rmse": [1.0], "mae": [1.0]})
+
+    def fail_headline(**kwargs):
+        raise AssertionError("headline ensemble must not run for --target trimmed_mean")
+
+    monkeypatch.setattr(ensemble, "run_trimmed_mean_ensemble_comparison", fake_run_trimmed_mean_ensemble_comparison)
+    monkeypatch.setattr(ensemble, "run_ensemble_comparison", fail_headline)
+
+    ensemble.main(["--target", "trimmed_mean", "--max-origins", "2"])
+
+    assert calls["comparison_output_path"] == ensemble.TRIMMED_MEAN_ENSEMBLE_COMPARISON_OUTPUT_PATH
+    assert calls["max_origins"] == 2
+    assert calls["verbose"] is True

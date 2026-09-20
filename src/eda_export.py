@@ -12,9 +12,14 @@ from statsmodels.tools.sm_exceptions import InterpolationWarning
 from statsmodels.tools.tools import add_constant
 from statsmodels.tsa.stattools import adfuller, kpss
 
+from src.models import svar
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CURATED_DATA_PATH = PROJECT_ROOT / "data/curated/quarterly_macro_features.csv"
+# EDA only sees quarters up to the forecast origin; later quarters in the curated
+# table are held out as realised outcomes for benchmarking the pinned forecasts.
+EDA_END_QUARTER = svar.FORECAST_ORIGIN_PIN
 REPORTS_DIR = PROJECT_ROOT / "reports"
 STATIONARITY_PATH = REPORTS_DIR / "eda_stationarity.csv"
 CORRELATIONS_PATH = REPORTS_DIR / "eda_correlations.csv"
@@ -67,8 +72,18 @@ VIF_COLUMNS = [
 ]
 
 
+def restrict_to_eda_window(
+    df: pd.DataFrame,
+    quarter_column: str = "quarter",
+    end_quarter: pd.Period = EDA_END_QUARTER,
+) -> pd.DataFrame:
+    """Drop rows after ``end_quarter`` so EDA never sees benchmark-only quarters."""
+    quarters = pd.PeriodIndex(df[quarter_column].astype(str), freq="Q")
+    return df.loc[quarters <= end_quarter].copy()
+
+
 def load_curated_data(path: Path = CURATED_DATA_PATH) -> pd.DataFrame:
-    return pd.read_csv(path)
+    return restrict_to_eda_window(pd.read_csv(path))
 
 
 def _available_columns(df: pd.DataFrame, columns: list[str]) -> list[str]:

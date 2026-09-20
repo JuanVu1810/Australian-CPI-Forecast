@@ -1,0 +1,7 @@
+# Extra packages for running the notebooks in notebooks/, on top of requirements.txt:
+#   python -m pip install -r requirements-notebooks.txt
+-r requirements.txt
+ipykernel
+matplotlib
+seaborn
+pmdarima

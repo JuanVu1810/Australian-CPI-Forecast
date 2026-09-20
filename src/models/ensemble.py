@@ -585,23 +585,39 @@ def run_trimmed_mean_ensemble_comparison(
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target", choices=("headline", "trimmed_mean"), default="headline")
     parser.add_argument("--data", type=Path, default=CURATED_DATA_PATH)
-    parser.add_argument("--rba-data", type=Path, default=RBA_FORECAST_PATH)
-    parser.add_argument("--comparison-output", type=Path, default=ENSEMBLE_COMPARISON_OUTPUT_PATH)
+    parser.add_argument(
+        "--rba-data",
+        type=Path,
+        default=RBA_FORECAST_PATH,
+        help="RBA forecast workbook for the headline run; the trimmed-mean run does not use it.",
+    )
+    parser.add_argument("--comparison-output", type=Path, default=None)
     parser.add_argument("--initial-train-size", type=int, default=DEFAULT_INITIAL_TRAIN_SIZE)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--max-origins", type=int, default=None)
     args = parser.parse_args(argv)
 
-    comparison = run_ensemble_comparison(
-        curated_path=args.data,
-        rba_path=args.rba_data,
-        comparison_output_path=args.comparison_output,
-        initial_train_size=args.initial_train_size,
-        seed=args.seed,
-        max_origins=args.max_origins,
-        verbose=True,
-    )
+    if args.target == "trimmed_mean":
+        comparison = run_trimmed_mean_ensemble_comparison(
+            curated_path=args.data,
+            comparison_output_path=args.comparison_output or TRIMMED_MEAN_ENSEMBLE_COMPARISON_OUTPUT_PATH,
+            initial_train_size=args.initial_train_size,
+            seed=args.seed,
+            max_origins=args.max_origins,
+            verbose=True,
+        )
+    else:
+        comparison = run_ensemble_comparison(
+            curated_path=args.data,
+            rba_path=args.rba_data,
+            comparison_output_path=args.comparison_output or ENSEMBLE_COMPARISON_OUTPUT_PATH,
+            initial_train_size=args.initial_train_size,
+            seed=args.seed,
+            max_origins=args.max_origins,
+            verbose=True,
+        )
     print("\nComparison:")
     print(comparison.round({"rmse": 3, "mae": 3}).to_string(index=False))
 

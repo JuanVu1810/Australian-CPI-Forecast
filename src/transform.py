@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Literal
 
 import pandas as pd
@@ -11,6 +12,28 @@ from src.validation import find_date_column
 
 
 Aggregation = Literal["mean", "last", "sum"]
+
+_YEAR_RANGE_STEM = re.compile(r"^(?P<series>.+)_(?P<start>\d{4})_(?P<end>\d{4})$")
+
+
+def latest_dataset_path(path: Path) -> Path:
+    """Return the newest download of the series that ``path`` names.
+
+    ``data_retrieval.py`` names each file ``<series>_<start>_<end>.csv`` after the
+    year range it was run with, so a refresh with a later end year writes a new
+    file beside the old one. Pick the sibling with the same series name and the
+    largest end year (the widest range on a tie); return ``path`` unchanged when
+    its name has no year range or no sibling exists.
+    """
+    match = _YEAR_RANGE_STEM.match(path.stem)
+    if match is None:
+        return path
+    candidates = []
+    for sibling in path.parent.glob(f"{match['series']}_*{path.suffix}"):
+        sibling_match = _YEAR_RANGE_STEM.match(sibling.stem)
+        if sibling_match and sibling_match["series"] == match["series"]:
+            candidates.append((int(sibling_match["end"]), -int(sibling_match["start"]), sibling))
+    return max(candidates)[2] if candidates else path
 
 
 def read_csv(path: Path) -> pd.DataFrame:

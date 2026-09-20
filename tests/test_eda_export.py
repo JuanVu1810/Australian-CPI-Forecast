@@ -101,3 +101,37 @@ def test_vif_summary_handles_insufficient_input_and_valid_multicollinearity(monk
         "feature_c_lag1",
     }
     assert valid_summary["vif"].notna().all()
+
+
+def test_eda_window_ends_at_the_forecast_origin_pin():
+    from src.models import svar
+
+    assert eda_export.EDA_END_QUARTER == svar.FORECAST_ORIGIN_PIN
+
+
+def test_restrict_to_eda_window_drops_benchmark_only_quarters():
+    df = pd.DataFrame(
+        {
+            "quarter": ["2025Q3", "2025Q4", "2026Q1", "2026Q2"],
+            "cpi_yoy": [3.2, 3.7, 4.0, 3.9],
+        }
+    )
+
+    restricted = eda_export.restrict_to_eda_window(df, end_quarter=pd.Period("2025Q4", freq="Q"))
+
+    assert restricted["quarter"].tolist() == ["2025Q3", "2025Q4"]
+    assert len(df) == 4
+
+
+def test_load_curated_data_never_returns_quarters_after_the_eda_window(tmp_path):
+    path = tmp_path / "curated.csv"
+    pd.DataFrame(
+        {
+            "quarter": ["2025Q4", "2026Q1", "2026Q4"],
+            "cpi_yoy": [3.7, 4.0, np.nan],
+        }
+    ).to_csv(path, index=False)
+
+    loaded = eda_export.load_curated_data(path)
+
+    assert loaded["quarter"].tolist() == ["2025Q4"]

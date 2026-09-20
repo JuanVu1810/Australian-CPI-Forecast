@@ -1,11 +1,13 @@
 variable,source_variable,target,observations,correlation_with_cpi_yoy,abs_correlation,notes
-inflation_expectations_business_lag1,inflation_expectations_business,cpi_yoy,120,0.731656,0.731656,used existing lag1 feature
-ppi_growth_lag1,ppi_growth,cpi_yoy,108,0.532657,0.532657,used existing lag1 feature
-unemployment_rate_lag1,unemployment_rate,cpi_yoy,120,-0.505272,0.505272,used existing lag1 feature
-household_spending_growth_lag1,household_spending_growth,cpi_yoy,52,0.384152,0.384152,derived lag1 for dashboard export
-wpi_growth_lag1,wpi_growth,cpi_yoy,112,0.284231,0.284231,used existing lag1 feature
-commodity_growth_lag1,commodity_growth,cpi_yoy,120,0.240895,0.240895,used existing lag1 feature
-brent_growth_lag1,brent_growth,cpi_yoy,72,0.195093,0.195093,used existing lag1 feature
-cash_rate_lag1,cash_rate,cpi_yoy,120,0.110858,0.110858,used existing lag1 feature
-wti_growth_lag1,wti_growth,cpi_yoy,100,0.102781,0.102781,used existing lag1 feature
-aud_usd_change_lag1,aud_usd_change,cpi_yoy,62,-0.007908,0.007908,used existing lag1 feature
+inflation_expectations_business_lag1,inflation_expectations_business,cpi_yoy,123,0.740668,0.740668,used existing lag1 feature
+trimmed_mean_cpi_qoq_lag1,trimmed_mean_cpi_qoq,cpi_yoy,123,0.717306,0.717306,derived lag1 for dashboard export
+trimmed_mean_cpi_yoy_lag1,trimmed_mean_cpi_yoy,cpi_yoy,123,0.646703,0.646703,used existing lag1 feature
+ppi_growth_lag1,ppi_growth,cpi_yoy,108,0.526786,0.526786,used existing lag1 feature
+unemployment_rate_lag1,unemployment_rate,cpi_yoy,123,-0.391057,0.391057,used existing lag1 feature
+household_spending_growth_lag1,household_spending_growth,cpi_yoy,52,0.378415,0.378415,used existing lag1 feature
+wpi_growth_lag1,wpi_growth,cpi_yoy,112,0.278792,0.278792,used existing lag1 feature
+commodity_growth_lag1,commodity_growth,cpi_yoy,122,0.234609,0.234609,used existing lag1 feature
+brent_growth_lag1,brent_growth,cpi_yoy,72,0.200446,0.200446,used existing lag1 feature
+cash_rate_lag1,cash_rate,cpi_yoy,123,0.1615,0.1615,used existing lag1 feature
+wti_growth_lag1,wti_growth,cpi_yoy,100,0.105792,0.105792,used existing lag1 feature
+aud_usd_change_lag1,aud_usd_change,cpi_yoy,62,-0.007953,0.007953,used existing lag1 feature

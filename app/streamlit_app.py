@@ -38,6 +38,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.lib.curated_data import load_curated_data  # noqa: E402
 from app.lib.rba_reports import render_historical_backtest_panel  # noqa: E402
+from src.eda_export import restrict_to_eda_window  # noqa: E402
 
 
 DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -1087,16 +1088,20 @@ st.markdown(
     "decisions, RBA/ABS labour-force and producer-price series, WTI/Brent crude, and the "
     "RBA's own published CPI forecast workbook — joined on quarter, no manual pasting."
 )
-st.altair_chart(build_cpi_history_chart(curated, theme_type), width="stretch")
+# EDA only sees quarters up to the forecast origin; later quarters are held out
+# for benchmarking the pinned forecasts.
+eda_curated = restrict_to_eda_window(curated)
+st.altair_chart(build_cpi_history_chart(eda_curated, theme_type), width="stretch")
 st.caption(
-    f"{len(curated)} quarters, {curated['quarter'].iloc[0]}–{curated['quarter'].iloc[-1]}. "
+    f"{len(eda_curated)} quarters, {eda_curated['quarter'].iloc[0]}–{eda_curated['quarter'].iloc[-1]}. "
+    "Later quarters are held out for benchmarking only. "
     "Shaded band is the RBA's 2–3% target range."
 )
 
 st.subheader("2.1 Explore the macro indicators")
 st.caption("Filter the curated table and browse any combination of indicators.")
-min_date = curated["quarter_date"].min().date()
-max_date = curated["quarter_date"].max().date()
+min_date = eda_curated["quarter_date"].min().date()
+max_date = eda_curated["quarter_date"].max().date()
 explorer_cols = st.columns([1.2, 1.8])
 selected_range = explorer_cols[0].date_input(
     "Quarter range", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="data_explorer_range"
@@ -1106,7 +1111,7 @@ if isinstance(selected_range, tuple) and len(selected_range) == 2:
 else:
     start_date, end_date = min_date, max_date
 
-available_columns = [column for column in curated.columns if column != "quarter_date"]
+available_columns = [column for column in eda_curated.columns if column != "quarter_date"]
 default_columns = [
     column
     for column in [
@@ -1119,15 +1124,15 @@ selected_columns = explorer_cols[1].multiselect(
     "Table columns", options=available_columns, default=default_columns, key="data_explorer_columns"
 )
 
-mask = (curated["quarter_date"].dt.date >= start_date) & (curated["quarter_date"].dt.date <= end_date)
-filtered_curated = curated.loc[mask].copy()
+mask = (eda_curated["quarter_date"].dt.date >= start_date) & (eda_curated["quarter_date"].dt.date <= end_date)
+filtered_curated = eda_curated.loc[mask].copy()
 st.metric("Filtered rows", f"{len(filtered_curated):,}")
 
 candidate_columns = [
     "unemployment_rate", "cash_rate", "wpi_growth", "ppi_growth",
     "commodity_growth", "wti_growth", "inflation_expectations_business",
 ]
-indicator_options = [column for column in candidate_columns if column in curated.columns]
+indicator_options = [column for column in candidate_columns if column in eda_curated.columns]
 default_indicators = [column for column in ["unemployment_rate", "cash_rate", "wpi_growth"] if column in indicator_options]
 selected_indicators = st.multiselect(
     "Select indicators to plot", options=indicator_options, default=default_indicators, key="data_explorer_indicators"

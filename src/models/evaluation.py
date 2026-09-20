@@ -197,7 +197,8 @@ def load_target_series(
     walk-forward evaluation callers to pin their origin set to a fixed cutoff
     (e.g. ``svar.FORECAST_ORIGIN_PIN``) instead of silently growing as the
     curated CSV is refreshed with newer data. Left as ``None`` by default so
-    every other caller (live serving, EDA, ...) keeps seeing the full series.
+    every other caller (live serving, ...) keeps seeing the full series. EDA has its
+    own window: ``eda_export.restrict_to_eda_window``.
     """
     df = pd.read_csv(path, usecols=[quarter_column, target_column])
     if quarter_column not in df or target_column not in df:
