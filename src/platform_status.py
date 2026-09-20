@@ -122,11 +122,11 @@ def main() -> int:
         },
         {
             "platform": "Google Cloud Run",
-            "status": "deployment_required",
-            "evidence": "Dockerfile; api/main.py",
+            "status": "deployed",
+            "evidence": "Dockerfile; api/main.py; live revision cpi-forecast-api-00016-vig (verified 2026-09-21)",
             "next_step": (
-                "Push the local Docker image to Artifact Registry, then run "
-                "gcloud run deploy cpi-forecast-api with that image."
+                "Redeploy is manual after serving changes: docker build, push to "
+                "Artifact Registry, then gcloud run deploy cpi-forecast-api."
             ),
         },
         {

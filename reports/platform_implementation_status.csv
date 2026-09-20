@@ -10,6 +10,6 @@ MLflow,implemented,src/models/tracking.py; src/models/registry.py; mlruns/ (loca
 FastAPI,implemented,api/main.py,Run uvicorn api.main:app --reload after installing requirements.
 Streamlit,implemented,app/streamlit_app.py,Run streamlit run app/streamlit_app.py after installing requirements.
 Docker,scaffolded,Dockerfile,Build image after API dependencies are installed.
-Google Cloud Run,deployment_required,Dockerfile; api/main.py,"Push the local Docker image to Artifact Registry, then run gcloud run deploy cpi-forecast-api with that image."
+Google Cloud Run,deployed,Dockerfile; api/main.py; live revision cpi-forecast-api-00016-vig (verified 2026-09-21),"Redeploy is manual after serving changes: docker build, push to Artifact Registry, then gcloud run deploy cpi-forecast-api."
 GitHub Actions CI,implemented,.github/workflows/tests.yml,Push to GitHub and confirm workflow passes.
 GitHub Actions scheduled ETL,implemented,.github/workflows/scheduled_etl.yml,Push to GitHub and enable scheduled workflow.

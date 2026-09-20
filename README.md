@@ -19,11 +19,11 @@ test, and a FastAPI + Streamlit app with a Cloud Run deployment.
 | Data retrieval, ETL, validation (custom + Pandera), Parquet, DuckDB | implemented |
 | SARIMA, Elastic Net, Ensemble for headline and trimmed-mean CPI, walk-forward validated | implemented |
 | SVAR and scenario engine | implemented locally; illustrative, since both VAR systems fail residual whiteness and normality diagnostics |
-| RBA policy-action classifier | implemented locally; not deployed |
-| Credit-risk stress test and illustrative 12-month ECL | implemented locally; illustrative only; not deployed |
+| RBA policy-action classifier | implemented; served by the Cloud Run API since 2026-09-21 |
+| Credit-risk stress test and illustrative 12-month ECL | implemented; illustrative only; served by the Cloud Run API since 2026-09-21 |
 | MLflow tracking | implemented locally (file store in `mlruns/`, gitignored); no champion model or Model Registry |
-| FastAPI | implemented locally, 7 endpoints |
-| Docker and Google Cloud Run | deployed, verified live 2026-08-29 (image `redeploy-20260829-d3102c9`). Serves `/forecast/all`, `/forecast/trimmed-mean/all` and `/forecast/scenario`; redeploy is manual |
+| FastAPI | implemented, 7 endpoints; live on Cloud Run |
+| Docker and Google Cloud Run | deployed, verified live 2026-09-21 (image `redeploy-20260921-e905627`, revision `cpi-forecast-api-00016-vig`). Serves the forecast, trimmed-mean, scenario, RBA and credit endpoints; redeploy is manual |
 | Streamlit | implemented locally: a four-tab interactive demo that goes with the book (live forecast, Ensemble path reveal, scenario engine, RBA call) |
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
 | GitHub Actions (tests, monthly scheduled ETL) | scaffolded; no Cloud Run deploy step |
@@ -186,9 +186,12 @@ curl -X POST http://localhost:8000/forecast/scenario \
 | GET | `/rba-action` | RBA cut/hold/hike readings from seven classifiers |
 | GET | `/credit-risk/stress-test` | illustrative credit stress and 12-month ECL |
 
-The Cloud Run deployment serves `/forecast/all`, `/forecast/trimmed-mean/all`
-and `/forecast/scenario`. `/rba-action` and `/credit-risk/stress-test` run
-locally only.
+The Cloud Run deployment serves `/health` and the forecast, trimmed-mean,
+scenario, RBA and credit endpoints (verified live 2026-09-21). On its single CPU,
+`/forecast/scenario` takes about 40 to 46 seconds and `/rba-action` about 30 to
+45. The simulation-based outputs of those two can differ from a local run in the
+third decimal (for example an RBA cut probability of 0.8% instead of 0.6%); the
+call is the same.
 
 ### 6. Start Streamlit
 
@@ -249,6 +252,11 @@ docker stop cpi-forecast-api
 
 The build rewrites the absolute host paths that MLflow stored in `mlruns/` so
 they resolve to `/app/mlruns` inside the container.
+
+`.dockerignore` keeps most of `reports/` out of the image and allows back only the
+CSVs the API reads at request time. If an endpoint starts reading a new report or
+data file, add it there (or copy its folder in the `Dockerfile`), or the deployed
+image will return 503 for that endpoint while everything works locally.
 
 ### Deploy to Google Cloud Run
 
