@@ -48,5 +48,9 @@ sphinx:
       # book's article-header toggle unresponsive. Keep search in the sidebar
       # and use the book theme's single toggle (pydata-sphinx-theme#2451).
       navbar_persistent: []
+      # List the intro page (its title, "Welcome to Australian CPI Forecasting") as the first
+      # sidebar entry. It has to be set here because this block replaces Jupyter Book's own
+      # html_theme_options, so the html.home_page_in_navbar shortcut never reaches the theme.
+      home_page_in_toc: true
     html_css_files:
       - custom.css
