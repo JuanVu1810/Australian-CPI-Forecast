@@ -13,6 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY api api
 COPY src src
 COPY data/curated data/curated
+# The credit-risk stress test reads its PD/LGD/EAD/discount-rate assumption CSVs
+# from data/metadata at request time (small, hand-curated).
+COPY data/metadata data/metadata
 # .dockerignore excludes reports/* except the handful of CSVs api/main.py
 # and ensemble.py read at request time (interval calibration/coverage
 # diagnostics, headline's dynamic ensemble weight source) -- this only
