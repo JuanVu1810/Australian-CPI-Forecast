@@ -8,7 +8,7 @@ scenario engine, an RBA policy-action classifier, an illustrative credit-stress
 test, and a FastAPI + Streamlit app with a Cloud Run deployment.
 
 - **Results and methodology:** the [Jupyter Book](https://juanvu1810.github.io/CPI-Forecast/)
-  (start with *Results at a glance*). This README only covers status and how to run the project.
+  (start with *Key Findings*). This README only covers status and how to run the project.
 - **Try it without installing anything:** the live
   [API docs](https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs).
 
