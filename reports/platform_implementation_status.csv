@@ -8,7 +8,7 @@ BigQuery,configuration_required,src/platform_loads.py; .env.example BIGQUERY_* v
 Supabase PostgreSQL,configuration_required,src/platform_loads.py; src/models/forecast_snapshot.py; .env.example DATABASE_URL; sql/schema_app_metadata.sql,"Run schema SQL, then python -m src.build_curated_dataset --load-postgres and python -m src.models.forecast_snapshot snapshot."
 MLflow,implemented,src/models/tracking.py; src/models/registry.py; mlruns/ (local),Train the models first so mlruns/ exists; FastAPI then serves the latest runs to the Streamlit live forecast tool.
 FastAPI,implemented,api/main.py,Run uvicorn api.main:app --reload after installing requirements.
-Streamlit,implemented,app/streamlit_app.py,Run streamlit run app/streamlit_app.py after installing requirements.
+Streamlit,deployed,app/streamlit_app.py; app/requirements.txt,Hosted at https://cpi-forecast-demo.streamlit.app/ (verified 2026-09-21); run locally with streamlit run app/streamlit_app.py.
 Docker,scaffolded,Dockerfile,Build image after API dependencies are installed.
 Google Cloud Run,deployed,Dockerfile; api/main.py; live revision cpi-forecast-api-00016-vig (verified 2026-09-21),"Redeploy is manual after serving changes: docker build, push to Artifact Registry, then gcloud run deploy cpi-forecast-api."
 GitHub Actions CI,implemented,.github/workflows/tests.yml,Push to GitHub and confirm workflow passes.

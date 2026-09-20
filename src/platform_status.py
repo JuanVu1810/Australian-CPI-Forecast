@@ -110,9 +110,12 @@ def main() -> int:
         },
         {
             "platform": "Streamlit",
-            "status": "implemented" if exists("app/streamlit_app.py") else "missing",
-            "evidence": "app/streamlit_app.py",
-            "next_step": "Run streamlit run app/streamlit_app.py after installing requirements.",
+            "status": "deployed" if exists("app/streamlit_app.py") else "missing",
+            "evidence": "app/streamlit_app.py; app/requirements.txt",
+            "next_step": (
+                "Hosted at https://cpi-forecast-demo.streamlit.app/ (verified 2026-09-21); "
+                "run locally with streamlit run app/streamlit_app.py."
+            ),
         },
         {
             "platform": "Docker",

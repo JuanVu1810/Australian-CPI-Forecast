@@ -24,7 +24,7 @@ test, and a FastAPI + Streamlit app with a Cloud Run deployment.
 | MLflow tracking | implemented locally (file store in `mlruns/`, gitignored); no champion model or Model Registry |
 | FastAPI | implemented, 7 endpoints; live on Cloud Run |
 | Docker and Google Cloud Run | deployed, verified live 2026-09-21 (image `redeploy-20260921-e905627`, revision `cpi-forecast-api-00016-vig`). Serves the forecast, trimmed-mean, scenario, RBA and credit endpoints; redeploy is manual |
-| Streamlit | implemented locally: a four-tab interactive demo that goes with the book (live forecast, Ensemble path reveal, scenario engine, RBA call) |
+| Streamlit | deployed on Streamlit Community Cloud, verified live 2026-09-21: <https://cpi-forecast-demo.streamlit.app/>. A four-tab interactive demo that goes with the book (live forecast, Ensemble path reveal, scenario engine, RBA call) |
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
 | GitHub Actions (tests, monthly scheduled ETL) | scaffolded; no Cloud Run deploy step |
 | BigQuery | target architecture only; optional load hook, not deployed |
@@ -195,6 +195,9 @@ call is the same.
 
 ### 6. Start Streamlit
 
+A hosted copy is live at <https://cpi-forecast-demo.streamlit.app/>; run it locally to change it or to use
+your own API.
+
 In a second terminal, with the same virtual environment active:
 
 ```bash
@@ -282,9 +285,8 @@ API changes is manual.
 
 The demo can run on Streamlit Community Cloud from this GitHub repo, at a public
 `*.streamlit.app` link. It only needs the four packages in `app/requirements.txt`
-(the root `requirements.txt` is much heavier). This is a set of steps, not a
-deployment: the README status table says the demo is hosted only once a link exists
-and has been checked.
+(the root `requirements.txt` is much heavier). It is live at
+<https://cpi-forecast-demo.streamlit.app/> (verified 2026-09-21), set up with these steps.
 
 1. Push the repository to GitHub.
 2. At share.streamlit.io choose **Create app**, pick this repository, branch `main`,
