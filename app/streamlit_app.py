@@ -157,17 +157,28 @@ def _request_error_detail(exc: requests.RequestException) -> str | None:
     return str(detail) if detail else None
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def _fetch_json(method: str, base_url: str, path: str, timeout: int, **kwargs) -> dict:
-    """Call the API and return its JSON, caching successes only.
-
-    It raises on failure, and ``st.cache_data`` never caches an exception, so an API
-    that was down a moment ago is retried on the next click instead of being remembered
-    as down for five minutes.
-    """
+def _get_json(method: str, base_url: str, path: str, timeout: int, **kwargs) -> dict:
     response = requests.request(method, f"{base_url}{path}", timeout=timeout, **kwargs)
     response.raise_for_status()
     return response.json()
+
+
+# Both wrappers cache successes only: they raise on failure, and ``st.cache_data`` never
+# caches an exception, so an API that was down a moment ago is retried on the next click
+# instead of being remembered as down. The cache is shared by every visitor of the app.
+@st.cache_data(ttl=300, show_spinner=False)
+def _fetch_json(method: str, base_url: str, path: str, timeout: int, **kwargs) -> dict:
+    return _get_json(method, base_url, path, timeout, **kwargs)
+
+
+# For answers that do not change until the API is redeployed (seeded simulations at a
+# pinned forecast origin: the same request always returns the same numbers). Keeping them
+# for an hour means the first visitor pays the ~45s and everyone after gets it instantly.
+# The catch: after a redeploy with new models, the app can show the old answer for up to
+# an hour, so keep this modest.
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_json_stable(method: str, base_url: str, path: str, timeout: int, **kwargs) -> dict:
+    return _get_json(method, base_url, path, timeout, **kwargs)
 
 
 def api_request(method: str, base_url: str, path: str, **kwargs) -> tuple[dict | None, str | None]:
@@ -175,11 +186,14 @@ def api_request(method: str, base_url: str, path: str, **kwargs) -> tuple[dict |
 
     One shared helper for the three live tabs, so a problem with the API produces one
     consistent soft banner instead of blanking the page. Pass ``timeout=`` for slow
-    calls (the scenario endpoint takes about 40 seconds).
+    calls (the scenario endpoint takes about 40 seconds), and ``stable=True`` for answers
+    that only change on a redeploy so they are remembered for an hour instead of five
+    minutes.
     """
     timeout = kwargs.pop("timeout", LIVE_API_TIMEOUT_SECONDS)
+    fetch = _fetch_json_stable if kwargs.pop("stable", False) else _fetch_json
     try:
-        return _fetch_json(method, base_url, path, timeout, **kwargs), None
+        return fetch(method, base_url, path, timeout, **kwargs), None
     except requests.Timeout:
         if HOSTED_DEMO:
             return None, (
@@ -762,6 +776,7 @@ with scenario_tab:
                     "horizons": scenario_horizons,
                 },
                 timeout=SLOW_API_TIMEOUT_SECONDS,
+                stable=True,
             )
             baseline_payload, baseline_error = (None, None)
             if scenario_payload is not None:
@@ -840,7 +855,7 @@ with rba_tab:
     if st.button("Refresh RBA action", key="refresh_rba_action"):
         with st.spinner("Asking the seven classifiers..."):
             rba_payload, rba_error = api_request(
-                "GET", api_base_url, "/rba-action", timeout=SLOW_API_TIMEOUT_SECONDS
+                "GET", api_base_url, "/rba-action", timeout=SLOW_API_TIMEOUT_SECONDS, stable=True
             )
         st.session_state["rba_action_result"] = {"payload": rba_payload, "error": rba_error}
 

@@ -310,8 +310,11 @@ The demo can run on Streamlit Community Cloud from this GitHub repo, at a public
 
 `CPI_DEMO_HOSTED = "1"` hides the API address box, so visitors cannot make the
 server call an arbitrary URL. Expect the first call after an idle spell to take
-about 15 seconds while Cloud Run wakes, and the scenario and RBA calls about 40 to
-50 seconds. The 4.3 Ensemble tab reads committed files and needs no API.
+about 15 seconds while Cloud Run wakes, and the scenario and RBA calls about 30 to
+60 seconds. The demo remembers scenario and RBA answers for an hour (they only change
+when the API is redeployed), so the same request repeated by anyone comes back
+instantly, and Cloud Run is not charged for it. The 4.3 Ensemble tab reads committed
+files and needs no API.
 
 ## Troubleshooting
 
