@@ -31,10 +31,14 @@ from app.lib.curated_data import load_curated_data  # noqa: E402
 
 
 DEFAULT_API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+# Set CPI_DEMO_HOSTED=1 on a public deployment (for example a Streamlit Cloud secret). It
+# locks the API address to API_BASE_URL, so visitors cannot point this server at any URL,
+# and swaps the local "start uvicorn" messages for ones that make sense to a visitor.
+HOSTED_DEMO = os.getenv("CPI_DEMO_HOSTED") == "1"
 MAX_FORECAST_HORIZON = 8
 HISTORY_QUARTERS_SHOWN = 16
 INTERVAL_LABEL = "calibrated simulation interval (80% nominal target)"
-LIVE_API_TIMEOUT_SECONDS = 30
+LIVE_API_TIMEOUT_SECONDS = 60  # Cloud Run's first call after idle took ~14s
 # The scenario endpoint takes ~40s and /rba-action ~10s on a laptop, so they get longer.
 SLOW_API_TIMEOUT_SECONDS = 120
 
@@ -177,11 +181,18 @@ def api_request(method: str, base_url: str, path: str, **kwargs) -> tuple[dict |
     try:
         return _fetch_json(method, base_url, path, timeout, **kwargs), None
     except requests.Timeout:
+        if HOSTED_DEMO:
+            return None, (
+                f"The forecast service did not answer within {timeout} seconds. "
+                "It may be waking up, so try again in a moment."
+            )
         return None, (
             f"The API at `{base_url}{path}` did not answer within {timeout} seconds. "
             "It may still be working, so try again in a moment."
         )
     except requests.RequestException as exc:
+        if HOSTED_DEMO:
+            return None, "The forecast service is not responding right now. Please try again in a minute."
         detail = _request_error_detail(exc)
         detail_text = f" API detail: {detail}" if detail else ""
         return None, (
@@ -532,12 +543,22 @@ st.write(
 
 with st.sidebar:
     st.subheader("API connection")
-    api_base_url = st.text_input("API base URL", value=DEFAULT_API_BASE_URL, key="api_base_url").rstrip("/")
-    st.caption(
-        "Live forecast, 4.5 Scenario Engine and 4.6 RBA Policy Classifier call this service. "
-        "Start it with `uvicorn api.main:app --reload`. 4.3 Ensemble reads local files and "
-        "needs no API."
-    )
+    if HOSTED_DEMO:
+        api_base_url = DEFAULT_API_BASE_URL.rstrip("/")
+        if not os.getenv("API_BASE_URL"):
+            st.error("This deployment is missing its API_BASE_URL setting, so the live tabs cannot work.")
+        st.caption(
+            "Live forecast, 4.5 Scenario Engine and 4.6 RBA Policy Classifier use this project's "
+            "forecast API on Google Cloud Run. 4.3 Ensemble reads pinned files and needs no API. "
+            "The scenario and RBA calls can take up to a minute."
+        )
+    else:
+        api_base_url = st.text_input("API base URL", value=DEFAULT_API_BASE_URL, key="api_base_url").rstrip("/")
+        st.caption(
+            "Live forecast, 4.5 Scenario Engine and 4.6 RBA Policy Classifier call this service. "
+            "Start it with `uvicorn api.main:app --reload`. 4.3 Ensemble reads local files and "
+            "needs no API."
+        )
 
 curated = load_curated_data()
 

@@ -230,6 +230,7 @@ Everything has a working default; set these only to change it.
 | `MLFLOW_TRACKING_URI` | `mlruns` | where runs are logged and read |
 | `MLFLOW_EXPERIMENT_NAME` | `CPI Forecast` | experiment the API reads from |
 | `API_BASE_URL` | `http://localhost:8000` | API the Streamlit app calls |
+| `CPI_DEMO_HOSTED` | unset | set to `1` on a public deployment: locks the API address to `API_BASE_URL` and swaps the local "start uvicorn" messages for visitor-friendly ones |
 | `PORT` | `8000` | port the Docker image listens on |
 
 `.env.example` also lists BigQuery and Supabase settings. A normal run does not
@@ -276,6 +277,31 @@ gcloud run deploy cpi-forecast-api \
 
 Cloud Run sets `PORT` and the image listens on it. Redeploying after model or
 API changes is manual.
+
+## Host the Streamlit demo
+
+The demo can run on Streamlit Community Cloud from this GitHub repo, at a public
+`*.streamlit.app` link. It only needs the four packages in `app/requirements.txt`
+(the root `requirements.txt` is much heavier). This is a set of steps, not a
+deployment: the README status table says the demo is hosted only once a link exists
+and has been checked.
+
+1. Push the repository to GitHub.
+2. At share.streamlit.io choose **Create app**, pick this repository, branch `main`,
+   main file `app/streamlit_app.py`, and Python 3.11 under **Advanced settings**.
+   Confirm in the build log that it installed `app/requirements.txt` and not the
+   root one.
+3. Under **Advanced settings > Secrets**, add:
+
+   ```toml
+   API_BASE_URL = "https://cpi-forecast-api-887232555982.asia-southeast1.run.app"
+   CPI_DEMO_HOSTED = "1"
+   ```
+
+`CPI_DEMO_HOSTED = "1"` hides the API address box, so visitors cannot make the
+server call an arbitrary URL. Expect the first call after an idle spell to take
+about 15 seconds while Cloud Run wakes, and the scenario and RBA calls about 40 to
+50 seconds. The 4.3 Ensemble tab reads committed files and needs no API.
 
 ## Troubleshooting
 

@@ -1,0 +1,8 @@
+# Dependencies for the Streamlit demo only (app/streamlit_app.py).
+# The root requirements.txt is for the whole project (models, ETL, API, cloud clients)
+# and is far heavier than the demo needs. Tested with streamlit 1.61.1 and altair 6.2.2;
+# the app uses st.altair_chart(width="stretch"), which needs a recent Streamlit.
+streamlit>=1.61
+altair>=5
+pandas
+requests
