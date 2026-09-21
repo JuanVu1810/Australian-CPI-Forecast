@@ -429,14 +429,21 @@ kept.
 
 ## Run with Docker (API only)
 
-The image serves the FastAPI service only. It does not include Streamlit,
-tests, notebooks or the book. Run [step 4](#4-train-the-models) first (train, or restore the
-saved runs) so `mlruns/` exists; without it the build fails at the `COPY mlruns` step. The image
-installs with `constraints.txt`, so that file must be in the folder.
+Use Docker to run or test the packaged API with its own Python runtime and dependencies,
+for example before deploying that image to Cloud Run. It starts the same FastAPI app as
+[the local Python command](#5-start-the-api) and serves the same saved models; it does
+not produce a second set of results. If you only want to check the results or run the
+API locally with Python, skip Docker. Running the container locally does not deploy
+anything to Cloud Run.
+
+This image serves FastAPI only. It does not run the ETL, training or tests, and does
+not include Streamlit, notebooks or the book. First [train or restore the saved runs](#4-train-the-models)
+on the host so `mlruns/` exists; without it the build fails at `COPY mlruns`.
+The image installs with `constraints.txt`, so that file must be in the folder.
 
 ```bash
 docker build -t cpi-forecast-api:latest .
-docker run --rm -d --name cpi-forecast-api -p 8000:8000 cpi-forecast-api:latest
+docker run --rm -d --name cpi-forecast-api -p 127.0.0.1:8000:8000 cpi-forecast-api:latest
 curl http://127.0.0.1:8000/health
 curl -X POST http://127.0.0.1:8000/forecast/all \
   -H "Content-Type: application/json" -d '{"horizon": 4}'
