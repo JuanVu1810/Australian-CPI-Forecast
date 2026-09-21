@@ -1,0 +1,27 @@
+[03:52:10] START python (fresh venv, newest packages) -m src.build_curated_dataset
+[03:52:11] END rc=0 python (fresh venv, newest packages) -m src.build_curated_dataset
+[03:52:11] START python (fresh venv, newest packages) -m src.platform_status
+[03:52:11] END rc=0 python (fresh venv, newest packages) -m src.platform_status
+[03:52:11] START python (fresh venv, newest packages) -m src.models.evaluation
+[03:52:31] END rc=0 python (fresh venv, newest packages) -m src.models.evaluation
+[03:52:31] START python (fresh venv, newest packages) -m src.models.elastic_net
+[04:00:07] END rc=0 python (fresh venv, newest packages) -m src.models.elastic_net
+[04:00:07] START python (fresh venv, newest packages) -m src.models.ensemble
+[04:08:16] END rc=0 python (fresh venv, newest packages) -m src.models.ensemble
+[04:08:16] START python (fresh venv, newest packages) -m src.models.model_comparison --target trimmed_mean
+[04:22:45] END rc=0 python (fresh venv, newest packages) -m src.models.model_comparison --target trimmed_mean
+[04:22:45] START python (fresh venv, newest packages) -m src.models.ensemble --target trimmed_mean
+[04:29:48] END rc=0 python (fresh venv, newest packages) -m src.models.ensemble --target trimmed_mean
+[04:29:48] START python (fresh venv, newest packages) -m src.models.model_comparison --no-rba
+[04:36:43] END rc=0 python (fresh venv, newest packages) -m src.models.model_comparison --no-rba
+[04:36:43] START python (fresh venv, newest packages) -m src.models.rba_classifier
+[04:44:09] END rc=0 python (fresh venv, newest packages) -m src.models.rba_classifier
+[04:44:09] START python (fresh venv, newest packages) -m src.models.simulation_fan
+[04:45:30] END rc=0 python (fresh venv, newest packages) -m src.models.simulation_fan
+[04:45:30] START python (fresh venv, newest packages) -m src.eda_export
+[04:45:30] END rc=0 python (fresh venv, newest packages) -m src.eda_export
+[04:45:30] START python (fresh venv, newest packages) -m src.models.svar_unemployment_export
+[04:45:31] END rc=0 python (fresh venv, newest packages) -m src.models.svar_unemployment_export
+[04:45:33] START python (fresh venv, newest packages) -m src.models.tableau_export --api-base-url http://localhost:8101
+[04:45:51] END rc=0 python (fresh venv, newest packages) -m src.models.tableau_export --api-base-url http://localhost:8101
+[04:45:51] CHAIN DONE

@@ -18,6 +18,7 @@ __pycache__/
 # Local logs and runtime outputs
 logs/
 *.log
+!reports/reproducibility_runs/retrain_newest_steps.log
 
 # Local AI/agent context files
 .ai/
