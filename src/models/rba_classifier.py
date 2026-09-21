@@ -95,6 +95,19 @@ TAYLOR_INFLATION_COEFFICIENT = 0.5
 TAYLOR_UNEMPLOYMENT_CHANGE_COEFFICIENT = 0.5
 TAYLOR_ESTIMATED_HOLD_BAND = 0.125
 TAYLOR_ESTIMATED_COEFFICIENT_MAGNITUDE_WARNING = 10.0
+# Ordered logit/probit betas and alphas are on the train-standardized feature
+# scale, same order of magnitude as the Taylor-rule coefficients above, so the
+# same threshold applies. A fold whose fitted parameters exceed this is a sign
+# of (quasi-)complete separation, not a well-identified estimate: with very
+# few training rows (the earliest walk-forward folds have as few as one or two
+# examples of some classes), the fitted score can perfectly separate the
+# outcomes, so the true MLE is unbounded and BFGS just runs to `maxiter`
+# without tripping statsmodels' own ConvergenceWarning. The resulting
+# parameter values are numerically arbitrary (sensitive to the optimizer's
+# exact floating-point path) even though the walk-forward loop itself is
+# deterministic given fixed inputs, so this flag, not the raw parameter
+# value, is the reproducible signal for those folds.
+ORDERED_MODEL_COEFFICIENT_MAGNITUDE_WARNING = 10.0
 XGBOOST_PARAMS = {
     "n_estimators": 50,
     "max_depth": 2,
@@ -667,15 +680,28 @@ def _ordered_model_parameter_diagnostics(
 ) -> dict[str, float | str | int]:
     params = fitted.params
     thresholds = fitted.model.transform_threshold_params(params)[1:-1]
+    alpha_cut_hold = float(thresholds[0])
+    alpha_hold_hike = float(thresholds[1])
+    betas = {feature: float(params[feature]) for feature in ORDINAL_FEATURE_COLUMNS}
+    unstable = [
+        name
+        for name, value in {
+            "alpha_cut_hold": alpha_cut_hold,
+            "alpha_hold_hike": alpha_hold_hike,
+            **betas,
+        }.items()
+        if abs(value) > ORDERED_MODEL_COEFFICIENT_MAGNITUDE_WARNING
+    ]
     diagnostics: dict[str, float | str | int] = {
         "model": f"ordered_{link}",
         "target_quarter": target_quarter,
         "train_rows": int(train_rows),
-        "ordered_alpha_cut_hold": float(thresholds[0]),
-        "ordered_alpha_hold_hike": float(thresholds[1]),
+        "ordered_alpha_cut_hold": alpha_cut_hold,
+        "ordered_alpha_hold_hike": alpha_hold_hike,
+        "ordered_unstable_coefficients": ", ".join(unstable),
     }
-    for feature in ORDINAL_FEATURE_COLUMNS:
-        diagnostics[f"ordered_beta_{feature}"] = float(params[feature])
+    for feature, value in betas.items():
+        diagnostics[f"ordered_beta_{feature}"] = value
     return diagnostics
 
 
@@ -965,6 +991,10 @@ def predict_single_quarter(
                     "ordered_alpha_hold_hike",
                     np.nan,
                 ),
+                "ordered_unstable_coefficients": ordered_diagnostics.get(
+                    "ordered_unstable_coefficients",
+                    "",
+                ),
                 "ordered_train_rows": ordered_diagnostics.get("train_rows", np.nan),
             }
         )
@@ -1054,6 +1084,62 @@ def _markdown_confusion_matrices(predictions: pd.DataFrame) -> str:
         matrix = confusion_matrix_frame(rows["actual_action"], rows["predicted_action"])
         sections.append(f"### {model}\n\n{matrix.reset_index().to_markdown(index=False)}")
     return "\n\n".join(sections)
+
+
+def _condensed_split_audit(display_audit: pd.DataFrame, degenerate: pd.DataFrame, chosen_size: int) -> pd.DataFrame:
+    """Keep only the degenerate/clean transition, the chosen row, and the endpoints.
+
+    The full audit repeats the same "none/no degenerate" verdict for every
+    larger candidate once the gate clears; those extra rows add margin, not
+    new information, so the report only needs the transition and the choice.
+    """
+    columns = [
+        "initial_train_size",
+        "test_rows",
+        "first_test_quarter",
+        "degenerate_fold_count",
+        "degenerate_classes",
+    ]
+    trimmed = display_audit[columns].reset_index(drop=True)
+    keep_mask = trimmed["initial_train_size"].isin(degenerate["initial_train_size"])
+    clean = trimmed.loc[~keep_mask]
+    first_clean = clean.iloc[[0]] if not clean.empty else clean
+    chosen_row = trimmed.loc[trimmed["initial_train_size"].eq(chosen_size)]
+    last_row = trimmed.iloc[[-1]]
+    condensed = (
+        pd.concat([trimmed.loc[keep_mask], first_clean, chosen_row, last_row])
+        .drop_duplicates(subset="initial_train_size")
+        .sort_values("initial_train_size")
+        .reset_index(drop=True)
+    )
+    condensed["initial_train_size"] = condensed["initial_train_size"].astype(str)
+    is_chosen = condensed["initial_train_size"].eq(str(chosen_size))
+    condensed.loc[is_chosen, "initial_train_size"] = f"**{chosen_size} (chosen)**"
+    return condensed
+
+
+def _representative_confidence_sample(
+    confidence_display: pd.DataFrame,
+    n_quarters: int = 4,
+    models: tuple[str, ...] = ("threshold", "ordered_logit"),
+) -> pd.DataFrame:
+    """A small, deterministic slice of the confidence table for the markdown report.
+
+    The full table is every model's class probabilities for every test
+    quarter, useful for debugging but too long for a report meant to be read.
+    `run_rba_classifier_evaluation` still returns the full frame in memory.
+    """
+    quarters = confidence_display["target_quarter"].drop_duplicates().tolist()
+    if len(quarters) <= n_quarters:
+        picks = quarters
+    else:
+        positions = np.linspace(0, len(quarters) - 1, n_quarters).round().astype(int)
+        picks = [quarters[i] for i in sorted(set(positions))]
+    sample = confidence_display.loc[
+        confidence_display["target_quarter"].isin(picks)
+        & confidence_display["model"].isin(models)
+    ]
+    return sample.reset_index(drop=True)
 
 
 def prediction_confidence_table(predictions: pd.DataFrame) -> pd.DataFrame:
@@ -1223,6 +1309,7 @@ def build_evaluation_report(
     )
     threshold_input_frame, threshold_input_disagreements = threshold_input_sensitivity(test)
     display_audit = split_choice.audit.copy()
+    condensed_audit = _condensed_split_audit(display_audit, degenerate, split_choice.initial_train_size)
     display_metrics = metrics.copy()
     display_metrics["macro_f1"] = display_metrics["macro_f1"].round(3)
     display_metrics["accuracy"] = display_metrics["accuracy"].round(3)
@@ -1258,6 +1345,52 @@ def build_evaluation_report(
         _markdown_table(ordered_warning_rows)
         if not ordered_warning_rows.empty
         else "No OrderedModel ConvergenceWarning was captured during the walk-forward run."
+    )
+    ordered_unstable_rows = (
+        predictions.loc[
+            predictions.get("ordered_unstable_coefficients", pd.Series("", index=predictions.index))
+            .fillna("")
+            .ne("")
+            & predictions["model"].isin(["ordered_logit", "ordered_probit"]),
+            ["model", "target_quarter", "ordered_train_rows", "ordered_unstable_coefficients"],
+        ]
+        .rename(columns={"ordered_train_rows": "train_rows", "ordered_unstable_coefficients": "unstable_coefficients"})
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
+    if not ordered_unstable_rows.empty:
+        ordered_unstable_rows["train_rows"] = ordered_unstable_rows["train_rows"].astype(int)
+    ordered_stability_note = (
+        f"{len(ordered_unstable_rows)} of "
+        f"{predictions['model'].isin(['ordered_logit', 'ordered_probit']).sum()} "
+        "ordered-model fold fits have at least one parameter above "
+        f"{ORDERED_MODEL_COEFFICIENT_MAGNITUDE_WARNING:.1f} in magnitude, a sign of "
+        "(quasi-)complete separation in a small training fold rather than a "
+        "well-identified estimate. statsmodels does not raise a "
+        "ConvergenceWarning for this failure mode, so it would otherwise pass "
+        "silently. The exact parameter values for these folds are not "
+        "meaningful and are not reproducible bit-for-bit across machines/BLAS "
+        "builds; treat them as \"separated\", not as point estimates."
+        if not ordered_unstable_rows.empty
+        else (
+            "No ordered-model fold fit had a parameter above "
+            f"{ORDERED_MODEL_COEFFICIENT_MAGNITUDE_WARNING:.1f} in magnitude."
+        )
+    )
+    ordered_stability_caveat = (
+        "This is a coefficient-magnitude threshold, not a full instability audit: "
+        "a direct cross-environment comparison (rerunning this evaluation on a "
+        "different machine) found at least two further quarters where "
+        "ordered_logit's predicted action changed without any parameter crossing "
+        "this threshold, so the table below is a lower bound on which folds are "
+        "environment-sensitive, not a complete inventory. The macro-F1 figures "
+        "above should be read as reproducible within one fixed environment "
+        "(this project's `cpi_forecast` conda environment), not necessarily "
+        "bit-for-bit across machines."
+    )
+    ordered_stability_text = (
+        f"{ordered_stability_note}\n\n{ordered_stability_caveat}"
+        + (f"\n\n{_markdown_table(ordered_unstable_rows)}" if not ordered_unstable_rows.empty else "")
     )
     ordered_beta_columns = [f"ordered_beta_{feature}" for feature in ORDINAL_FEATURE_COLUMNS]
     ordered_parameter_rows = predictions.loc[
@@ -1444,9 +1577,8 @@ def build_evaluation_report(
     estimated_taylor_hike_misses = hike_total - estimated_taylor_hike_recall
     logit_hikes_as_hold = int(logit_matrix.loc["hike", "hold"])
     probit_hikes_as_hold = int(probit_matrix.loc["hike", "hold"])
-    ranking_text = ", ".join(
-        f"{row.model} {row.macro_f1:.3f}" for row in display_metrics.itertuples(index=False)
-    )
+    logit_hike_recall = int(logit_matrix.loc["hike", "hike"])
+    probit_hike_recall = int(probit_matrix.loc["hike", "hike"])
     best_macro_f1 = float(metrics["macro_f1"].max())
     best_models = [
         str(row.model)
@@ -1530,65 +1662,46 @@ def build_evaluation_report(
         [
             "# RBA Policy Action Classifier Evaluation",
             "",
+            "*Generated by `python -m src.models.rba_classifier`.*",
+            "",
             "## Scope",
             "",
             (
-                "Uses the leakage-safe Ensemble horizon-1 headline and trimmed-mean CPI "
-                "forecasts from the existing backtest prediction reports, plus the "
-                "curated lag-safe unemployment-rate change feature."
+                "Uses leakage-safe Ensemble horizon-1 headline and trimmed-mean CPI "
+                "forecasts from the existing backtest reports, plus the curated "
+                "lag-safe unemployment-rate change feature. Feature sets are fixed "
+                "before evaluation: threshold uses headline_forecast only; the "
+                "Taylor-rule baseline uses headline_forecast and "
+                "unemployment_rate_change_lag1; the estimated Taylor-rule model fits "
+                "cash_rate_change on inflation_gap (headline) and "
+                "unemployment_rate_change_lag1; ordered logit/probit use those three "
+                "plus trimmed_mean_forecast; Frank-Hall XGBoost adds "
+                "taylor_implied_change, so its comparison to the ordered models is not "
+                "a clean like-for-like feature match."
             ),
             "",
             (
-                "Feature sets are fixed before evaluation: the threshold baseline uses "
-                "headline_forecast only; the Taylor-rule baseline uses headline_forecast "
-                "and unemployment_rate_change_lag1 only; the estimated Taylor-rule model "
-                "fits cash_rate_change on headline inflation_gap and "
-                "unemployment_rate_change_lag1; ordered logit and ordered probit use "
-                "headline_forecast, trimmed_mean_forecast, and "
-                "unemployment_rate_change_lag1; Frank-Hall XGBoost uses those three plus "
-                "taylor_implied_change."
+                "majority_vote_ensemble is not a fitted model: it majority-votes the "
+                "same quarter's threshold, taylor_rule_estimated, ordered logit and "
+                "ordered probit predictions (ties resolved by the threshold "
+                "prediction). The fixed Taylor rule and Frank-Hall XGBoost are "
+                "excluded from the vote as already-established weaker models."
             ),
             "",
             (
-                "The majority_vote_ensemble is not a fitted model. It takes the same "
-                "quarter's already-computed threshold, taylor_rule_estimated, ordered_logit, "
-                "and ordered_probit predictions and applies a plain majority vote. The "
-                "fixed Taylor rule and Frank-Hall XGBoost are deliberately excluded because "
-                "the existing report already established them as clearly weaker. Any 2-2 "
-                "split is resolved by the threshold prediction before inspecting tie frequency "
-                "or performance."
-            ),
-            "",
-            (
-                "The Taylor-rule baseline is a deliberate simplification of a textbook "
-                "Taylor rule: unemployment_rate_change_lag1 is used as an Okun's-law-style "
-                "change term instead of an unemployment gap, because the project does not "
-                "estimate NAIRU or potential output. The rule uses fixed 0.5/0.5 Taylor "
-                "coefficients, the RBA 2.5% target-band midpoint, and the joined sample's "
-                f"mean real policy rate, cash_rate - headline_forecast, as r_star "
-                f"({r_star:.3f}); cash_rate_lag1 is used only as the status-quo rate for "
-                "discretizing the implied change. The negative r_star reflects this "
-                "sample's average real-rate proxy rather than a nominal cash-rate mean."
-            ),
-            "",
-            (
-                "The estimated Taylor-rule model is refit separately on each expanding "
-                "training fold by OLS with an intercept: cash_rate_change is regressed on "
-                "inflation_gap = headline_forecast - 2.5 and "
-                "unemployment_rate_change_lag1. Its predicted continuous change is "
-                f"discretized with the fixed +/-{TAYLOR_ESTIMATED_HOLD_BAND:.3f} percentage "
-                "point hold band."
-            ),
-            "",
-            (
-                "Frank-Hall XGBoost is fit as two binary classifiers, P(Y > cut) and "
-                "P(Y > hold). Unlike ordered logit and probit, it additionally receives "
-                "the continuous taylor_implied_change feature computed from the same fixed "
-                "Taylor-rule calibration. XGBoost-vs-ordered-model comparisons are therefore "
-                "not clean like-for-like feature comparisons. Its conservative hyperparameters "
-                "are chosen for the small sample: max_depth=2, n_estimators=50, "
-                "min_child_weight=3, subsample=0.75, colsample_bytree=0.75, reg_alpha=0.1, "
-                "and reg_lambda=2.0. These settings are not searched or tuned."
+                "The Taylor-rule baseline is a deliberate simplification: "
+                "unemployment_rate_change_lag1 stands in for an unemployment gap "
+                "(the project does not estimate NAIRU or potential output), using "
+                "fixed 0.5/0.5 coefficients, the RBA's 2.5% target midpoint, and the "
+                "sample's mean real policy rate (cash_rate - headline_forecast = "
+                f"{r_star:.3f}) as r*. The estimated variant refits by OLS each fold "
+                "(cash_rate_change ~ inflation_gap + unemployment_rate_change_lag1), "
+                f"discretized with a fixed +/-{TAYLOR_ESTIMATED_HOLD_BAND:.3f}pp hold "
+                "band. Frank-Hall XGBoost is two binary classifiers (P(Y>cut), "
+                "P(Y>hold)) with small-sample hyperparameters (max_depth=2, "
+                "n_estimators=50, min_child_weight=3, subsample=0.75, "
+                "colsample_bytree=0.75, reg_alpha=0.1, reg_lambda=2.0), not searched "
+                "or tuned."
             ),
             "",
             "## Joined Sample",
@@ -1607,7 +1720,7 @@ def build_evaluation_report(
             "",
             degenerate_text,
             "",
-            _markdown_table(display_audit),
+            _markdown_table(condensed_audit),
             "",
             "## Macro-F1 Comparison",
             "",
@@ -1644,27 +1757,23 @@ def build_evaluation_report(
             "## Prediction Confidence",
             "",
             (
-                "Confidence is the probability assigned to the predicted action by that "
-                "model's own class-probability calculation."
+                "Confidence is the probability each model's own class-probability "
+                "calculation assigns to its predicted action, not a validated track "
+                "record of being correct. Threshold probabilities use fresh horizon-1 "
+                f"Ensemble CPI simulation draws per fold (n_sims={DEFAULT_N_SIMS}, "
+                f"seed={DEFAULT_SEED} with one deterministic increment per fold)."
             ),
-            "",
-            (
-                "Threshold probabilities use fresh horizon-1 Ensemble CPI simulation "
-                f"draws for each threshold test quarter (n_sims={DEFAULT_N_SIMS}, seed={DEFAULT_SEED} "
-                "with one deterministic increment per fold)."
-            ),
-            "",
-            (
-                'This "confidence" measures how far a prediction sits from the model\'s '
-                "own decision boundary, not a validated track record of being correct; "
-                "a model can be confidently wrong."
-            ),
-            "",
-            _markdown_table(confidence_display),
-            "",
-            "Threshold hard-label/simulated-median consistency:",
             "",
             threshold_consistency_text,
+            "",
+            (
+                "Representative rows (full "
+                f"{confidence_display['target_quarter'].nunique()}-quarter x "
+                f"{confidence_display['model'].nunique()}-model table available by "
+                "rerunning `python -m src.models.rba_classifier`):"
+            ),
+            "",
+            _markdown_table(_representative_confidence_sample(confidence_display)),
             "",
             "## Majority Vote Ensemble Audit",
             "",
@@ -1682,11 +1791,10 @@ def build_evaluation_report(
             "## Tested And Reverted Ordered Feature Variant",
             "",
             (
-                "A single pre-committed 5-feature ordered-model variant added cash_rate_lag1 "
-                "and commodity_growth_lag1 to the active 3-feature ordered set. It was "
-                "reverted because it worsened both ordered models on the same walk-forward "
-                "test window; the result is retained here as a tested-and-rejected variant, "
-                "not erased."
+                "A pre-committed 5-feature ordered-model variant added cash_rate_lag1 "
+                "and commodity_growth_lag1 to the active 3-feature set. Reverted: it "
+                "worsened both ordered models on the same walk-forward window (kept "
+                "here as a tested-and-rejected variant, not erased)."
             ),
             "",
             (
@@ -1694,7 +1802,11 @@ def build_evaluation_report(
                 f"{', '.join(REVERTED_ORDERED_FIVE_FEATURE_COLUMNS)}."
             ),
             "",
-            _markdown_table(reverted_ordered_frame),
+            _markdown_table(
+                reverted_ordered_frame.drop(
+                    columns=["tested_5_feature_accuracy", "threshold_minus_tested_gap"]
+                )
+            ),
             "",
             "## Estimated Taylor Coefficient Audit",
             "",
@@ -1709,39 +1821,51 @@ def build_evaluation_report(
             "## Ordered Model Interpretability",
             "",
             (
-                "Ordered logit and probit are refit at every walk-forward step, so there "
-                "is no single coefficient vector for the whole exercise. The table below "
-                "reports the final fold, which uses the most training data. Betas are on "
-                "the train-standardized feature scale; alphas are the transformed latent "
-                "cutoffs between cut/hold and hold/hike."
+                "Ordered logit/probit refit at every walk-forward step, so there is no "
+                "single coefficient vector; the table below is the final fold (most "
+                "training data). Betas are on the train-standardized feature scale; "
+                "alphas are the transformed latent cut/hold and hold/hike cutoffs."
             ),
             "",
             _markdown_table(final_ordered_parameters),
             "",
             (
-                "The first-vs-last alpha comparison checks whether the thin initial folds "
-                "produce visibly different cutoffs from the final fold."
+                "First-vs-last-fold alpha comparison (checks whether thin initial "
+                "folds produce visibly different cutoffs from the final fold):"
             ),
             "",
-            _markdown_table(alpha_comparison_frame),
+            _markdown_table(
+                alpha_comparison_frame.drop(
+                    columns=[
+                        "first_alpha_cut_hold",
+                        "last_alpha_cut_hold",
+                        "first_alpha_hold_hike",
+                        "last_alpha_hold_hike",
+                    ]
+                )
+            ),
             "",
             "## OrderedModel Convergence Warnings",
             "",
             ordered_warning_text,
             "",
+            (
+                "A clean ConvergenceWarning history does not mean every fold is "
+                "well-identified; see coefficient-magnitude stability below."
+            ),
+            "",
+            "## OrderedModel Coefficient Stability",
+            "",
+            ordered_stability_text,
+            "",
             "## Small-Sample Caveat",
             "",
             (
-                f"The walk-forward test set has {len(test)} quarters. At this size, the "
-                f"macro-F1 ranking ({ranking_text}) is suggestive rather than decisive."
-            ),
-            "",
-            (
-                "As a quick uncertainty check, a paired bootstrap over the same test "
-                "quarters (2,000 resamples, seed=42) gives the following macro-F1 gap "
-                "intervals for threshold minus each candidate. This is a rough diagnostic "
-                "because it treats quarters as exchangeable and does not model time-series "
-                "dependence."
+                f"At {len(test)} test quarters, the macro-F1 ranking above is suggestive "
+                "rather than decisive. A paired bootstrap (2,000 resamples, seed=42, "
+                "quarters treated as exchangeable, so a rough diagnostic that ignores "
+                "time-series dependence) gives these threshold-minus-candidate gap "
+                "intervals:"
             ),
             "",
             _markdown_table(bootstrap_frame),
@@ -1755,23 +1879,24 @@ def build_evaluation_report(
             conclusion,
             "",
             (
-                "When the threshold rule is preferred, the non-statistical reason remains "
-                "its transparency and hike detection: it "
-                f"correctly classifies all {threshold_hike_recall} of {hike_total} hike "
-                f"quarters, while taylor_rule_estimated correctly classifies "
-                f"{estimated_taylor_hike_recall} of {hike_total} and misses "
-                f"{estimated_taylor_hike_misses}; ordered logit classifies "
-                f"{logit_hikes_as_hold} hikes as hold and ordered probit classifies "
-                f"{probit_hikes_as_hold} hikes as hold. That hike-to-hold error is a "
-                "structurally different, and arguably more consequential, failure mode "
-                "for a policy classifier than the aggregate macro-F1 gap alone captures."
+                "Beyond the statistics, threshold's non-statistical edge is "
+                "transparency and hike detection: it correctly classifies all "
+                f"{threshold_hike_recall} of {hike_total} hike quarters, versus "
+                f"{estimated_taylor_hike_recall} of {hike_total} for "
+                f"taylor_rule_estimated (misses {estimated_taylor_hike_misses}), "
+                f"{logit_hike_recall} of {hike_total} for ordered logit "
+                f"({logit_hikes_as_hold} called hold), and {probit_hike_recall} of "
+                f"{hike_total} for ordered probit ({probit_hikes_as_hold} called "
+                "hold). That hike-to-hold error is a structurally different, "
+                "arguably more consequential, failure mode than the aggregate "
+                "macro-F1 gap captures."
             ),
             "",
             (
-                "A plausible reading remains that the CPI forecast features are highly "
-                "correlated and the earliest valid training folds are thin. The expanded "
-                "exercise should therefore remain a documented classifier comparison for "
-                "the materiality discussion rather than an API-exposed policy predictor."
+                "A plausible reading is that the CPI forecast features are highly "
+                "correlated and the earliest valid training folds are thin. This "
+                "exercise should stay a documented classifier comparison for the "
+                "materiality discussion, not become an API-exposed policy predictor."
             ),
             "",
         ]

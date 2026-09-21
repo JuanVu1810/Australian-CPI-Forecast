@@ -3,131 +3,49 @@
 Date: 2026-08-28
 
 Scope: Phase 1b evidence note for the two five-variable SVAR systems gated in
-`reports/svar_gate_decisions.md`.
+`reports/svar_gate_decisions.md` (variables, lag order, cointegration rank,
+Cholesky ordering and the ADF/Johansen caveat are defined there and not
+repeated here).
 
 ## Five-Variable Trade-Offs
 
-Both systems use the five level variables settled in Phase 1a:
-
-- System A: `cpi_yoy`, `unemployment_rate`, `cash_rate`,
-  `commodity_growth`, `inflation_expectations_business`.
-- System B: `trimmed_mean_cpi_yoy`, `unemployment_rate`, `cash_rate`,
-  `commodity_growth`, `inflation_expectations_business`.
-
-Business inflation expectations are the strongest empirically supported shared
-macro variable in simple contemporaneous screening: raw correlation is `0.697`
-with `cpi_yoy` and `0.595` with `trimmed_mean_cpi_yoy` on the curated
-quarterly dataset.
+Business inflation expectations is the strongest empirically supported
+shared macro variable in simple contemporaneous screening: raw correlation
+`0.697` with `cpi_yoy`, `0.595` with `trimmed_mean_cpi_yoy`.
 
 Unemployment and the cash rate are retained primarily on economic-theory
-grounds rather than raw correlation alone. Their raw correlations are weaker:
-for headline CPI, `unemployment_rate = -0.385` and `cash_rate = 0.236`; for
-trimmed-mean CPI, `unemployment_rate = -0.487` and `cash_rate = 0.274`.
-They remain central state and policy variables for impulse-response analysis.
+grounds, not raw correlation: weaker for both targets
+(`unemployment_rate` -0.385/-0.487, `cash_rate` 0.236/0.274 for
+headline/trimmed mean), but they remain central state and policy variables
+for impulse-response analysis.
 
-Commodity growth is retained over the stronger raw PPI alternative because it
-supports the scenario feature and preserves sample coverage. `ppi_growth` has
-stronger raw correlation with both CPI targets (`0.522` with headline CPI and
-`0.384` with trimmed-mean CPI), but replacing `commodity_growth` with
-`ppi_growth` would reduce complete-case system size from 123 observations to
-109 observations. The selected commodity-growth systems keep 1995Q2-2025Q4
-coverage.
-
-## Cholesky Ordering Rationale
-
-System A fixed recursive ordering:
-
-1. `commodity_growth`
-2. `unemployment_rate`
-3. `cpi_yoy`
-4. `inflation_expectations_business`
-5. `cash_rate`
-
-Rationale: commodity growth is treated as the most externally driven
-same-quarter shock; unemployment and headline CPI are slower-moving domestic
-state variables; business inflation expectations can update within the quarter
-to commodity, labour-market, and CPI information; the cash rate is ordered last
-so the policy reaction can contemporaneously observe the macro block while
-policy shocks affect the block with a lag.
-
-System B fixed recursive ordering:
-
-1. `commodity_growth`
-2. `unemployment_rate`
-3. `trimmed_mean_cpi_yoy`
-4. `inflation_expectations_business`
-5. `cash_rate`
-
-Rationale: commodity growth is treated as the most externally driven
-same-quarter shock; unemployment and trimmed-mean CPI are slower-moving
-domestic state variables; business inflation expectations can update within
-the quarter to commodity, labour-market, and underlying-inflation information;
-the cash rate is ordered last so the policy reaction can contemporaneously
-observe the macro block while policy shocks affect the block with a lag.
-
-## ADF/Johansen Caveat
-
-### System A
-
-The ADF corroboration does not cleanly support the Johansen full-rank reading.
-For System A, `unemployment_rate` (`p=0.206528`) and `cash_rate` (`p=0.175548`)
-fail to reject the unit-root null at 5%. Because Johansen rank testing assumes a
-common order of integration across the system, this mixed univariate evidence
-means the `rank=5` reading is not unambiguous; it is also consistent with the
-trace test over-rejecting in a short 123-observation, `det_order=0`
-specification.
-
-The pragmatic Phase 1b judgment remains `levels_var_svar`: following the
-Sims-style rationale, estimating the system in levels is a defensible and
-commonly used approach for dynamic simulation and IRF work under unit-root
-uncertainty because it avoids imposing possibly wrong cointegrating
-restrictions. This is a documented judgment call, not a resolved stationarity
-finding. Phase 1b's planned evidence-based note on the 5-variable trade-offs
-and Cholesky ordering rationale must carry this caveat forward; it should not
-exist only in this gate report.
-
-### System B
-
-The ADF corroboration does not cleanly support the Johansen full-rank reading.
-For System B, `trimmed_mean_cpi_yoy` (`p=0.163291`), `unemployment_rate`
-(`p=0.206528`), and `cash_rate` (`p=0.175548`) fail to reject the unit-root
-null at 5%. Because Johansen rank testing assumes a common order of integration
-across the system, this mixed univariate evidence means the `rank=5` reading is
-not unambiguous; it is also consistent with the trace test over-rejecting in a
-short 123-observation, `det_order=0` specification.
-
-The pragmatic Phase 1b judgment remains `levels_var_svar`: following the
-Sims-style rationale, estimating the system in levels is a defensible and
-commonly used approach for dynamic simulation and IRF work under unit-root
-uncertainty because it avoids imposing possibly wrong cointegrating
-restrictions. This is a documented judgment call, not a resolved stationarity
-finding. Phase 1b's planned evidence-based note on the 5-variable trade-offs
-and Cholesky ordering rationale must carry this caveat forward; it should not
-exist only in this gate report.
+Commodity growth is retained over the stronger raw PPI alternative
+(`ppi_growth` correlation 0.522 headline / 0.384 trimmed mean) because it
+supports the scenario feature and preserves sample coverage: swapping to
+`ppi_growth` would shrink complete-case coverage from 123 to 109
+observations (loses 1995Q2-1997Q4).
 
 ## Phase 1b Treatment Result
 
-System B is the primary system and receives full treatment: recursive
-Cholesky IRFs with 80% block-residual-bootstrap bands, VAR diagnostics, and
-the diagnostic walk-forward point-forecast backtest.
+System B (trimmed mean) is the primary system and receives full treatment:
+recursive Cholesky IRFs with 80% block-residual-bootstrap bands, VAR
+diagnostics, and a diagnostic walk-forward backtest.
 
-System A was initially confirmatory, but the fixed escalation check found
-non-overlapping 80% block-bootstrap IRF bands against System B at four
-shared-shock horizons: `cash_rate` horizons 1-3 and
-`inflation_expectations_business` horizon 2. System A therefore remains
-escalated to the same full diagnostic and backtest treatment as System B. The
-previous i.i.d. bootstrap run had triggered five horizons; after the block
-bootstrap replacement, `inflation_expectations_business` horizon 1 no longer
-triggers because the 80% bands overlap.
+System A (headline) was initially confirmatory, but the fixed escalation
+check found non-overlapping 80% block-bootstrap IRF bands against System B at
+four shared-shock horizons (`cash_rate` horizons 1-3,
+`inflation_expectations_business` horizon 2), so it was escalated to the same
+full treatment. The earlier i.i.d. bootstrap had triggered five horizons;
+after the block-bootstrap replacement, `inflation_expectations_business`
+horizon 1 no longer triggers (its 80% bands now overlap).
 
-Backtest RMSE is diagnostic only. SVAR is not used here as a forecast-accuracy
-competitor to SARIMA, Elastic Net, or the Ensemble.
+Backtest RMSE below is diagnostic only; SVAR is not used as a
+forecast-accuracy competitor to SARIMA, Elastic Net, or the Ensemble.
 
 ## Persisted Phase 1b Diagnostics
 
-These are the full-sample VAR(2)-in-levels diagnostics produced for the two
-systems after System A escalated. The tests reject at 5% where `reject_5pct` is
-`yes`.
+Full-sample VAR(2)-in-levels diagnostics for both systems. `reject_5pct=yes`
+means the test rejects at 5%.
 
 ### Multivariate Tests
 
@@ -165,11 +83,10 @@ systems after System A escalated. The tests reject at 5% where `reject_5pct` is
 
 ## Diagnostic Backtest RMSE
 
-The SVAR walk-forward backtest uses
-`DEFAULT_INITIAL_TRAIN_SIZE=32` and horizons 1-8. These RMSE values are
-diagnostic only. The SVAR origin grid has not been verified against the
-SARIMA, Elastic Net, or Ensemble comparison grids, so the figures below should
-not be read as directly comparable to those models even informally.
+Walk-forward, `DEFAULT_INITIAL_TRAIN_SIZE=32`, horizons 1-8. The SVAR origin
+grid has not been verified against the SARIMA/Elastic Net/Ensemble
+comparison grids, so these are not directly comparable to those models even
+informally.
 
 | System | Target | Overall RMSE | H1 | H2 | H3 | H4 | H5 | H6 | H7 | H8 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -178,23 +95,20 @@ not be read as directly comparable to those models even informally.
 
 ## COVID-Era Diagnostic Sensitivity
 
-The project intervention metadata identifies two COVID-era intervention
-quarters: `2020Q2` (`covid_shock_down`) and `2020Q3`
-(`covid_shock_rebound`). Sensitivity checks were run two ways: excluding those
-two rows, and fitting the same VAR(2)-in-levels with those two intervention
-dummies as exogenous terms.
+Two intervention quarters (`2020Q2` shock-down, `2020Q3` rebound) were
+checked two ways: excluding both rows, and fitting the same VAR(2)-in-levels
+with them as exogenous dummies.
 
 COVID treatment weakens some diagnostics but does not resolve the core
-failures. Both systems still reject multivariate residual whiteness and
-multivariate normality after either excluding or dummying the COVID quarters.
-Normality improves materially under dummying because the unemployment residual
-Jarque-Bera failures resolve, but other residual series continue to reject
-normality. ARCH-LM failures partly improve: System B's
-`inflation_expectations_business` ARCH-LM rejection resolves under both
-treatments, and System B's target ARCH-LM rejection resolves when the COVID
-quarters are excluded, but System A's target ARCH-LM rejection persists.
+failures: both systems still reject multivariate whiteness and normality
+under either treatment. Normality improves materially under dummying, the
+unemployment Jarque-Bera failure resolves, but other residual series still
+reject. ARCH-LM failures partly improve: System B's
+`inflation_expectations_business` rejection resolves under both treatments,
+and System B's own target ARCH-LM rejection resolves when COVID quarters are
+excluded, but System A's target ARCH-LM rejection persists regardless.
 
-| System | COVID treatment | Whiteness statistic | Whiteness p-value | Normality statistic | Normality p-value |
+| System | COVID treatment | Whiteness stat | Whiteness p | Normality stat | Normality p |
 | --- | --- | ---: | ---: | ---: | ---: |
 | System A | Full sample | 283.464294 | 0.000094 | 3074.523062 | 0.000000 |
 | System A | Exclude `2020Q2`/`2020Q3` | 273.119255 | 0.000452 | 2283.146293 | 0.000000 |
@@ -205,7 +119,7 @@ quarters are excluded, but System A's target ARCH-LM rejection persists.
 
 Selected equation-level changes:
 
-| System | Variable | Test | Full-sample p-value | Exclude-COVID p-value | Dummy-COVID p-value | Read |
+| System | Variable | Test | Full-sample p | Exclude-COVID p | Dummy-COVID p | Read |
 | --- | --- | --- | ---: | ---: | ---: | --- |
 | System A | `unemployment_rate` | Jarque-Bera | 0.000000 | 0.000000 | 0.115153 | Resolves only with dummies |
 | System A | `cpi_yoy` | ARCH-LM | 0.002477 | 0.015802 | 0.031329 | Persists, weaker |
@@ -215,54 +129,26 @@ Selected equation-level changes:
 
 ## Bootstrap Validity Probe
 
-The shipped IRF bootstrap in `src/models/svar.py` is now a contiguous
-residual block bootstrap using block length `DEFAULT_ARCH_LAGS = 4`. Blocks
-are drawn as non-wrapping contiguous runs from the fitted residual series,
-concatenated, and then trimmed only at the final boundary to reconstruct the
-required residual-draw length. The simulate-and-refit logic is otherwise the
-same as the original Phase 1b bootstrap.
+The shipped IRF bootstrap (`src/models/svar.py`) is a contiguous residual
+block bootstrap, block length `DEFAULT_ARCH_LAGS = 4`, non-wrapping
+contiguous runs drawn from the fitted residuals and trimmed only at the final
+boundary. This replaced the earlier i.i.d. residual bootstrap because the
+persistent whiteness/normality/ARCH-LM failures mean single-row residual
+draws are too optimistic for dependence-sensitive IRF uncertainty.
 
-This replaced the earlier i.i.d. residual bootstrap because the persistent
-whiteness, normality, and some ARCH-LM failures mean single-row residual draws
-are too optimistic for dependence-sensitive IRF uncertainty. The historical
-scratch prototype compared the old i.i.d. bootstrap with contiguous residual
-block bootstraps using block lengths 4 and 8, keeping the same 80% quantiles
-and horizons.
+A scratch prototype compared i.i.d. against block lengths 4 and 8 at the same
+80% quantiles/horizons: bands were generally wider for
+`inflation_expectations_business` shocks and mixed for `cash_rate` shocks.
+Across six checked rows per system, mean block-to-i.i.d. width ratios were
+`1.137` (block 4) and `1.149` (block 8) for System A, `1.078` and `1.177` for
+System B, enough evidence to ship block length 4 before Phase 2 consumed the
+IRF bands.
 
-At the requested shocks and horizons, block-bootstrap bands were generally
-wider for `inflation_expectations_business` shocks and mixed for `cash_rate`
-shocks. Across the six checked rows per system, mean block-to-i.i.d. width
-ratios were `1.137` for block length 4 and `1.149` for block length 8 in
-System A, and `1.078` for block length 4 and `1.177` for block length 8 in
-System B.
+After shipping and rerunning `bootstrap_cholesky_irf_bands` (1000
+replications), the same rows compare as follows (differences from the
+prototype are expected stochastic variation from rerunning the bootstrap):
 
-| System | Response | Shock | Horizon | IID width | Block-4 width | Block-4 / IID | Block-8 width | Block-8 / IID |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| System A | `cpi_yoy` | `cash_rate` | 1 | 0.140772 | 0.127305 | 0.904 | 0.126158 | 0.896 |
-| System A | `cpi_yoy` | `cash_rate` | 2 | 0.176521 | 0.171665 | 0.972 | 0.180391 | 1.022 |
-| System A | `cpi_yoy` | `cash_rate` | 3 | 0.200113 | 0.209950 | 1.049 | 0.240383 | 1.201 |
-| System A | `cpi_yoy` | `inflation_expectations_business` | 1 | 0.149923 | 0.217089 | 1.448 | 0.193791 | 1.293 |
-| System A | `cpi_yoy` | `inflation_expectations_business` | 2 | 0.185438 | 0.229735 | 1.239 | 0.231597 | 1.249 |
-| System A | `cpi_yoy` | `inflation_expectations_business` | 3 | 0.211901 | 0.256034 | 1.208 | 0.261848 | 1.236 |
-| System B | `trimmed_mean_cpi_yoy` | `cash_rate` | 1 | 0.046010 | 0.047878 | 1.041 | 0.045854 | 0.997 |
-| System B | `trimmed_mean_cpi_yoy` | `cash_rate` | 2 | 0.082849 | 0.081774 | 0.987 | 0.088915 | 1.073 |
-| System B | `trimmed_mean_cpi_yoy` | `cash_rate` | 3 | 0.108209 | 0.106784 | 0.987 | 0.126240 | 1.167 |
-| System B | `trimmed_mean_cpi_yoy` | `inflation_expectations_business` | 1 | 0.047921 | 0.057729 | 1.205 | 0.063274 | 1.320 |
-| System B | `trimmed_mean_cpi_yoy` | `inflation_expectations_business` | 2 | 0.075770 | 0.086086 | 1.136 | 0.093378 | 1.232 |
-| System B | `trimmed_mean_cpi_yoy` | `inflation_expectations_business` | 3 | 0.102668 | 0.114165 | 1.112 | 0.130621 | 1.272 |
-
-This is evidence that the i.i.d. residual bootstrap may understate uncertainty
-for some IRFs, especially the inflation-expectations shock responses. The
-evidence was not uniformly one-way for every cash-rate row, but it was strong
-enough to ship the block bootstrap before Phase 2 consumes the IRF bands.
-
-After shipping the block bootstrap with block length 4 and rerunning
-`bootstrap_cholesky_irf_bands` for both systems with 1000 replications, the
-same shock/horizon rows have the following widths. Differences from the
-scratch block-4 prototype are expected stochastic variation from rerunning the
-bootstrap; the shipped values are close to the prototype on average.
-
-| System | Response | Shock | Horizon | Old IID width | Historical block-4 probe width | Shipped block-4 width | Shipped / IID | Shipped / probe |
+| System | Response | Shock | Horizon | Old IID width | Prototype block-4 width | Shipped block-4 width | Shipped / IID | Shipped / prototype |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | System A | `cpi_yoy` | `cash_rate` | 1 | 0.140772 | 0.127305 | 0.129771 | 0.922 | 1.019 |
 | System A | `cpi_yoy` | `cash_rate` | 2 | 0.176521 | 0.171665 | 0.175809 | 0.996 | 1.024 |
@@ -277,7 +163,6 @@ bootstrap; the shipped values are close to the prototype on average.
 | System B | `trimmed_mean_cpi_yoy` | `inflation_expectations_business` | 2 | 0.075770 | 0.086086 | 0.085438 | 1.128 | 0.992 |
 | System B | `trimmed_mean_cpi_yoy` | `inflation_expectations_business` | 3 | 0.102668 | 0.114165 | 0.112828 | 1.099 | 0.988 |
 
-Across these rows, the shipped block-4 bands average `1.198x` the old i.i.d.
-widths for System A and `1.051x` for System B. Relative to the historical
-block-4 probe, shipped widths average `1.051x` for System A and `0.972x` for
-System B.
+Across these rows, shipped block-4 bands average `1.198x` the old i.i.d.
+widths for System A and `1.051x` for System B; relative to the scratch
+prototype, `1.051x` for System A and `0.972x` for System B.
