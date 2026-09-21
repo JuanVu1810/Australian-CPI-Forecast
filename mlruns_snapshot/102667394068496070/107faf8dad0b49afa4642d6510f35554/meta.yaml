@@ -1,0 +1,14 @@
+artifact_uri: __MLRUNS_ROOT__/102667394068496070/107faf8dad0b49afa4642d6510f35554/artifacts
+end_time: 1789805706601
+entry_point_name: ''
+experiment_id: '102667394068496070'
+lifecycle_stage: active
+run_id: 107faf8dad0b49afa4642d6510f35554
+run_name: sarima_comparison
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1789805704424
+status: 3
+tags: []
+user_id: ''

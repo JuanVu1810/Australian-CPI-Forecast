@@ -72,12 +72,6 @@ def main() -> int:
             ),
         },
         {
-            "platform": "BigQuery",
-            "status": "configuration_required",
-            "evidence": "src/platform_loads.py; .env.example BIGQUERY_* variables; sql/queries/",
-            "next_step": "Run python -m src.build_curated_dataset --load-bigquery after GCP config.",
-        },
-        {
             "platform": "Supabase PostgreSQL",
             "status": "configuration_required",
             "evidence": (
@@ -147,9 +141,9 @@ def main() -> int:
     ]
 
     if os.getenv("DATABASE_URL"):
-        rows[6]["status"] = "configured"
-    if os.getenv("GCP_PROJECT_ID") and os.getenv("BIGQUERY_DATASET"):
-        rows[5]["status"] = "configured"
+        for row in rows:
+            if row["platform"] == "Supabase PostgreSQL":
+                row["status"] = "configured"
 
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     report = pd.DataFrame(rows)

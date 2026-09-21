@@ -1,0 +1,14 @@
+artifact_uri: __MLRUNS_ROOT__/102667394068496070/a1a3ef06944d4c2da69b066e7b8aa76e/artifacts
+end_time: 1787323585751
+entry_point_name: ''
+experiment_id: '102667394068496070'
+lifecycle_stage: active
+run_id: a1a3ef06944d4c2da69b066e7b8aa76e
+run_name: ensemble_comparison
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1787323585733
+status: 3
+tags: []
+user_id: ''

@@ -1,0 +1,81 @@
+{
+ "caveat": "RBA action classifications are a documented comparison exercise, not a validated policy predictor. The threshold baseline is the reportable result, but no classifier is statistically shown to beat it because paired-bootstrap confidence intervals cross zero in reports/rba_classifier_evaluation.md.",
+ "forecast_origin": "2025Q4",
+ "headline_forecast": 3.154202127141211,
+ "models": [
+  {
+   "confidence": 0.628,
+   "majority_vote_tie_break": false,
+   "model": "threshold",
+   "p_cut": 0.006,
+   "p_hike": 0.628,
+   "p_hold": 0.366,
+   "predicted_action": "hike",
+   "reportable": true
+  },
+  {
+   "confidence": null,
+   "majority_vote_tie_break": false,
+   "model": "taylor_rule",
+   "p_cut": null,
+   "p_hike": null,
+   "p_hold": null,
+   "predicted_action": "cut",
+   "reportable": false
+  },
+  {
+   "confidence": 0.43052444328038314,
+   "majority_vote_tie_break": false,
+   "model": "taylor_rule_estimated",
+   "p_cut": 0.1629024821180381,
+   "p_hike": 0.40657307460157877,
+   "p_hold": 0.43052444328038314,
+   "predicted_action": "hold",
+   "reportable": false
+  },
+  {
+   "confidence": 0.6974980595812317,
+   "majority_vote_tie_break": false,
+   "model": "ordered_logit",
+   "p_cut": 0.1383592705870915,
+   "p_hike": 0.1641426698316768,
+   "p_hold": 0.6974980595812317,
+   "predicted_action": "hold",
+   "reportable": false
+  },
+  {
+   "confidence": 0.6753347730638033,
+   "majority_vote_tie_break": false,
+   "model": "ordered_probit",
+   "p_cut": 0.14338506284042746,
+   "p_hike": 0.1812801640957693,
+   "p_hold": 0.6753347730638033,
+   "predicted_action": "hold",
+   "reportable": false
+  },
+  {
+   "confidence": null,
+   "majority_vote_tie_break": false,
+   "model": "frank_hall_xgboost",
+   "p_cut": null,
+   "p_hike": null,
+   "p_hold": null,
+   "predicted_action": "hold",
+   "reportable": false
+  },
+  {
+   "confidence": null,
+   "majority_vote_tie_break": false,
+   "model": "majority_vote_ensemble",
+   "p_cut": null,
+   "p_hike": null,
+   "p_hold": null,
+   "predicted_action": "hold",
+   "reportable": false
+  }
+ ],
+ "reportable_action": "hike",
+ "reportable_model": "threshold",
+ "target_quarter": "2026Q1",
+ "trimmed_mean_forecast": 3.2984856103996223
+}

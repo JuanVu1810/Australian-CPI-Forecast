@@ -1,0 +1,94 @@
+{
+  "feature_columns": [
+    "cpi_yoy_lag1",
+    "cpi_yoy_lag4",
+    "cash_rate_change_lag1",
+    "unemployment_rate_change_lag1",
+    "inflation_expectations_business_lag1",
+    "ppi_growth_lag2",
+    "commodity_growth_lag1",
+    "wti_growth_lag1",
+    "ppi_growth_lag2_sq",
+    "wti_growth_lag1_sq",
+    "cash_rate_change_lag1_x_unemployment_rate_change_lag1"
+  ],
+  "target_column": "cpi_yoy",
+  "horizons": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "scaler_mean": {
+    "cpi_yoy_lag1": 2.833999999999999,
+    "cpi_yoy_lag4": 2.875999999999999,
+    "cash_rate_change_lag1": -0.024833333333333332,
+    "unemployment_rate_change_lag1": -0.016836921333333324,
+    "inflation_expectations_business_lag1": 1.6848999999999998,
+    "ppi_growth_lag2": 0.6007711269102473,
+    "commodity_growth_lag1": 1.3491120538174421,
+    "wti_growth_lag1": 1.8848311037914847,
+    "ppi_growth_lag2_sq": 0.6998317997948892,
+    "wti_growth_lag1_sq": 233.96680799686433,
+    "cash_rate_change_lag1_x_unemployment_rate_change_lag1": -0.04187647477222222
+  },
+  "scaler_scale": {
+    "cpi_yoy_lag1": 1.4684154725417462,
+    "cpi_yoy_lag4": 1.501540542243199,
+    "cash_rate_change_lag1": 0.3808724998094652,
+    "unemployment_rate_change_lag1": 0.2835343044508586,
+    "inflation_expectations_business_lag1": 0.8567805961855112,
+    "ppi_growth_lag2": 0.582156210020885,
+    "commodity_growth_lag1": 7.523914486919873,
+    "wti_growth_lag1": 15.17940116430963,
+    "ppi_growth_lag2_sq": 0.8752553225161973,
+    "wti_growth_lag1_sq": 428.5011777844405,
+    "cash_rate_change_lag1_x_unemployment_rate_change_lag1": 0.16620894970154526
+  },
+  "per_horizon_selection": {
+    "1": {
+      "alpha": 0.1668100537200059,
+      "l1_ratio": 0.7,
+      "intercept": 2.7808080808080797
+    },
+    "2": {
+      "alpha": 0.1668100537200059,
+      "l1_ratio": 0.7,
+      "intercept": 2.7469387755102033
+    },
+    "3": {
+      "alpha": 0.46415888336127775,
+      "l1_ratio": 0.9,
+      "intercept": 2.7494845360824742
+    },
+    "4": {
+      "alpha": 0.46415888336127775,
+      "l1_ratio": 0.9,
+      "intercept": 2.7458333333333336
+    },
+    "5": {
+      "alpha": 0.46415888336127775,
+      "l1_ratio": 0.9,
+      "intercept": 2.7431578947368425
+    },
+    "6": {
+      "alpha": 0.46415888336127775,
+      "l1_ratio": 0.7,
+      "intercept": 2.7425531914893613
+    },
+    "7": {
+      "alpha": 0.46415888336127775,
+      "l1_ratio": 0.7,
+      "intercept": 2.736559139784946
+    },
+    "8": {
+      "alpha": 0.46415888336127775,
+      "l1_ratio": 0.7,
+      "intercept": 2.7326086956521736
+    }
+  }
+}

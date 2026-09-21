@@ -1,0 +1,16 @@
+# Machine the reruns ran on (captured 2026-09-21T18:58Z)
+CPU(s):                               16
+Thread(s) per core:                   2
+Core(s) per socket:                   8
+Model name:                           13th Gen Intel(R) Core(TM) i5-13450HX
+RAM: 7754 MB
+Kernel: 5.15.167.4-microsoft-standard-WSL2
+OS: "Ubuntu 20.04.6 LTS"
+Python (cpi_forecast): Python 3.11.15
+
+# OpenBLAS as loaded by numpy, scipy, scikit-learn and statsmodels in the cpi_forecast env (default kernel and threads).
+# The reruns forced other kernels with OPENBLAS_CORETYPE (SANDYBRIDGE, NEHALEM, PRESCOTT) and one thread with OPENBLAS_NUM_THREADS=1.
+numpy 2.4.6 scipy 1.17.1
+blas openblas version 0.3.31.188.0 architecture Haswell threads 16 libscipy_openblas
+blas openblas version 0.3.30 architecture Haswell threads 16 libscipy_openblas
+openmp openmp version None architecture None threads 16 libgomp

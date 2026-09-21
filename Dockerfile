@@ -8,7 +8,9 @@ ENV MLFLOW_EXPERIMENT_NAME="CPI Forecast"
 ENV MLFLOW_ALLOW_FILE_STORE=true
 
 COPY requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# constraints.txt pins the direct dependencies to the versions the checked-in results were produced with
+COPY constraints.txt constraints.txt
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 COPY api api
 COPY src src

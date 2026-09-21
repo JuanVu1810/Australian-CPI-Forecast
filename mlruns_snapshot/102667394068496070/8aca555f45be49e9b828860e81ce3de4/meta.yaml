@@ -1,0 +1,14 @@
+artifact_uri: __MLRUNS_ROOT__/102667394068496070/8aca555f45be49e9b828860e81ce3de4/artifacts
+end_time: 1789806119973
+entry_point_name: ''
+experiment_id: '102667394068496070'
+lifecycle_stage: active
+run_id: 8aca555f45be49e9b828860e81ce3de4
+run_name: elastic_net_comparison
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1789806117725
+status: 3
+tags: []
+user_id: ''

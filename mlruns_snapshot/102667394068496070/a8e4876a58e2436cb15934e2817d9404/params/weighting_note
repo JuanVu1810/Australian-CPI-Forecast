@@ -1,0 +1,1 @@
+Dynamic weights are derived from the same full walk-forward comparison sample used to report the ensemble RMSE, so the ensemble metric is not a strictly out-of-sample validation of the weighting scheme itself.

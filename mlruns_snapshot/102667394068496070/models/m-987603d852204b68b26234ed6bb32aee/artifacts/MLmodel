@@ -1,0 +1,31 @@
+artifact_path: __MLRUNS_ROOT__/102667394068496070/models/m-987603d852204b68b26234ed6bb32aee/artifacts
+flavors:
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.9.0
+    skops_trusted_types: null
+is_signature_from_type_hint: false
+mlflow_version: 3.15.1
+model_id: m-987603d852204b68b26234ed6bb32aee
+model_size_bytes: 26528
+model_uuid: m-987603d852204b68b26234ed6bb32aee
+prompts: null
+run_id: 809f950e739a4879be75a5bf96ef0c4e
+signature:
+  inputs: '[{"type": "double", "name": "trimmed_mean_cpi_yoy_lag1", "required": true},
+    {"type": "double", "name": "trimmed_mean_cpi_yoy_lag4", "required": true}, {"type":
+    "double", "name": "cash_rate_change_lag1", "required": true}, {"type": "double",
+    "name": "unemployment_rate_change_lag1", "required": true}, {"type": "double",
+    "name": "inflation_expectations_business_lag1", "required": true}, {"type": "double",
+    "name": "ppi_growth_lag1", "required": true}, {"type": "double", "name": "commodity_growth_lag1",
+    "required": true}, {"type": "double", "name": "wti_growth_lag1", "required": true},
+    {"type": "double", "name": "commodity_growth_lag1_sq", "required": true}, {"type":
+    "double", "name": "wti_growth_lag1_sq", "required": true}, {"type": "double",
+    "name": "cash_rate_change_lag1_x_unemployment_rate_change_lag1", "required": true}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float64", "shape": [-1,
+    8]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2026-09-19 08:05:11.107904'

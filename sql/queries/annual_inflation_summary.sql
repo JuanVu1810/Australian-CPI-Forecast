@@ -1,4 +1,4 @@
--- BigQuery/DuckDB-style analytical query for annual CPI and macro summaries.
+-- DuckDB analytical query for annual CPI and macro summaries.
 
 SELECT
     CAST(SUBSTR(quarter, 1, 4) AS INTEGER) AS year,

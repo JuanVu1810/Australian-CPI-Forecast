@@ -1,0 +1,49 @@
+# Exact versions of the direct dependencies, taken from the environment that produced the checked-in
+# reports and book (conda env `cpi_forecast`, Python 3.11.15), re-checked 2026-09-22.
+#
+# Use it on top of the normal requirements:
+#   python -m pip install -r requirements.txt -c constraints.txt
+#   python -m pip install -r requirements-notebooks.txt -c constraints.txt
+#
+# A constraints file only limits the versions pip may choose. It does not add packages.
+#
+# Where it is used: the tests and scheduled-etl workflows (.github/workflows) and the Dockerfile install with it.
+# The deploy-book workflow does not, because the book is built from saved outputs, not re-executed.
+#
+# What this does not cover:
+#   - Transitive dependencies still float. Only numpy and scipy, which the numerics depend on, are pinned below.
+#   - psycopg2-binary, seaborn and pmdarima are listed in the requirements files but were
+#     not installed in the reference environment, so they are left unpinned here.
+
+# data retrieval and validation
+pandas==2.3.3
+readabs==0.2.5
+yfinance==1.5.2
+xlrd==2.0.2
+pyarrow==24.0.0
+pandera==0.32.1
+duckdb==1.5.5
+requests==2.34.2
+
+# models
+numpy==2.4.6
+scipy==1.17.1
+statsmodels==0.14.6
+scikit-learn==1.9.0
+xgboost==3.2.0
+
+# tracking, API and app
+mlflow==3.15.1
+fastapi==0.141.1
+uvicorn==0.52.1
+pydantic==2.13.4
+sqlalchemy==2.0.52
+streamlit==1.61.1
+altair==6.2.2
+
+# tests, notebooks and the book
+pytest==9.1.1
+nbconvert==7.17.1
+ipykernel==7.3.0
+matplotlib==3.11.1
+jupyter-book==1.0.4.post1

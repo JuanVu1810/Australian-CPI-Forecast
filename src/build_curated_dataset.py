@@ -29,7 +29,7 @@ from src.features import (
     add_nonlinear_elastic_net_terms,
     order_feature_columns,
 )
-from src.platform_loads import load_bigquery, load_postgres_quality_report, write_duckdb
+from src.platform_loads import load_postgres_quality_report, write_duckdb
 from src.platform_validation import validate_curated_with_pandera
 from src.transform import (
     latest_dataset_path,
@@ -174,11 +174,6 @@ def parse_args() -> argparse.Namespace:
         help="Skip the DuckDB analytical load attempted by default.",
     )
     parser.add_argument(
-        "--load-bigquery",
-        action="store_true",
-        help="Upload the curated dataset to BigQuery using environment variables.",
-    )
-    parser.add_argument(
         "--load-postgres",
         action="store_true",
         help="Load the data-quality report to PostgreSQL/Supabase using DATABASE_URL.",
@@ -289,9 +284,6 @@ def main() -> int:
                 db_path=Path(args.duckdb_path),
             )
         )
-
-    if args.load_bigquery:
-        quality_records.append(load_bigquery(curated))
 
     if args.load_postgres:
         quality_records.append(

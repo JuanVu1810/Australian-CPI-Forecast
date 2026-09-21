@@ -1,0 +1,9 @@
+artifact_location: __MLRUNS_ROOT__/102667394068496070
+creation_time: 1786975220334
+effective_trace_archival_retention: null
+experiment_id: '102667394068496070'
+last_update_time: 1786975220334
+lifecycle_stage: active
+name: CPI Forecast
+trace_location: null
+workspace: default

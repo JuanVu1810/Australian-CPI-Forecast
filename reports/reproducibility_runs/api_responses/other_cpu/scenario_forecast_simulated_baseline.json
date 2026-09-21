@@ -1,0 +1,38 @@
+{
+ "caveat": "Scenario IRFs come from Phase 1b VAR(2)-in-levels SVAR systems that still fail multivariate residual whiteness and normality diagnostics after COVID treatment checks and the block-bootstrap IRF fix; adjusted forecasts are illustrative under a documented, imperfect specification, not precise causal estimates.",
+ "forecast": [
+  2.9561506058849436,
+  2.9249955057954637,
+  2.6626070883804607,
+  2.732597173903282
+ ],
+ "forecast_origin": "2025Q4",
+ "horizons": [
+  1,
+  2,
+  3,
+  4
+ ],
+ "interval_lower": [
+  2.2583997940885463,
+  2.013888878783799,
+  1.5114810987180496,
+  1.4584648574117574
+ ],
+ "interval_upper": [
+  3.6949922587950748,
+  4.001755184328436,
+  4.0260445968522145,
+  4.301948619123634
+ ],
+ "quarters": [
+  "2026Q1",
+  "2026Q2",
+  "2026Q3",
+  "2026Q4"
+ ],
+ "shock_size": 1.6856789869744784,
+ "shock_value": 6.0,
+ "shock_variable": "unemployment_rate",
+ "target": "headline"
+}

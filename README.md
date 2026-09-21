@@ -29,13 +29,13 @@ call. This README only covers status and how to run the project.
 | SVAR and scenario engine | implemented locally; illustrative, since both VAR systems fail residual whiteness and normality diagnostics |
 | RBA policy-action classifier | implemented; served by the Cloud Run API since 2026-09-21 |
 | Credit-risk stress test and illustrative 12-month ECL | implemented; illustrative only; served by the Cloud Run API since 2026-09-21 |
-| MLflow tracking | implemented locally (file store in `mlruns/`, gitignored); no champion model or Model Registry |
+| MLflow tracking | implemented locally (file store in `mlruns/`, gitignored; a saved copy of the served runs is in `mlruns_snapshot/`); no champion model or Model Registry |
 | FastAPI | implemented, 7 endpoints; live on Cloud Run |
 | Docker and Google Cloud Run | deployed, verified live 2026-09-21 (image `redeploy-20260921-e905627`, revision `cpi-forecast-api-00016-vig`). Serves the forecast, trimmed-mean, scenario, RBA and credit endpoints; redeploy is manual |
 | Streamlit | deployed on Streamlit Community Cloud, verified live 2026-09-21: <https://cpi-forecast-demo.streamlit.app/>. A four-tab interactive demo that goes with the book (live forecast, Ensemble path reveal, scenario engine, RBA call) |
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
+| Reproducibility | pinned versions (`constraints.txt`), saved model runs, and tests on the saved reports, SQL queries and model runs; re-checked on the newest packages, see [Reproduce the results](#reproduce-the-results) |
 | GitHub Actions (tests, monthly scheduled ETL) | scaffolded; no Cloud Run deploy step |
-| BigQuery | target architecture only; optional load hook, not deployed |
 | Supabase PostgreSQL | schema scaffolded (`sql/schema_app_metadata.sql`); not deployed |
 
 ## Choose how to run it
@@ -44,11 +44,13 @@ call. This README only covers status and how to run the project.
 |---|---|---|
 | Read the results | the book, or the live API docs | nothing |
 | Run everything: ETL, tests, training, API, Streamlit, book | [Python](#run-with-python) | Python 3.11; about 45 minutes of model training |
-| Serve just the API in a container | [Docker](#run-with-docker-api-only) | Docker, plus models trained with the Python path first |
+| Check that I get the same results as the checked-in files | [Reproduce the results](#reproduce-the-results) | Python 3.11; about 10 minutes if you restore the saved runs, over an hour if you retrain |
+| Serve just the API in a container | [Docker](#run-with-docker-api-only) | Docker, plus the trained models (train them, or restore `mlruns_snapshot/`) |
 
 **Docker alone is not enough on a fresh clone.** The trained models live in
 `mlruns/`, which is gitignored, and the image build copies that folder. Train
-once with the Python path, then build the image.
+once with the Python path, or restore the saved runs with
+`python -m src.mlruns_snapshot restore`, then build the image.
 
 ```mermaid
 flowchart LR
@@ -81,10 +83,19 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt        # about 2 minutes
 ```
 
-`requirements.txt` is unpinned. This README was last verified on 2026-09-20
-with Python 3.11.15, pandas 3.0.6, numpy 2.4.6, statsmodels 0.15.0,
-scikit-learn 1.9.1, xgboost 3.2.0, mlflow 3.16.1, fastapi 0.141.1 and
-streamlit 1.64.0.
+`requirements.txt` is unpinned. To get the versions the checked-in reports and book were produced
+with, add the constraints file:
+
+```bash
+python -m pip install -r requirements.txt -c constraints.txt
+```
+
+[constraints.txt](constraints.txt) pins the direct dependencies, plus numpy and scipy, to the environment
+that produced the results: Python 3.11.15, pandas 2.3.3, numpy 2.4.6, statsmodels 0.14.6,
+scikit-learn 1.9.0, xgboost 3.2.0, mlflow 3.15.1, fastapi 0.141.1 and streamlit 1.61.1 (re-checked
+2026-09-22). The tests and monthly ETL workflows and the Docker image install with it too. Other
+packages still float. [Reproduce the results](#reproduce-the-results) says what was checked, including
+a run on the newest package versions.
 
 ### 2. Data (optional: it is already in the repository)
 
@@ -110,6 +121,18 @@ print(con.sql(pathlib.Path("sql/queries/annual_inflation_summary.sql").read_text
 EOF
 ```
 
+`sql/queries/` holds three saved queries, and `tests/test_duckdb_queries.py` runs each one against the
+database the ETL builds, so a renamed column fails the tests:
+
+| Query | What it shows |
+|---|---|
+| `annual_inflation_summary.sql` | yearly averages of CPI, unemployment, cash rate, wage and producer price growth |
+| `surge_vs_before_and_after.sql` | the same series averaged before, during and after the 2020-23 surge; it feeds a chart in book chapter 2 |
+| `yearly_change_in_inflation.sql` | how far year-ended CPI and the cash rate moved over the previous four quarters (a window function) |
+
+DuckDB is a local SQL layer over the curated table. The models, API and Streamlit app read the curated CSV
+directly and do not depend on it.
+
 To re-download the source data from ABS, RBA, APRA and Yahoo Finance (network
 needed, under a minute), then rebuild:
 
@@ -132,13 +155,14 @@ appendix and `python -m src.eda_export`, which writes
 ### 3. Run the tests
 
 ```bash
-python -m pytest tests                            # 175 tests, about 3 minutes
+python -m pytest tests                            # 215 tests, about 3 minutes
 ```
 
 ### 4. Train the models
 
 The API serves each model family from its latest finished MLflow run, so the
-runs must exist first. Run these five commands once, in this order:
+runs must exist first. To skip training, restore the saved runs (see below).
+Otherwise run these five commands once, in this order:
 
 | Command | Logs | Time* |
 |---|---|---|
@@ -154,6 +178,21 @@ Runs go to `mlruns/` (MLflow experiment "CPI Forecast"). Training also rewrites
 the CSVs in `reports/`. The results are deterministic, so they come out
 identical to the committed files. Only the bytes of the Parquet file from step 2
 can differ, depending on your `pyarrow` version.
+
+**Skip training: restore the saved runs.** `mlruns_snapshot/` (about 5.5 MB) holds the
+latest finished run of each served model family, trained on the data up to the
+2025Q4 forecast origin. Restore it into an empty `mlruns/`:
+
+```bash
+python -m src.mlruns_snapshot restore                 # add --merge if mlruns/ already has runs
+```
+
+The API then serves the same forecasts as the checked-in `reports/tableau/forecast.csv`
+(checked on 2026-09-22: every model, both targets, all eight horizons, to within 1e-15).
+The saved models were trained with the versions in `constraints.txt`, so install with it.
+After retraining, your new runs are the latest, so the API uses them instead. To refresh
+the saved copy after retraining, run `python -m src.mlruns_snapshot build`. It replaces
+this machine's paths with placeholders and drops the MLflow user fields.
 
 ### 5. Start the API
 
@@ -197,9 +236,12 @@ curl -X POST http://localhost:8000/forecast/scenario \
 The Cloud Run deployment serves `/health` and the forecast, trimmed-mean,
 scenario, RBA and credit endpoints (verified live 2026-09-21). On its single CPU,
 `/forecast/scenario` takes about 40 to 46 seconds and `/rba-action` about 30 to
-45. The simulation-based outputs of those two can differ from a local run in the
-third decimal (for example an RBA cut probability of 0.8% instead of 0.6%); the
-call is the same.
+45. The simulation-based outputs of those two can differ slightly from a local run.
+On 2026-09-22 the scenario forecast was off by up to 0.031 percentage points and the
+RBA probabilities by up to 0.2; no RBA action changed, and point forecasts and
+intervals agreed to within 2e-9. Asked twice, Cloud Run gave identical answers.
+Forcing a different CPU kernel on one machine gives the same kind of shift
+(`reports/reproducibility_check.csv`).
 
 ### 6. Start Streamlit
 
@@ -244,14 +286,153 @@ Everything has a working default; set these only to change it.
 | `CPI_DEMO_HOSTED` | unset | set to `1` on a public deployment: locks the API address to `API_BASE_URL` and swaps the local "start uvicorn" messages for visitor-friendly ones |
 | `PORT` | `8000` | port the Docker image listens on |
 
-`.env.example` also lists BigQuery and Supabase settings. A normal run does not
+`.env.example` also lists the Supabase setting. A normal run does not
 use them.
+
+## Reproduce the results
+
+This is the recipe for getting the same numbers as the checked-in files, and for checking that you did.
+It was tested on Linux (WSL2 Ubuntu, Python 3.11).
+
+**What keeps the results repeatable.** The downloaded source data and the curated dataset are committed, so
+everyone starts from the same data. The models see data only up to the 2025Q4 forecast origin; later
+quarters are benchmark only. Random draws use fixed seeds (42), and `constraints.txt` fixes the package versions.
+
+### 1. Set up
+
+```bash
+python3.11 -m venv .venv && source .venv/bin/activate
+python -m pip install -r requirements.txt -c constraints.txt
+```
+
+Do not run `data_retrieval.py`. ABS and RBA revise past figures: between the downloads of late August and
+3 September 2026, household spending changed in 161 of its 162 monthly values. A fresh download can give
+slightly different numbers.
+
+### 2. Rebuild the data and run the tests
+
+```bash
+python -m src.build_curated_dataset      # about 1 second
+python -m src.platform_status            # about 1 second
+python -m pytest tests                   # 215 tests, about 3 minutes
+git status --short data reports          # expect nothing, or only the .parquet file (see below)
+```
+
+The curated CSV and `reports/data_quality_report.csv` come out byte-identical. Only the bytes of the Parquet
+file can differ, depending on your `pyarrow` version; its contents match.
+
+### 3. Get the model runs
+
+Pick one.
+
+**A. Restore the saved runs (seconds).** These are the runs behind the checked-in forecasts.
+
+```bash
+python -m src.mlruns_snapshot restore
+```
+
+**B. Retrain (about 45 minutes).** Run the five commands in [step 4](#4-train-the-models) above. New runs get
+new IDs and timestamps, so the `mlruns/` folder is never file-identical between machines. The results are.
+
+### 4. Check that you got the same results
+
+**After A,** start the API (`uvicorn api.main:app --port 8000`) and request a forecast:
+
+```bash
+curl -s -X POST http://localhost:8000/forecast/all -H "Content-Type: application/json" -d '{"horizon": 4}'
+```
+
+The Ensemble's four headline forecasts should read 3.154, 3.128, 2.938 and 3.037. Every model, both targets and
+all eight horizons match `reports/tableau/forecast.csv` to within 1e-15.
+
+**After B,** regenerate the other reports and let git do the comparing:
+
+```bash
+python -m src.models.model_comparison --no-rba                   # about 7 minutes
+python -m src.models.rba_classifier                              # about 9 minutes
+python -m src.models.simulation_fan                              # about 1.5 minutes
+python -m src.eda_export                                         # about 1 second
+python -m src.models.svar_unemployment_export                    # about 1 second
+python -m src.models.interval_coverage                           # about 22 minutes
+python -m src.models.interval_coverage --target trimmed_mean     # about 23 minutes
+python -m src.models.interval_calibration                        # about 24 minutes
+python -m src.models.interval_calibration --target trimmed_mean  # about 24 minutes
+git diff --stat -- reports                                       # expect no output
+```
+
+No output means every regenerated file is byte-identical to the checked-in one. If you see a difference,
+check the list below before assuming something is wrong.
+
+**Optional: the Tableau exports.** With the API running (`uvicorn api.main:app --port 8000` in one terminal),
+`python -m src.models.tableau_export` in another rewrites `reports/tableau/` in about 20 seconds. Everything
+matches except `dataset_overview.csv`, whose `curated_dataset_last_modified` column is the date the curated
+data was last written, so it changes whenever the ETL runs.
+
+### What was checked
+
+On 2026-09-22 the steps above were re-run in a fresh environment with the newest packages available (pandas 3.0.6,
+statsmodels 0.15.0, scikit-learn 1.9.1), on the machine that produced the checked-in files. The test suite passed
+(191 tests at the time; all 215 pass in the pinned environment), the curated data rebuilt identically, and 49 of the
+54 report files were regenerated. 48 were byte-identical to the checked-in file: the model comparisons, backtests,
+Elastic Net coefficients, simulation fans, RBA classifier report, EDA exports, interval coverage and calibration
+reports, the Tableau exports, the platform status report and the SVAR unemployment forecast. The one difference is
+`tableau/dataset_overview.csv`, which records when the data was last written. The other 5 files were not regenerated:
+
+- four dated decision and evidence notes (`*_decisions.md`, `svar_five_variable_evidence_note.md`) are prose that no
+  code writes;
+- `tableau/rba_half_donut_scaffold.csv` is a fixed lookup table for a Tableau chart.
+
+### Measured by script
+
+`python -m src.reproducibility_check` measures how far a rerun drifts and saves the numbers to
+`reports/reproducibility_check.csv` (one row per scenario and quantity, with the recipe in its `how` column) and
+`reports/reproducibility_check_files.csv` (per file). The book's chapter 6 chart is drawn from them. On 2026-09-22:
+
+| Scenario | Result |
+|---|---|
+| Rebuild the book twice | 37 of 37 HTML pages identical |
+| Restore the saved runs | 14 of 14 Tableau exports identical |
+| Retrain the models on the newest packages | 43 of 44 rewritten files identical; the other differs in one date cell; no number changed in 89,322 table cells |
+| Serve on one CPU thread | 0 of 315 numbers changed |
+| Serve on another CPU kernel (Sandy Bridge) | forecasts within 2e-10; scenario forecast up to 0.019 pp and RBA probabilities up to 0.5 pp off; no action or label changed |
+| Serve from Cloud Run instead of locally | forecasts within 2e-9; scenario forecast up to 0.031 pp and RBA probabilities up to 0.2 pp off; no action or label changed |
+| Ask Cloud Run the same questions twice | 0 of 315 numbers and 0 of 175 text fields changed |
+| Rerun the RBA classifier on three other kernels | 0 of 861 calls changed; ordered-model probabilities under 3e-9; threshold-model probabilities up to 4.7 pp; ordered logit's unstable first-fold cut-offs up to 25 |
+| RBA classifier against an earlier committed report | 4 of 164 calls changed, all in the ordered models (same inputs and prediction code; cause unknown) |
+| Download the ABS data again | 161 of 162 household spending values changed, by up to 0.235% |
+
+The retrain skipped the four interval coverage and calibration reports (about 90 minutes); the hand-run check
+above covers them. Reruns happen in scratch copies, so the checked-in reports are never touched.
+
+To repeat a scenario, see [reports/reproducibility_runs/](reports/reproducibility_runs/README.md). It has the exact
+commands (the helpers are `scripts/repro_scratch_copy.sh`, `scripts/repro_retrain_chain.sh` and
+`scripts/repro_rba_predictions.py`), the saved RBA classifier predictions for each CPU kernel, the retrain's step log,
+package lists for both environments, the raw API responses, the machine and the code version, and a list of what was not
+kept.
+
+### What can still differ
+
+- **A fresh data download**, because of ABS and RBA revisions (step 1).
+- **Another machine.** Point forecasts and intervals agree with a local run to within 2e-9 on Cloud Run, but its
+  scenario forecast is off by up to 0.031 percentage points and its RBA probabilities by up to 0.2. Forcing OpenBLAS
+  onto another CPU kernel on one machine gives the same kind of shift, so different arithmetic is enough to produce a
+  gap of this size (Cloud Run's image was also built from unpinned packages, so that is not proof). The RBA classifier's
+  early fits are unstable: an earlier committed report differs from a rerun in 4 of 82 ordered-model calls with the
+  same inputs and prediction code, and what caused it is not known. Three other CPU kernels changed none of 861
+  calls and moved the ordered models' probabilities by under 3e-9, so CPU arithmetic is not the explanation. No second
+  physical computer was tested.
+- **Packages that are not pinned.** `constraints.txt` covers direct dependencies only. A full retrain on the newest
+  packages matched (see the table above), so this is a precaution, not a known problem.
+- **The book.** Its pages are pre-executed, so `jupyter-book build` reproduces them exactly. To re-run the
+  analysis notebooks yourself, use `notebooks/EDA.ipynb`. The book's appendix notebooks share one kernel
+  session, so run them in order or not at all.
 
 ## Run with Docker (API only)
 
 The image serves the FastAPI service only. It does not include Streamlit,
-tests, notebooks or the book. Run [step 4](#4-train-the-models) first so
-`mlruns/` exists; without it the build fails at the `COPY mlruns` step.
+tests, notebooks or the book. Run [step 4](#4-train-the-models) first (train, or restore the
+saved runs) so `mlruns/` exists; without it the build fails at the `COPY mlruns` step. The image
+installs with `constraints.txt`, so that file must be in the folder.
 
 ```bash
 docker build -t cpi-forecast-api:latest .
@@ -273,7 +454,8 @@ image will return 503 for that endpoint while everything works locally.
 ### Deploy to Google Cloud Run
 
 Push the pre-built image and deploy it directly. Do not use a git-triggered
-build: `mlruns/` is gitignored, so a build from git would have no models.
+build: `mlruns/` is gitignored, so a build from git would have no models. (`mlruns_snapshot/` is
+committed but kept out of the image; restore it into `mlruns/` before you build.)
 
 ```bash
 gcloud auth configure-docker <region>-docker.pkg.dev
@@ -287,7 +469,9 @@ gcloud run deploy cpi-forecast-api \
 ```
 
 Cloud Run sets `PORT` and the image listens on it. Redeploying after model or
-API changes is manual.
+API changes is manual. The live service was built before the Dockerfile started using
+`constraints.txt`; a rebuild from this repo installs the pinned versions, so compare the
+new revision's outputs on a private tag before you switch traffic.
 
 ## Host the Streamlit demo
 
@@ -320,9 +504,12 @@ files and needs no API.
 
 | Symptom | Cause and fix |
 |---|---|
-| `/forecast/all` returns HTTP 200 with an empty `models` list and `unavailable` entries reading "No finished MLflow run found for ..." | The models are not trained. Run [step 4](#4-train-the-models). |
+| `/forecast/all` returns HTTP 200 with an empty `models` list and `unavailable` entries reading "No finished MLflow run found for ..." | The models are not trained or restored. Run [step 4](#4-train-the-models). |
 | `/forecast/trimmed-mean/all` lists only `ensemble` as unavailable | The last command in step 4 was skipped. |
-| `docker build` fails at `COPY mlruns` | `mlruns/` does not exist. Train first. |
+| `docker build` fails at `COPY mlruns` | `mlruns/` does not exist. Train first, or restore the saved runs. |
+| `docker build` fails at `COPY constraints.txt` | The file is missing from the folder. It lives in the repository root. |
+| `python -m src.mlruns_snapshot restore` says `already has content` | It will not overwrite existing runs. Add `--merge` to add the saved runs next to yours. |
+| `git diff reports/` shows a change after a re-run | Only `tableau/dataset_overview.csv` (a date column) should ever differ. For anything else see [What can still differ](#what-can-still-differ). |
 | Import errors, or syntax errors from `src/models` | Wrong Python version. Use 3.11. |
 | Streamlit shows an API-unavailable banner in a tab | Start the API, or fix the "API base URL" box. |
 | `Address already in use` | Pass a different port, for example `uvicorn api.main:app --port 8001`. |
@@ -336,14 +523,15 @@ files and needs no API.
 +-- book/                Jupyter Book source (book/australian_cpi_forecasting)
 +-- data/                processed series, curated dataset, metadata; analytics/ holds the DuckDB file built by the ETL
 +-- dataset/             raw downloads from ABS, RBA, APRA and Yahoo Finance
++-- mlruns_snapshot/     saved copy of the served model runs (restore: python -m src.mlruns_snapshot restore)
 +-- notebooks/           the original assignment notebook and the EDA source
 +-- reports/             model comparison and interval CSVs, plus the decision notes below
 +-- scripts/             rewrite_mlruns_paths.py, used by the Docker build
-+-- sql/                 DuckDB queries and the Postgres metadata schema
-+-- src/                 ETL, validation and features; src/models/ holds every model
-+-- tests/               pytest suite
++-- sql/                 three tested DuckDB queries and the Postgres metadata schema
++-- src/                 ETL, validation and features; src/models/ holds every model; mlruns_snapshot.py builds and restores the saved runs
++-- tests/               pytest suite, including checks on the saved reports, SQL queries and model runs
 +-- .github/workflows/   CI, scheduled ETL and book deployment
-+-- data_retrieval.py, Dockerfile, requirements.txt, requirements-data.txt, requirements-notebooks.txt
++-- data_retrieval.py, Dockerfile, constraints.txt, requirements.txt, requirements-data.txt, requirements-notebooks.txt
 ```
 
 `notebooks/` is not needed to run the project. To run the notebooks, install
@@ -360,12 +548,15 @@ scenario outputs are illustrative rather than causal. The credit-stress ECL is
 a simplified, Stage-1-only, 12-month calculation. It is not comparable to any
 bank's real provision and must not be used for credit, regulatory or accounting
 decisions. The RBA classifier's fitted models are not statistically shown to
-beat its threshold baseline.
+beat its threshold baseline. The numbers reproduce on the machine that produced them,
+including with the newest packages; [What can still differ](#what-can-still-differ) lists
+where they might not.
 
 ## Further reading
 
 The book carries the methodology and results. The decision notes behind
-specific modelling choices live in `reports/`:
+specific modelling choices live in `reports/`. To check that you get the same numbers, see
+[Reproduce the results](#reproduce-the-results).
 
 - [Interval calibration remediation and the SARIMAX removal](reports/model_interval_calibration_remediation_decisions.md)
 - [Trimmed-mean refit decisions](reports/model_refit_phase1_decisions.md)

@@ -1,0 +1,30 @@
+# Code the reruns used (captured 2026-09-21T18:58Z)
+git HEAD: 5cbea9a9186816620c042eb39bf249afe15b2678  (Tighten decision-note reports and flag RBA classifier fold instability)
+branch: main
+working tree: 63 paths differ from HEAD (modified or untracked); the reruns used the working tree, not HEAD.
+
+# Paths under code and data folders that differ from HEAD:
+ M Dockerfile
+ M requirements.txt
+ M sql/queries/annual_inflation_summary.sql
+ D sql/queries/core_sarimax_features.sql
+ M src/build_curated_dataset.py
+ M src/platform_loads.py
+ M src/platform_status.py
+?? constraints.txt
+?? scripts/repro_rba_predictions.py
+?? scripts/repro_retrain_chain.sh
+?? scripts/repro_scratch_copy.sh
+?? sql/queries/surge_vs_before_and_after.sql
+?? sql/queries/yearly_change_in_inflation.sql
+?? src/mlruns_snapshot.py
+?? src/models/svar_unemployment_export.py
+?? src/reproducibility_check.py
+?? tests/test_book_report_contracts.py
+?? tests/test_duckdb_queries.py
+?? tests/test_mlruns_snapshot.py
+?? tests/test_reproducibility_check.py
+?? tests/test_svar_unemployment_export.py
+
+# Note: between the reruns and this capture only src/reproducibility_check.py, its tests, scripts/repro_*, the README and
+# book chapter 6 were edited. The ETL, model, API and data files were the ones listed above throughout.

@@ -1,0 +1,63 @@
+{
+ "caveat": "Credit-stress PD base values are NAB's own disclosed FY2025 Pillar 3 weighted-average PDs (Table CR6, as at 30 Sep 2025): 2.07% for the residential mortgage exposure class and 8.78% for other retail. The personal_loans segment here uses the 'other retail' figure as its closest disclosed proxy -- that Basel exposure class is broader than unsecured personal lending alone (it can include small-business retail exposures), so the category mapping is not exact. The unemployment-sensitivity coefficients, 0.4 for personal loans and 0.6 for mortgages, are still the RBA's published values from Garvin et al (2022), RBA Research Discussion Paper No 2022-03, applied uniformly across the nine banks covered in that paper (including NAB), not adapted or derived for NAB specifically. The mortgage coefficient is applied in a simplified form without the paper's LVR-bucket tiering, and the floor used here is the segment's own PD_base rather than the paper's separate lower natural-default-rate floor PD-bar, which this project does not model as a distinct parameter. LGD and EaD post-CCF and post-CRM (in $AUD millions) are from the same NAB FY2025 Pillar 3 Table CR6 disclosure: 16% LGD / $429,996m EAD for residential mortgage, 73% LGD / $1,663m EAD for other retail; EAD is a portfolio-level aggregate for NAB's whole book in that exposure class, not a per-loan figure, so the resulting ECL is an illustrative aggregate dollar amount, not a per-customer estimate. Present-value ECL = PD_stressed x LGD x EAD / (1 + discount_rate)^0.5 is computed under three scenarios (downside/base/upside, at the 90th/50th/10th percentile of the SVAR system's simulated cumulative unemployment-change draws, since a downside/weaker-economy scenario means a larger rise in unemployment) and combined using NAB's own disclosed FY2025 Annual Report macroeconomic scenario probability weightings (55% base, 42.5% downside, 2.5% upside) -- those weights are NAB's own, but applied here to this project's generic PD-stress mechanism, not to NAB's own ECL model. Only PD is stressed across scenarios; LGD and EAD are held fixed at their latest disclosed values in every scenario, so the downside case likely understates the true loss a real downturn would cause (e.g. falling house prices would also raise mortgage LGD via reduced collateral recovery, which this project does not model). This is a 12-month, Stage-1-only estimate under AASB 9: it assumes the entire segment sits in Stage 1 with no significant-increase-in-credit-risk (SICR) or default-staging logic, because no loan-level origination-vs-current credit risk or delinquency data exists in this project to detect SICR. A real AASB 9 provision would add lifetime ECL for whatever sits in Stage 2/3, which this project does not compute and which typically contributes disproportionately more of the total provision in a downturn. Separately, pd_base is NAB's disclosed average PD blended across whatever mix of Stage 1/2/3 exposures currently sits in that Basel exposure class -- not a genuinely low, Stage-1-only PD -- and it is applied here to the full EAD rather than a Stage-1-only exposure subset, so this illustrative Stage-1 ECL is not a lower bound on NAB's real provision and should not be read as one. Per NAB's FY2025 Annual Report (Note 17, Provision for credit impairment), NAB's real Stage 1 (12-month ECL) provision was only $646m of a $6,165m Group total across all stages (about 10.5%), and NAB's real total provision (all three stages combined) for its Housing portfolio was $1,296m -- both smaller than this project's illustrative Stage-1-only, probability-weighted mortgages ECL of roughly $1.59bn (discounted; see below). These figures are not measuring the same thing and must not be compared as if they were. Expected cash shortfalls are discounted using segment-level effective-interest-rate proxies from published RBA lending-rate tables rather than loan-level EIRs: 6.80% for mortgages from RBA Statistical Table F5, series FILRHLBVD 'Lending rates; Housing loans; Banks; Variable; Discounted; Owner-occupier', observed 31 Aug 2026 and published 07 Sep 2026; and 8.86% for personal_loans from RBA Statistical Table F8, series FLRPFOFTT 'Lending rates; Personal credit; Outstanding; Fixed-term loans; Total', observed 31 Jul 2026 and published 07 Sep 2026. Table F8 is used for personal_loans because RBA's Table F5 personal term-loan series were discontinued from the April 2020 release and RBA states alternative personal lending-rate series are published in Table F8. The discounting convention is a separate modelling choice: the 12-month expected cash shortfall is discounted by (1 + rate)^0.5 under a mid-year convention, following the standard general DCF valuation technique used when cash flows are assumed to be spread evenly across a period in Aswath Damodaran's NYU Stern valuation materials and McKinsey & Company's Valuation reference. This is applied here by analogy -- treating a 12-month flow of expected credit losses like a 12-month flow of DCF cash flows -- not because AASB 9 or an ECL-specific source prescribes this exact within-year loss-timing assumption. Combining these real disclosed inputs with this generic, simplified stress-and-ECL mechanism is still not NAB's own stress-testing or ECL methodology and must not be used for actual credit, regulatory, or accounting-provision decisions. For context, APRA's aggregate non-performing/impaired-loan ratio is available in this repo at data/curated/credit_quality_quarterly.csv as corroborating context only; it does not calibrate the PD/LGD/EAD base values, sensitivity coefficients, or scenario weights.",
+ "forecast_origin": "2025Q4",
+ "horizon": 4,
+ "scenarios": [
+  {
+   "delta_unemployment_cumulative": 0.9821128128568657,
+   "name": "downside",
+   "probability_weight": 0.425
+  },
+  {
+   "delta_unemployment_cumulative": 0.1995914040635003,
+   "name": "base",
+   "probability_weight": 0.55
+  },
+  {
+   "delta_unemployment_cumulative": -0.5064202413504566,
+   "name": "upside",
+   "probability_weight": 0.025
+  }
+ ],
+ "segments": [
+  {
+   "discount_rate": 0.0886,
+   "ead_aud_m": 1663.0,
+   "ecl_aud_m_12m_probability_weighted": 104.61227050115083,
+   "ecl_aud_m_by_scenario": {
+    "base": 103.08765363908387,
+    "downside": 106.72963034570876,
+    "upside": 102.15872410913948
+   },
+   "lgd": 0.73,
+   "pd_base": 0.0878,
+   "pd_stressed_by_scenario": {
+    "base": 0.088598365616254,
+    "downside": 0.09172845125142746,
+    "upside": 0.0878
+   },
+   "segment": "personal_loans",
+   "ur_sensitivity": 0.4
+  },
+  {
+   "discount_rate": 0.068,
+   "ead_aud_m": 429996.0,
+   "ecl_aud_m_12m_probability_weighted": 1588.6364706599063,
+   "ecl_aud_m_by_scenario": {
+    "base": 1457.7876522200872,
+    "downside": 1770.3569020453447,
+    "upside": 1378.0631427834744
+   },
+   "lgd": 0.16,
+   "pd_base": 0.0207,
+   "pd_stressed_by_scenario": {
+    "base": 0.021897548424381002,
+    "downside": 0.026592676877141196,
+    "upside": 0.0207
+   },
+   "segment": "mortgages",
+   "ur_sensitivity": 0.6
+  }
+ ],
+ "target_quarter": "2026Q4"
+}

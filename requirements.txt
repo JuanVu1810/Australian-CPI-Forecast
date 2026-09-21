@@ -17,6 +17,5 @@ altair
 requests
 mlflow
 duckdb
-google-cloud-bigquery
 sqlalchemy
 psycopg2-binary

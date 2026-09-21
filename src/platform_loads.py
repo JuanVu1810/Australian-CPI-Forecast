@@ -60,62 +60,6 @@ def write_duckdb(
     )
 
 
-def load_bigquery(curated: pd.DataFrame) -> QualityRecord:
-    """Upload curated data to BigQuery when credentials are configured."""
-    project_id = os.getenv("GCP_PROJECT_ID")
-    dataset = os.getenv("BIGQUERY_DATASET", "cpi_forecast")
-    table = os.getenv("BIGQUERY_TABLE", "quarterly_macro_features")
-
-    if not project_id:
-        return QualityRecord(
-            dataset="platform:bigquery",
-            status="WARNING",
-            rows=len(curated),
-            columns=len(curated.columns),
-            start_date=str(curated["quarter"].iloc[0]) if len(curated) else "",
-            end_date=str(curated["quarter"].iloc[-1]) if len(curated) else "",
-            missing_values=int(curated.isna().sum().sum()),
-            duplicate_dates=int(curated["quarter"].duplicated().sum()) if "quarter" in curated else 0,
-            notes="GCP_PROJECT_ID is not configured; skipped BigQuery load.",
-        )
-
-    if not package_available("google.cloud.bigquery"):
-        return QualityRecord(
-            dataset="platform:bigquery",
-            status="FAIL",
-            rows=len(curated),
-            columns=len(curated.columns),
-            start_date=str(curated["quarter"].iloc[0]) if len(curated) else "",
-            end_date=str(curated["quarter"].iloc[-1]) if len(curated) else "",
-            missing_values=int(curated.isna().sum().sum()),
-            duplicate_dates=int(curated["quarter"].duplicated().sum()) if "quarter" in curated else 0,
-            notes="google-cloud-bigquery is not installed.",
-        )
-
-    from google.cloud import bigquery
-
-    table_id = f"{project_id}.{dataset}.{table}"
-    client = bigquery.Client(project=project_id)
-    job = client.load_table_from_dataframe(
-        curated,
-        table_id,
-        job_config=bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE"),
-    )
-    job.result()
-
-    return QualityRecord(
-        dataset="platform:bigquery",
-        status="PASS",
-        rows=len(curated),
-        columns=len(curated.columns),
-        start_date=str(curated["quarter"].iloc[0]) if len(curated) else "",
-        end_date=str(curated["quarter"].iloc[-1]) if len(curated) else "",
-        missing_values=int(curated.isna().sum().sum()),
-        duplicate_dates=int(curated["quarter"].duplicated().sum()) if "quarter" in curated else 0,
-        notes=f"Loaded curated data to {table_id}.",
-    )
-
-
 def load_postgres_quality_report(quality_report: pd.DataFrame) -> QualityRecord:
     """Load validation results to Supabase/PostgreSQL when configured."""
     database_url = os.getenv("DATABASE_URL")
