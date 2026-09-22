@@ -2,30 +2,20 @@
 
 Reproducible CRISP-DM methodology report for the Australian CPI forecasting portfolio project — SARIMA, Elastic Net, Ensemble, SVAR, scenario engine, RBA classifier, and credit stress.
 
-## Usage
+## Building the book
 
-### Building the book
+1. Clone this repository.
+2. `pip install -r requirements.txt` (ideally in a virtual environment).
+3. (Optional) Edit the source files in `australian_cpi_forecasting/`.
+4. `jupyter-book clean australian_cpi_forecasting/` to clear existing builds.
+5. `jupyter-book build australian_cpi_forecasting/`.
 
-If you'd like to develop and/or build the Australian CPI Forecasting book, you should:
+The rendered HTML is built to `australian_cpi_forecasting/_build/html/`.
 
-1. Clone this repository
-2. Run `pip install -r requirements.txt` (it is recommended you do this within a virtual environment)
-3. (Optional) Edit the books source files located in the `australian_cpi_forecasting/` directory
-4. Run `jupyter-book clean australian_cpi_forecasting/` to remove any existing builds
-5. Run `jupyter-book build australian_cpi_forecasting/`
+## Hosting the book
 
-A fully-rendered HTML version of the book will be built in `australian_cpi_forecasting/_build/html/`.
-
-### Hosting the book
-
-Please see the [Jupyter Book documentation](https://jupyterbook.org/publish/web.html) to discover options for deploying a book online using services such as GitHub, GitLab, or Netlify.
-
-For GitHub and GitLab deployment specifically, the [cookiecutter-jupyter-book](https://github.com/executablebooks/cookiecutter-jupyter-book) includes templates for, and information about, optional continuous integration (CI) workflow files to help easily and automatically deploy books online with GitHub or GitLab. For example, if you chose `github` for the `include_ci` cookiecutter option, your book template was created with a GitHub actions workflow file that, once pushed to GitHub, automatically renders and pushes your book to the `gh-pages` branch of your repo and hosts it on GitHub Pages when a push or pull request is made to the main branch.
-
-## Contributors
-
-We welcome and recognize all contributions. You can see a list of current contributors in the [contributors tab](https://github.com/juanvu/australian_cpi_forecasting/graphs/contributors).
+See the [Jupyter Book publishing docs](https://jupyterbook.org/publish/web.html) for deploying via GitHub, GitLab, or Netlify.
 
 ## Credits
 
-This project is created using the excellent open source [Jupyter Book project](https://jupyterbook.org/) and the [executablebooks/cookiecutter-jupyter-book template](https://github.com/executablebooks/cookiecutter-jupyter-book).
+Built with [Jupyter Book](https://jupyterbook.org/) and the [cookiecutter-jupyter-book](https://github.com/executablebooks/cookiecutter-jupyter-book) template.

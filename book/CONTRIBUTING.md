@@ -1,56 +1,28 @@
 # Contributing
 
-Contributions are welcome, and they are greatly appreciated! Every little bit
-helps, and credit will always be given. You can contribute in the ways listed below.
+Contributions are welcome and appreciated.
 
-## Report Bugs
+## Report bugs
 
-Report bugs using GitHub issues.
+Open a GitHub issue with your OS/version, relevant local setup details, and steps to reproduce.
 
-If you are reporting a bug, please include:
+## Fix bugs / implement features
 
-* Your operating system name and version.
-* Any details about your local setup that might be helpful in troubleshooting.
-* Detailed steps to reproduce the bug.
+Look for GitHub issues tagged `bug` or `enhancement` with `help wanted`.
 
-## Fix Bugs
+## Write documentation
 
-Look through the GitHub issues for bugs. Anything tagged with "bug" and "help
-wanted" is open to whoever wants to implement it.
+More documentation is always welcome — official docs, docstrings, or blog posts.
 
-## Implement Features
+## Submit feedback
 
-Look through the GitHub issues for features. Anything tagged with "enhancement"
-and "help wanted" is open to whoever wants to implement it.
+File a GitHub issue. For feature proposals, explain how it would work and keep the scope narrow.
 
-## Write Documentation
+## Get started
 
-Australian CPI Forecasting could always use more documentation, whether as part of the
-official Australian CPI Forecasting docs, in docstrings, or even on the web in blog posts,
-articles, and such.
+1. Fork and clone the repo.
+2. Install into a virtualenv (e.g. `conda`).
+3. Branch, make changes, commit, and push.
+4. Open a pull request on GitHub.
 
-## Submit Feedback
-
-The best way to send feedback is to file an issue on GitHub.
-
-If you are proposing a feature:
-
-* Explain in detail how it would work.
-* Keep the scope as narrow as possible, to make it easier to implement.
-* Remember that this is a volunteer-driven project, and that contributions
-  are welcome :)
-
-## Get Started
-
-Ready to contribute? Here's how to set up `Australian CPI Forecasting` for local development.
-
-1. Fork the repo on GitHub.
-2. Clone your fork locally.
-3. Install your local copy into a virtualenv, e.g., using `conda`.
-4. Create a branch for local development and make changes locally.
-5. Commit your changes and push your branch to GitHub.
-6. Submit a pull request through the GitHub website.
-
-## Code of Conduct
-
-Please note that the Australian CPI Forecasting project is released with a [Contributor Code of Conduct](CONDUCT.md). By contributing to this project you agree to abide by its terms.
+By contributing, you agree to abide by the [Code of Conduct](CONDUCT.md).

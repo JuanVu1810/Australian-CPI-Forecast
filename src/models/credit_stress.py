@@ -67,7 +67,7 @@ CREDIT_STRESS_CAVEAT = (
     "aggregate for NAB's whole book in that exposure class, not a per-loan "
     "figure, so the resulting ECL is an illustrative aggregate dollar "
     "amount, not a per-customer estimate. "
-    "Present-value ECL = PD_stressed x LGD x EAD / (1 + discount_rate)^0.5 "
+    "Present-value ECL = PD_stressed x LGD x EAD / (1 + discount_rate) "
     "is computed under three scenarios "
     "(downside/base/upside, at the 90th/50th/10th percentile of the SVAR "
     "system's simulated cumulative unemployment-change draws, since a "
@@ -101,7 +101,7 @@ CREDIT_STRESS_CAVEAT = (
     "NAB's real total provision (all three stages combined) for its "
     "Housing portfolio was $1,296m -- both smaller than this project's "
     "illustrative Stage-1-only, probability-weighted mortgages ECL of "
-    "roughly $1.59bn (discounted; see below). These figures are not "
+    "roughly $1.54bn (discounted; see below). These figures are not "
     "measuring the same thing and "
     "must not be compared as if they were. Expected cash shortfalls are "
     "discounted using segment-level effective-interest-rate proxies from "
@@ -115,16 +115,17 @@ CREDIT_STRESS_CAVEAT = (
     "F8 is used for personal_loans because RBA's Table F5 personal "
     "term-loan series were discontinued from the April 2020 release and "
     "RBA states alternative personal lending-rate series are published in "
-    "Table F8. The discounting convention is a separate modelling choice: "
-    "the 12-month expected cash shortfall is discounted by (1 + rate)^0.5 "
-    "under a mid-year convention, following the standard general DCF "
-    "valuation technique used when cash flows are assumed to be spread "
-    "evenly across a period in Aswath Damodaran's NYU Stern valuation "
-    "materials and McKinsey & Company's Valuation reference. This is "
-    "applied here by analogy -- treating a 12-month flow of expected "
-    "credit losses like a 12-month flow of DCF cash flows -- not because "
-    "AASB 9 or an ECL-specific source prescribes this exact within-year "
-    "loss-timing assumption. Combining these real disclosed inputs with this "
+    "Table F8. The 12-month expected cash shortfall is discounted by "
+    "(1 + rate), following the PD x LGD x EAD x discount-factor structure "
+    "set out for IFRS 9/Ind AS 109 ECL in KPMG's 'Expected Credit Loss "
+    "(ECL): Turning Theory into Action' (KPMG in India, January 2025), "
+    "where the discount factor is based on the effective interest rate "
+    "(EIR); this sits within the general discounted-cash-flow framework "
+    "described in Aswath Damodaran's NYU Stern DCF valuation notes. No "
+    "mid-year timing assumption is applied -- the loss is treated as a "
+    "single 12-month cash shortfall discounted for one full year, since "
+    "AASB 9 requires discounting at the EIR but does not itself prescribe "
+    "a within-year timing convention. Combining these real disclosed inputs with this "
     "generic, simplified stress-and-ECL mechanism is still not NAB's own "
     "stress-testing or ECL methodology and must not be used for actual "
     "credit, regulatory, or accounting-provision decisions. For context, "
@@ -226,7 +227,7 @@ def run_credit_stress_test(
     ``scenario_deltas`` maps a scenario name (e.g. "downside"/"base"/"upside")
     to that scenario's cumulative unemployment-rate change. Returns one row
     per segment per scenario with the stressed PD and present-value ECL:
-    ``ecl = pd_stressed * lgd * ead / (1 + discount_rate) ** 0.5`` (in $AUD
+    ``ecl = pd_stressed * lgd * ead / (1 + discount_rate)`` (in $AUD
     millions, since ``ead`` is).
     """
     missing_weights = sorted(set(scenario_deltas) - set(scenario_weights))
@@ -278,7 +279,7 @@ def run_credit_stress_test(
                     "ecl_aud_m": stressed_pd
                     * lgd
                     * ead
-                    / (1 + discount_rate) ** 0.5,
+                    / (1 + discount_rate),
                 }
             )
 

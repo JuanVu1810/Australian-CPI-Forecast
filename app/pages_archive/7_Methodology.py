@@ -709,12 +709,12 @@ source_line("`src/models/rba_classifier.py`, served at `GET /rba-action`")
 st.subheader("4.7 Credit Stress & Illustrative ECL")
 st.latex(
     r"PD_{stressed} = \operatorname{clip}\!\big(PD_{base} + s\cdot\Delta u_{cum}/100,\ PD_{base},\ 1.0\big)"
-    r"\qquad ECL = \dfrac{PD_{stressed}\times LGD\times EAD}{(1+r)^{0.5}} \qquad "
+    r"\qquad ECL = \dfrac{PD_{stressed}\times LGD\times EAD}{1+r} \qquad "
     r"ECL_{weighted} = \!\!\sum_{scenario}\!\! w_{scenario}\,ECL_{scenario}"
 )
 st.markdown(
     "NAB's own disclosed FY2025 Pillar 3 PD/LGD/EAD, stressed with generic RBA "
-    "sensitivity coefficients, mid-year discounted at RBA's published lending rates, and "
+    "sensitivity coefficients, discounted for one year at RBA's published lending rates, and "
     "combined with NAB's own 55/42.5/2.5 base/downside/upside scenario weights. **This is "
     "12-month, Stage-1-only and is not a lower bound on NAB's real provision.**"
 )

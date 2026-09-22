@@ -2,7 +2,7 @@
 
 Date: 2026-08-25
 
-Scope: decision record only. No production model was fitted or registered, and
+Scope: decision record only. No production model was fitted or registered;
 no SARIMA/SARIMAX/Elastic Net/API/MLflow wiring was changed.
 
 ## Inputs Checked
@@ -39,8 +39,8 @@ The best `D=1` candidate was materially worse (`(0,1,2)x(0,1,2,4)`, AIC
 expanding-window refits completed with finite, bounded forecasts (max
 absolute 8-quarter forecast `4.699`). The rank-3 alternative
 `(2,1,0)x(0,0,2,4)` produced a short-window max absolute forecast of
-`8483.225`, illustrating why the raw AIC search needs a stability screen,
-though it did not change the selected winner.
+`8483.225` — illustrating why the raw AIC search needs a stability screen,
+though it didn't change the selected winner.
 
 ### Headline CPI YoY, SA Sourced
 
@@ -60,13 +60,13 @@ produced an explosive short-window forecast (`max_abs_forecast=197.898`,
 `(2,0,2)x(0,0,2,4)` (AIC `171.845`) is no longer stable on the SA-sourced
 series (`max_abs_forecast=47686.634`, 7 non-converged fits), and
 `(2,0,2)x(1,0,2,4)` failed to converge on the full development sample. The
-selected replacement, `(1,0,2)x(1,0,2,4)`, is the best AIC-ranked
-stationarity-consistent candidate that passed the bounded-forecast screen: 0
-failures, 0 non-finite or explosive forecasts, max absolute 8-quarter
-forecast `20.687`, 1 non-converged expanding-window fit.
+replacement, `(1,0,2)x(1,0,2,4)`, is the best AIC-ranked stationarity-
+consistent candidate to pass the bounded-forecast screen: 0 failures, 0
+non-finite/explosive forecasts, max absolute 8-quarter forecast `20.687`,
+1 non-converged expanding-window fit.
 
-**This means the headline order changes for the post-ETL refit; do not carry
-forward `(2,0,2)x(0,0,2,4)` unchanged.**
+**The headline order changes for the post-ETL refit — do not carry forward
+`(2,0,2)x(0,0,2,4)` unchanged.**
 
 ## Trimmed-Mean Exogenous Feature Decision
 
@@ -79,13 +79,13 @@ Nested/diagnostic candidates, stationarity-safe but weak in Section 10b:
 `unemployment_rate_change_lag1`, `cash_rate_change_lag1`.
 
 Excluded: `wpi_growth_lag1` (base `wpi_growth` is `I(1)` despite being a
-growth-rate transform, level ADF p=0.3861, KPSS p=0.0210; would need explicit
-differencing engineering; also weak, Granger p=0.8517, and high-VIF, 17.028).
+growth-rate transform — level ADF p=0.3861, KPSS p=0.0210; needs explicit
+differencing engineering; also weak, Granger p=0.8517, high-VIF 17.028).
 Rate-level lags (`cash_rate_lag1`, `unemployment_rate_lag4`, etc.) are
 excluded since their base levels are `I(1)` and the EDA prefers change
 transforms. Price/index levels without engineered lags
 (`commodity_price_index`, `wti_price`, `producer_price_index`, `aud_usd`) are
-excluded this phase, several are `I(1)`.
+excluded this phase; several are `I(1)`.
 
 | Feature | Base integration order | Section 10b status | Phase 1 decision |
 | --- | --- | --- | --- |
@@ -102,7 +102,7 @@ excluded this phase, several are `I(1)`.
 
 Scope: feature-screening only, for a still-linear-in-parameters regularized
 regression; no production fitting, logging or API wiring changed. Guardrail:
-keep the nonlinear expansion small, Elastic Net's shortest walk-forward
+keep the nonlinear expansion small — Elastic Net's shortest walk-forward
 training window is 40 quarters, so full polynomial expansion is out of scope.
 
 ### Headline CPI YoY
@@ -125,7 +125,7 @@ matrix check (100 complete rows, 2001Q1-2025Q4): largest VIF `4.311`
 acceptable for Phase 2 testing.
 
 No AUD/oil imported-inflation interaction was added for headline:
-`aud_usd_change_lag1` is not in the retained headline macro block, so adding
+`aud_usd_change_lag1` isn't in the retained headline macro block, so adding
 it here would expand the linear candidate pool rather than screen nonlinear
 transforms of retained inputs.
 

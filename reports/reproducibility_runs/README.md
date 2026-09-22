@@ -1,9 +1,9 @@
 # Reproducibility runs: what was measured, how to repeat it, and what was kept
 
-`reports/reproducibility_check.csv` holds the results (one row per scenario and quantity) and
-`reports/reproducibility_check_files.csv` the per-file detail. This folder holds what is needed to repeat and audit them.
-All runs were made on 2026-09-22 (Australian time) on one machine. Reruns always happen in scratch copies of the repo, never
-in the checkout, because the model scripts write into `reports/` and `data/`.
+Results live in `reports/reproducibility_check.csv` (one row per scenario/quantity) and
+`reports/reproducibility_check_files.csv` (per-file detail). This folder holds what's needed to repeat and audit them.
+All runs were made 2026-09-22 (Australian time) on one machine, always in scratch copies of the repo — never the checkout,
+since the model scripts write into `reports/` and `data/`.
 
 ## What is saved here
 
@@ -19,18 +19,18 @@ in the checkout, because the model scripts write into `reports/` and `data/`.
 
 ## What was not kept
 
-- The regenerated files, retrained MLflow runs and scratch repos (deleted; about 2.8 GB). The file-level results survive as
-  the counts and differences in the two CSVs. Repeat a scenario to get the files back.
+- Regenerated files, retrained MLflow runs, and scratch repos (deleted, ~2.8 GB). File-level results survive as counts
+  and differences in the two CSVs; repeat a scenario to get the files back.
 - Timings of the API and classifier scenarios.
-- The per-step logs of the retrain (only the timing log above) and the pip output of the first install.
-- The original fresh venv (see `environment_newest.txt`) and the older classifier report that `classifier_env` compares
-  against (it is in git: `git show 5cbea9a^:reports/rba_classifier_evaluation.md`).
+- Per-step retrain logs (only the timing log above survives) and the first install's pip output.
+- The original fresh venv (see `environment_newest.txt`) and the older classifier report `classifier_env` compares
+  against (in git: `git show 5cbea9a^:reports/rba_classifier_evaluation.md`).
 
 ## Repeating each scenario
 
-`S` is any empty folder outside the repo. Run `scripts/repro_scratch_copy.sh $S/repo` first for the scenarios that
-need a copy. `compare-*` commands are run from the real checkout and add or replace rows in the two CSVs. Every
-`compare-*` command also needs `--scenario-id`, `--scenario`, `--environment` and `--how`; use the values in the CSV.
+`S` is any empty folder outside the repo. Run `scripts/repro_scratch_copy.sh $S/repo` first for scenarios needing a copy.
+`compare-*` commands run from the real checkout and add/replace rows in the two CSVs; each also needs `--scenario-id`,
+`--scenario`, `--environment` and `--how` (use the values in the CSV).
 
 | Scenario id | Steps |
 |---|---|
@@ -46,35 +46,32 @@ need a copy. `compare-*` commands are run from the real checkout and add or repl
 
 ## Checks on this record
 
-- `rba_classifier_runs/default/report.md` is byte-identical to the checked-in `reports/rba_classifier_evaluation.md`, so
-  the default-kernel rerun reproduced the checked-in report exactly.
-- The two classifier scenarios were recomputed from the saved files in this folder and gave the same numbers as the first run.
+- `rba_classifier_runs/default/report.md` is byte-identical to the checked-in `reports/rba_classifier_evaluation.md`: the
+  default-kernel rerun reproduced it exactly.
+- Both classifier scenarios were recomputed from this folder's saved files and matched the first run.
 - `scripts/repro_scratch_copy.sh` and `scripts/repro_rba_predictions.py` were run from the repo copy after being written.
   `scripts/repro_retrain_chain.sh` differs from the version that produced `retrain_newest_steps.log` only in log file
-  names and a silenced `kill` error; it was dry-run with a stand-in for Python to check its steps, markers and logs, but not
-  repeated end to end.
+  names and a silenced `kill` error; dry-run checked with a Python stand-in, not repeated end to end.
 
 ## Claim audit (2026-09-22)
 
-Every number and label on the chapter 6 chart was checked against the data behind it. What that found and fixed:
+Every number and label on the chapter 6 chart was checked against the data behind it. Findings and fixes:
 
-- Three notes were slightly too tight. Forecast differences reached 1.06e-10 (the note said "within 1e-10"), the Cloud
-  Run scenario forecast differed by up to 0.0306 pp (said 0.03) and the data revisions by up to 0.2348% (said 0.23%). Every
-  "within" and "up to" is now rounded up by the chart code, and the guard cell asserts the bounds.
-- The "up to 4.7 pp" probability shift had been described as if it came from the classifier's fits. It comes only from the
-  simulation-based threshold model; the ordered models' probabilities moved by under 3e-9. The classifier rows now report
-  the two separately.
-- The RBA numbers in the API comparison mix probabilities and forecast values; they are now split (the forecast values did
-  not move, so the differences are all in the probabilities).
-- The download dates are 2026-08-24 and 2026-09-03 (UTC, from `dataset/download_manifest.json`), not 2026-08-25.
-- "Cloud Run gives one vCPU" and "two images with different package versions gave identical outputs" were not recorded
-  anywhere, so they were removed or marked as the README's statement. "Cloud Run answers repeat exactly" is now measured
-  (`cloud_run_repeat`).
-- Checked and confirmed: `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1` really gives one thread; the earlier committed RBA report's
-  inputs (backtest predictions, curated data) are unchanged since it was made and the classifier's prediction code changed
-  only in diagnostics and report text (`git diff c3e1bb5`), so the 4 changed calls are not an input or code change.
-- The four API scenarios were measured a second time with raw responses kept, and reproduced the first numbers exactly.
-- The scenario names now say what was done ("Retrain the models on the newest packages", since the four interval reports
-  were not rerun).
-- Not measured: how far the data revisions move the forecasts, another physical computer, and what caused the earlier
-  RBA classifier differences.
+- Three notes were too tight: forecast differences reached 1.06e-10 (noted "within 1e-10"), Cloud Run scenario forecasts
+  differed by up to 0.0306 pp (noted 0.03), data revisions by up to 0.2348% (noted 0.23%). Every "within"/"up to" is now
+  rounded up by the chart code, with a guard cell asserting the bounds.
+- The "up to 4.7 pp" probability shift was attributed to the classifier's fits generally; it's only the simulation-based
+  threshold model (ordered models moved under 3e-9). Classifier rows now report the two separately.
+- RBA numbers in the API comparison mixed probabilities and forecast values; now split (forecast values didn't move, so
+  differences are all in probabilities).
+- Download dates are 2026-08-24 and 2026-09-03 (UTC, from `dataset/download_manifest.json`), not 2026-08-25.
+- "Cloud Run gives one vCPU" and "two images with different package versions gave identical outputs" were unrecorded
+  claims; removed or attributed to the README. "Cloud Run answers repeat exactly" is now measured (`cloud_run_repeat`).
+- Confirmed: `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1` gives one thread; the committed RBA report's inputs are unchanged
+  since it was made, and the classifier's code changed only in diagnostics/report text (`git diff c3e1bb5`) — not an
+  input or code change.
+- The four API scenarios were re-measured with raw responses kept and reproduced the first numbers exactly.
+- Scenario names now say what was done ("Retrain the models on the newest packages" — the four interval reports weren't
+  rerun).
+- Not measured: how far data revisions move the forecasts, another physical computer, or the cause of the earlier RBA
+  classifier differences.

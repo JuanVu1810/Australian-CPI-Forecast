@@ -127,7 +127,7 @@ def test_run_credit_stress_test_returns_segment_by_scenario_frame():
     assert personal_upside["ead_aud_m"] == pytest.approx(1663.0)
     assert personal_upside["discount_rate"] == pytest.approx(0.0886)
     assert personal_upside["ecl_aud_m"] == pytest.approx(
-        expected_personal_pd * 0.73 * 1663.0 / (1 + 0.0886) ** 0.5
+        expected_personal_pd * 0.73 * 1663.0 / (1 + 0.0886)
     )
     assert personal_upside["probability_weight"] == pytest.approx(
         credit_stress.SCENARIO_PROBABILITY_WEIGHTS["upside"]
@@ -142,7 +142,7 @@ def test_run_credit_stress_test_returns_segment_by_scenario_frame():
     assert mortgage_downside["ead_aud_m"] == pytest.approx(429996.0)
     assert mortgage_downside["discount_rate"] == pytest.approx(0.0680)
     assert mortgage_downside["ecl_aud_m"] == pytest.approx(
-        expected_mortgage_pd * 0.16 * 429996.0 / (1 + 0.0680) ** 0.5
+        expected_mortgage_pd * 0.16 * 429996.0 / (1 + 0.0680)
     )
 
 

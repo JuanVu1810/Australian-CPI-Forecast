@@ -2,8 +2,8 @@
 
 Date: 2026-08-28
 
-Scope: gate/decision pass only. No IRFs, bootstrap intervals, forecasts,
-simulations, wrappers, diagnostics, or backtests are built here.
+Scope: gate/decision pass only — no IRFs, bootstrap intervals, forecasts,
+simulations, wrappers, diagnostics, or backtests.
 
 Data source: `data/curated/quarterly_macro_features.parquet`. Both systems use
 level columns only, not pre-built `_lag`/`_change` features. `commodity_growth`
@@ -27,14 +27,12 @@ observations (1995Q2-2025Q4).
 System A (headline) and System B (trimmed mean) share 4 of 5 variables
 (`unemployment_rate`, `cash_rate`, `commodity_growth`,
 `inflation_expectations_business`) and an identical selection process; only
-the target series (`cpi_yoy` vs `trimmed_mean_cpi_yoy`) and the resulting
-numbers differ.
+the target series (`cpi_yoy` vs `trimmed_mean_cpi_yoy`) and the numbers differ.
 
 ### Lag order
 
-Selected `p=2` for both, the DoF-capped maximum, so Phase 1b should treat it
-as sample-size-constrained rather than an unqualified optimum over a wider
-search.
+Selected `p=2` for both — the DoF-capped maximum, so Phase 1b should treat it
+as sample-constrained, not an unqualified optimum over a wider search.
 
 | Lag | System A BIC | System B BIC |
 | --- | ---: | ---: |
@@ -69,23 +67,21 @@ both systems, so one p-value each):
 | `commodity_growth` | 0.000000 | yes |
 | `inflation_expectations_business` | 0.004426 | yes |
 
-Gate rule: `rank==0` maps to `levels_var_svar`, `0<rank<n_vars` maps to
-`vecm`, `rank==n_vars` maps to `levels_var_svar` (full rank means the system
-is already stationary in levels). Both systems hit `rank=5`, so the Phase 1b
-decision for both is **`levels_var_svar`**.
+Gate rule: `rank==0` or `rank==n_vars` maps to `levels_var_svar`;
+`0<rank<n_vars` maps to `vecm` (full rank means the system is already
+stationary in levels). Both systems hit `rank=5`, so the Phase 1b decision
+for both is **`levels_var_svar`**.
 
-**ADF/Johansen caveat.** ADF corroboration does not cleanly support the
+**ADF/Johansen caveat.** ADF corroboration doesn't cleanly support the
 full-rank reading: 2 of 5 variables (System A) or 3 of 5 (System B, including
-its own target) fail to reject the unit-root null at 5%. Since Johansen rank
-testing assumes a common integration order across the system, the `rank=5`
-reading is not unambiguous, it is also consistent with the trace test
-over-rejecting in a short (123-observation, `det_order=0`) sample. The
-pragmatic judgment, Sims-style: estimate in levels for dynamic
-simulation/IRF work under unit-root uncertainty, rather than impose possibly
-wrong cointegrating restrictions, is a **documented judgment call, not a
-resolved stationarity finding**, and must carry forward into any later
-5-variable trade-off or Cholesky-ordering note, not live only in this gate
-report.
+its own target) fail to reject the unit-root null at 5%. Johansen rank
+testing assumes a common integration order across the system, so `rank=5` is
+also consistent with the trace test over-rejecting in a short
+(123-observation, `det_order=0`) sample. Estimating in levels (Sims-style,
+under unit-root uncertainty rather than imposing possibly wrong cointegrating
+restrictions) is a **documented judgment call, not a resolved stationarity
+finding** — carry it forward into any later 5-variable trade-off or
+Cholesky-ordering note.
 
 ### Stability
 
@@ -96,7 +92,7 @@ report.
 | Min inverse-root modulus | 1.070243 | 1.073250 |
 
 Both fitted VARs are dynamically stable at `p=2`; this corroborates but does
-not drive the lag choice, the DoF cap remains binding.
+not drive the lag choice — the DoF cap remains binding.
 
 ### Cholesky ordering for Phase 1b
 
@@ -112,13 +108,13 @@ Rationale: commodity growth is the most externally driven same-quarter shock;
 unemployment and CPI are slower-moving domestic state variables; business
 inflation expectations can update within the quarter to commodity,
 labour-market and CPI information; the cash rate is ordered last so policy
-can contemporaneously observe the macro block while its own shocks affect the
+observes the macro block contemporaneously while its own shocks affect the
 block with a lag.
 
 ## Fixed Escalation-Rule Parameters For Phase 1b
 
 Fixed inputs for Phase 1b's non-overlapping-bands escalation check, reused
-unchanged (this report does not compute IRFs or bootstrap bands):
+unchanged (no IRFs or bootstrap bands are computed here):
 
 - Bootstrap band width: 80%, quantiles `0.1`/`0.9` (`DEFAULT_LOWER_QUANTILE`/
   `DEFAULT_UPPER_QUANTILE`).

@@ -399,7 +399,7 @@ def test_credit_risk_stress_test_returns_svar_ecl_segments(monkeypatch, tmp_path
         for name, delta in scenario_deltas.items()
     }
     personal_ecl = {
-        name: pd_stressed * 0.73 * 1663.0 / (1 + 0.0886) ** 0.5
+        name: pd_stressed * 0.73 * 1663.0 / (1 + 0.0886)
         for name, pd_stressed in personal_pd.items()
     }
     mortgage_pd = {
@@ -407,7 +407,7 @@ def test_credit_risk_stress_test_returns_svar_ecl_segments(monkeypatch, tmp_path
         for name, delta in scenario_deltas.items()
     }
     mortgage_ecl = {
-        name: pd_stressed * 0.16 * 429996.0 / (1 + 0.0680) ** 0.5
+        name: pd_stressed * 0.16 * 429996.0 / (1 + 0.0680)
         for name, pd_stressed in mortgage_pd.items()
     }
 

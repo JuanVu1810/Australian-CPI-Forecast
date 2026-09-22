@@ -1,12 +1,9 @@
 # Methodology Coverage Audit — Jupyter Book
 
-Audit date: 2026-09-17. Scope: every methodology actually implemented in the codebase
-(`src/`, `api/`, `data_retrieval.py`, per README's architecture section and
-`.ai/CODE_ROUTING.md`'s ownership contracts), cross-checked against what
-`book/australian_cpi_forecasting/` currently covers.
-
-Not a to-do list by itself — it's the findings. See "Suggested next steps" at the bottom
-for the proposed fix, not yet applied.
+Audit date: 2026-09-17. Every methodology implemented in the codebase (`src/`, `api/`,
+`data_retrieval.py`, per README's architecture section and `.ai/CODE_ROUTING.md`'s
+ownership contracts), cross-checked against what `book/australian_cpi_forecasting/`
+currently covers. Findings only — the fix in "Suggested next steps" is not yet applied.
 
 ## Clear gaps — implemented in code, not mentioned anywhere in the book
 
@@ -31,14 +28,12 @@ for the proposed fix, not yet applied.
 ## Correctly covered, no action needed
 
 SARIMA, Elastic Net, Ensemble, Scenario Engine, RBA Classifier, Credit Stress, FastAPI
-serving, Streamlit, Docker/Cloud Run, and the EDA appendix (thoroughly, including
-per-section result interpretation as of 2026-09-17).
+serving, Streamlit, Docker/Cloud Run, and the EDA appendix.
 
 ## Lower priority (flagged, not recommended for this pass)
 
-Testing (pytest/AppTest) and CI/CD (GitHub Actions, scheduled ETL) — real methodology, but
-more "engineering scaffolding" than data-science methodology. Left out of a methodology
-narrative unless requested.
+Testing (pytest/AppTest) and CI/CD (GitHub Actions, scheduled ETL) — real but more
+"engineering scaffolding" than data-science methodology; left out unless requested.
 
 ## Suggested next steps (proposed, not yet applied)
 

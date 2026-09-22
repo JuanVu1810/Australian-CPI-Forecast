@@ -41,3 +41,4 @@ chapters:
   - file: appendix_eda/13_raw_frequency_validation
   - file: appendix_eda/14_rba_forecast_benchmark
   - file: appendix_eda/15_documented_limitations
+  - file: appendix_eda/16_credit_stress_ecl_derivation
