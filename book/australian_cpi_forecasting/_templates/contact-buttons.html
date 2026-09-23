@@ -1,5 +1,7 @@
 {#- A "Contact" dropdown for the article header, next to the repository buttons and the
-    light/dark switch. Same markup as the theme's own dropdowns (for example Download). -#}
+    light/dark switch. Same markup as the theme's own dropdowns (for example Download).
+    A mailto: link does nothing visible when the browser has no mail app or web-mail handler,
+    so clicking Email also copies the address and says so. -#}
 <div class="article-header-buttons">
   <div class="dropdown dropdown-contact-buttons">
     <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Contact">
@@ -7,7 +9,7 @@
     </button>
     <ul class="dropdown-menu">
       <li>
-        <a href="mailto:vducviethoang@gmail.com" class="btn btn-sm dropdown-item" title="Email me" data-bs-placement="left" data-bs-toggle="tooltip">
+        <a href="mailto:vducviethoang@gmail.com" class="btn btn-sm dropdown-item contact-email" data-address="vducviethoang@gmail.com" title="Feel free to email me" data-bs-placement="left" data-bs-toggle="tooltip">
           <span class="btn__icon-container"><i class="fas fa-envelope"></i></span>
           <span class="btn__text-container">Email</span>
         </a>
@@ -21,3 +23,45 @@
     </ul>
   </div>
 </div>
+<script>
+  (function () {
+    function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+      }
+      // Older browsers, or a page that is not served over https.
+      return new Promise(function (resolve, reject) {
+        var box = document.createElement("textarea");
+        box.value = text;
+        box.setAttribute("readonly", "");
+        box.style.position = "fixed";
+        box.style.opacity = "0";
+        document.body.appendChild(box);
+        box.select();
+        var ok = false;
+        try { ok = document.execCommand("copy"); } catch (err) { ok = false; }
+        document.body.removeChild(box);
+        ok ? resolve() : reject();
+      });
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+      var link = document.querySelector(".contact-email");
+      if (!link) { return; }
+      var label = link.querySelector(".btn__text-container");
+      var original = label.textContent;
+      link.addEventListener("click", function (event) {
+        // Do not cancel the mailto: link. Only stop the click reaching the dropdown, so the menu
+        // stays open long enough to read the message.
+        event.stopPropagation();
+        copyText(link.getAttribute("data-address")).then(function () {
+          label.textContent = "Address copied";
+        }, function () {
+          label.textContent = link.getAttribute("data-address");
+        }).then(function () {
+          setTimeout(function () { label.textContent = original; }, 2500);
+        });
+      });
+    });
+  })();
+</script>
