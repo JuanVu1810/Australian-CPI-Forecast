@@ -59,5 +59,13 @@ sphinx:
       path_to_docs: book/australian_cpi_forecasting
       use_repository_button: true
       use_issues_button: true
+      # A "Contact" dropdown (email and LinkedIn) in the page header, beside the GitHub buttons and
+      # the light/dark switch. The theme has no option for extra header buttons, so it is a small
+      # template in _templates/, listed before the theme's own buttons.
+      article_header_end:
+        - contact-buttons.html
+        - article-header-buttons.html
+    templates_path:
+      - _templates
     html_css_files:
       - custom.css

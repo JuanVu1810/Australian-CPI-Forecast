@@ -28,3 +28,12 @@ table.dataframe {
 .bd-sidebar-primary .search-button-field .search-button__default-text {
   display: inline;
 }
+
+/* The Contact dropdown (_templates/contact-buttons.html) is a second item in the article
+   header's right-hand group. The theme lays that group out as a block, so the two items would
+   stack; make it a row so Contact sits level with the GitHub, download and light/dark buttons. */
+.header-article-items__end {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}

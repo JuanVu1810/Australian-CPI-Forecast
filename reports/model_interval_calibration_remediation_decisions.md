@@ -1,5 +1,7 @@
 # Interval Calibration / Model Assumption Remediation Decisions
 
+[![content: AI-generated](../book/australian_cpi_forecasting/_static/badges/ai-generated.svg)](https://juanvu1810.github.io/CPI-Forecast/intro.html#ai-acknowledgement)
+
 Date: 2026-08-26 (latest fix: 2026-09-19)
 
 Decision record: why conformal-calibrated intervals still under-cover, and what

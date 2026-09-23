@@ -1,5 +1,7 @@
 # SVAR Five-Variable Evidence Note
 
+[![content: AI-generated](../book/australian_cpi_forecasting/_static/badges/ai-generated.svg)](https://juanvu1810.github.io/CPI-Forecast/intro.html#ai-acknowledgement)
+
 Date: 2026-08-28
 
 Scope: Phase 1b evidence note for the two five-variable SVAR systems gated in

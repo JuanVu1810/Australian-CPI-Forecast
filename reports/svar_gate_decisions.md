@@ -1,5 +1,7 @@
 # SVAR Phase 1a Gate Decisions
 
+[![content: AI-generated](../book/australian_cpi_forecasting/_static/badges/ai-generated.svg)](https://juanvu1810.github.io/CPI-Forecast/intro.html#ai-acknowledgement)
+
 Date: 2026-08-28
 
 Scope: gate/decision pass only — no IRFs, bootstrap intervals, forecasts,
