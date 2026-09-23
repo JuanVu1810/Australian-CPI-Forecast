@@ -34,7 +34,7 @@ call. This README only covers status and how to run the project.
 | Docker and Google Cloud Run | deployed, verified live 2026-09-21 (image `redeploy-20260921-e905627`, revision `cpi-forecast-api-00016-vig`). Serves the forecast, trimmed-mean, scenario, RBA and credit endpoints; redeploy is manual |
 | Streamlit | deployed on Streamlit Community Cloud, verified live 2026-09-21: <https://cpi-forecast-demo.streamlit.app/>. A four-tab interactive demo that goes with the book (live forecast, Ensemble path reveal, scenario engine, RBA call) |
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
-| Reproducibility | pinned versions (`constraints.txt`), saved model runs, and tests on the saved reports, SQL queries and model runs; re-checked on the newest packages, see [Reproduce the results](#reproduce-the-results) |
+| Reproducibility | pinned versions (`constraints.txt`), saved model runs, and tests on the saved reports, SQL queries and model runs; see [Reproduce the results](#reproduce-the-results) |
 | GitHub Actions (tests, monthly scheduled ETL) | scaffolded; no Cloud Run deploy step |
 | Supabase PostgreSQL | schema scaffolded (`sql/schema_app_metadata.sql`); not deployed |
 
@@ -91,11 +91,10 @@ python -m pip install -r requirements.txt -c constraints.txt
 ```
 
 [constraints.txt](constraints.txt) pins the direct dependencies, plus numpy and scipy, to the environment
-that produced the results: Python 3.11.15, pandas 2.3.3, numpy 2.4.6, statsmodels 0.14.6,
-scikit-learn 1.9.0, xgboost 3.2.0, mlflow 3.15.1, fastapi 0.141.1 and streamlit 1.61.1 (re-checked
-2026-09-22). The tests and monthly ETL workflows and the Docker image install with it too. Other
-packages still float. [Reproduce the results](#reproduce-the-results) says what was checked, including
-a run on the newest package versions.
+that produced the results. The tests and monthly ETL workflows and the Docker image install with it too.
+Other packages still float; the book's
+[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+section says how much that matters.
 
 ### 2. Data (optional: it is already in the repository)
 
@@ -175,9 +174,9 @@ Otherwise run these five commands once, in this order:
 \*Measured on one WSL2 machine; expect variation.
 
 Runs go to `mlruns/` (MLflow experiment "CPI Forecast"). Training also rewrites
-the CSVs in `reports/`. The results are deterministic, so they come out
-identical to the committed files. Only the bytes of the Parquet file from step 2
-can differ, depending on your `pyarrow` version.
+the CSVs in `reports/`. With the pinned versions they match the committed files;
+see [Reproduce the results](#reproduce-the-results) for how to check. Only the bytes
+of the Parquet file from step 2 can differ, depending on your `pyarrow` version.
 
 **Skip training: restore the saved runs.** `mlruns_snapshot/` (about 5.5 MB) holds the
 latest finished run of each served model family, trained on the data up to the
@@ -187,8 +186,7 @@ latest finished run of each served model family, trained on the data up to the
 python -m src.mlruns_snapshot restore                 # add --merge if mlruns/ already has runs
 ```
 
-The API then serves the same forecasts as the checked-in `reports/tableau/forecast.csv`
-(checked on 2026-09-22: every model, both targets, all eight horizons, to within 1e-15).
+The API then serves the same forecasts as the checked-in `reports/tableau/forecast.csv`.
 The saved models were trained with the versions in `constraints.txt`, so install with it.
 After retraining, your new runs are the latest, so the API uses them instead. To refresh
 the saved copy after retraining, run `python -m src.mlruns_snapshot build`. It replaces
@@ -236,12 +234,10 @@ curl -X POST http://localhost:8000/forecast/scenario \
 The Cloud Run deployment serves `/health` and the forecast, trimmed-mean,
 scenario, RBA and credit endpoints (verified live 2026-09-21). On its single CPU,
 `/forecast/scenario` takes about 40 to 46 seconds and `/rba-action` about 30 to
-45. The simulation-based outputs of those two can differ slightly from a local run.
-On 2026-09-22 the scenario forecast was off by up to 0.031 percentage points and the
-RBA probabilities by up to 0.2; no RBA action changed, and point forecasts and
-intervals agreed to within 2e-9. Asked twice, Cloud Run gave identical answers.
-Forcing a different CPU kernel on one machine gives the same kind of shift
-(`reports/reproducibility_check.csv`).
+45. The simulation-based outputs of those two can differ slightly from a local run;
+the book's
+[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+section measures by how much.
 
 ### 6. Start Streamlit
 
@@ -272,7 +268,8 @@ jupyter-book build book/australian_cpi_forecasting
 
 Open `book/australian_cpi_forecasting/_build/html/index.html`. The build takes
 seconds: chapter outputs are pre-executed (`execute_notebooks: off`), so it
-never trains a model.
+never trains a model. To re-run the analysis yourself, use `notebooks/EDA.ipynb`. The
+book's appendix notebooks share one kernel session, so run them in order or not at all.
 
 ### Configuration
 
@@ -294,9 +291,10 @@ use them.
 This is the recipe for getting the same numbers as the checked-in files, and for checking that you did.
 It was tested on Linux (WSL2 Ubuntu, Python 3.11).
 
-**What keeps the results repeatable.** The downloaded source data and the curated dataset are committed, so
-everyone starts from the same data. The models see data only up to the 2025Q4 forecast origin; later
-quarters are benchmark only. Random draws use fixed seeds (42), and `constraints.txt` fixes the package versions.
+The book's
+[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+section explains what holds the results in place and measures where a rerun can still differ. This section is
+the recipe.
 
 ### 1. Set up
 
@@ -305,9 +303,8 @@ python3.11 -m venv .venv && source .venv/bin/activate
 python -m pip install -r requirements.txt -c constraints.txt
 ```
 
-Do not run `data_retrieval.py`. ABS and RBA revise past figures: between the downloads of late August and
-3 September 2026, household spending changed in 161 of its 162 monthly values. A fresh download can give
-slightly different numbers.
+Do not run `data_retrieval.py`. ABS and RBA revise past figures, so a fresh download can give slightly
+different numbers.
 
 ### 2. Rebuild the data and run the tests
 
@@ -361,71 +358,23 @@ git diff --stat -- reports                                       # expect no out
 ```
 
 No output means every regenerated file is byte-identical to the checked-in one. If you see a difference,
-check the list below before assuming something is wrong.
+check the book's
+[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+section before assuming something is wrong.
 
 **Optional: the Tableau exports.** With the API running (`uvicorn api.main:app --port 8000` in one terminal),
 `python -m src.models.tableau_export` in another rewrites `reports/tableau/` in about 20 seconds. Everything
 matches except `dataset_overview.csv`, whose `curated_dataset_last_modified` column is the date the curated
 data was last written, so it changes whenever the ETL runs.
 
-### What was checked
+### Repeat the drift measurements
 
-On 2026-09-22 the steps above were re-run in a fresh environment with the newest packages available (pandas 3.0.6,
-statsmodels 0.15.0, scikit-learn 1.9.1), on the machine that produced the checked-in files. The test suite passed
-(191 tests at the time; all 215 pass in the pinned environment), the curated data rebuilt identically, and 49 of the
-54 report files were regenerated. 48 were byte-identical to the checked-in file: the model comparisons, backtests,
-Elastic Net coefficients, simulation fans, RBA classifier report, EDA exports, interval coverage and calibration
-reports, the Tableau exports, the platform status report and the SVAR unemployment forecast. The one difference is
-`tableau/dataset_overview.csv`, which records when the data was last written. The other 5 files were not regenerated:
-
-- four dated decision and evidence notes (`*_decisions.md`, `svar_five_variable_evidence_note.md`) are prose that no
-  code writes;
-- `tableau/rba_half_donut_scaffold.csv` is a fixed lookup table for a Tableau chart.
-
-### Measured by script
-
-`python -m src.reproducibility_check` measures how far a rerun drifts and saves the numbers to
-`reports/reproducibility_check.csv` (one row per scenario and quantity, with the recipe in its `how` column) and
-`reports/reproducibility_check_files.csv` (per file). The book's chapter 6 chart is drawn from them. On 2026-09-22:
-
-| Scenario | Result |
-|---|---|
-| Rebuild the book twice | 37 of 37 HTML pages identical |
-| Restore the saved runs | 14 of 14 Tableau exports identical |
-| Retrain the models on the newest packages | 43 of 44 rewritten files identical; the other differs in one date cell; no number changed in 89,322 table cells |
-| Serve on one CPU thread | 0 of 315 numbers changed |
-| Serve on another CPU kernel (Sandy Bridge) | forecasts within 2e-10; scenario forecast up to 0.019 pp and RBA probabilities up to 0.5 pp off; no action or label changed |
-| Serve from Cloud Run instead of locally | forecasts within 2e-9; scenario forecast up to 0.031 pp and RBA probabilities up to 0.2 pp off; no action or label changed |
-| Ask Cloud Run the same questions twice | 0 of 315 numbers and 0 of 175 text fields changed |
-| Rerun the RBA classifier on three other kernels | 0 of 861 calls changed; ordered-model probabilities under 3e-9; threshold-model probabilities up to 4.7 pp; ordered logit's unstable first-fold cut-offs up to 25 |
-| RBA classifier against an earlier committed report | 4 of 164 calls changed, all in the ordered models (same inputs and prediction code; cause unknown) |
-| Download the ABS data again | 161 of 162 household spending values changed, by up to 0.235% |
-
-The retrain skipped the four interval coverage and calibration reports (about 90 minutes); the hand-run check
-above covers them. Reruns happen in scratch copies, so the checked-in reports are never touched.
-
-To repeat a scenario, see [reports/reproducibility_runs/](reports/reproducibility_runs/README.md). It has the exact
-commands (the helpers are `scripts/repro_scratch_copy.sh`, `scripts/repro_retrain_chain.sh` and
-`scripts/repro_rba_predictions.py`), the saved RBA classifier predictions for each CPU kernel, the retrain's step log,
-package lists for both environments, the raw API responses, the machine and the code version, and a list of what was not
-kept.
-
-### What can still differ
-
-- **A fresh data download**, because of ABS and RBA revisions (step 1).
-- **Another machine.** Point forecasts and intervals agree with a local run to within 2e-9 on Cloud Run, but its
-  scenario forecast is off by up to 0.031 percentage points and its RBA probabilities by up to 0.2. Forcing OpenBLAS
-  onto another CPU kernel on one machine gives the same kind of shift, so different arithmetic is enough to produce a
-  gap of this size (Cloud Run's image was also built from unpinned packages, so that is not proof). The RBA classifier's
-  early fits are unstable: an earlier committed report differs from a rerun in 4 of 82 ordered-model calls with the
-  same inputs and prediction code, and what caused it is not known. Three other CPU kernels changed none of 861
-  calls and moved the ordered models' probabilities by under 3e-9, so CPU arithmetic is not the explanation. No second
-  physical computer was tested.
-- **Packages that are not pinned.** `constraints.txt` covers direct dependencies only. A full retrain on the newest
-  packages matched (see the table above), so this is a precaution, not a known problem.
-- **The book.** Its pages are pre-executed, so `jupyter-book build` reproduces them exactly. To re-run the
-  analysis notebooks yourself, use `notebooks/EDA.ipynb`. The book's appendix notebooks share one kernel
-  session, so run them in order or not at all.
+The numbers behind the book's
+[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+chart come from `python -m src.reproducibility_check`, whose sub-commands compare a rerun with a baseline and save
+the result to `reports/reproducibility_check.csv`. Each scenario is rerun in a scratch copy of the repo, so the
+checked-in reports are never touched. The exact commands, helper scripts and saved artefacts are in
+[reports/reproducibility_runs/](reports/reproducibility_runs/README.md).
 
 ## Run with Docker (API only)
 
@@ -516,7 +465,7 @@ files and needs no API.
 | `docker build` fails at `COPY mlruns` | `mlruns/` does not exist. Train first, or restore the saved runs. |
 | `docker build` fails at `COPY constraints.txt` | The file is missing from the folder. It lives in the repository root. |
 | `python -m src.mlruns_snapshot restore` says `already has content` | It will not overwrite existing runs. Add `--merge` to add the saved runs next to yours. |
-| `git diff reports/` shows a change after a re-run | Only `tableau/dataset_overview.csv` (a date column) should ever differ. For anything else see [What can still differ](#what-can-still-differ). |
+| `git diff reports/` shows a change after a re-run | `tableau/dataset_overview.csv` (a date column) is expected to differ. For anything else see where a rerun can drift in the book's [Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on) section. |
 | Import errors, or syntax errors from `src/models` | Wrong Python version. Use 3.11. |
 | Streamlit shows an API-unavailable banner in a tab | Start the API, or fix the "API base URL" box. |
 | `Address already in use` | Pass a different port, for example `uvicorn api.main:app --port 8001`. |
@@ -555,9 +504,10 @@ scenario outputs are illustrative rather than causal. The credit-stress ECL is
 a simplified, Stage-1-only, 12-month calculation. It is not comparable to any
 bank's real provision and must not be used for credit, regulatory or accounting
 decisions. The RBA classifier's fitted models are not statistically shown to
-beat its threshold baseline. The numbers reproduce on the machine that produced them,
-including with the newest packages; [What can still differ](#what-can-still-differ) lists
-where they might not.
+beat its threshold baseline. The numbers reproduce on the machine that produced them;
+the book's
+[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+section lists where they might not.
 
 ## Further reading
 
