@@ -156,7 +156,7 @@ appendix and `python -m src.eda_export`, which writes
 ### 3. Run the tests
 
 ```bash
-python -m pytest tests                            # 215 tests, about 3 minutes
+python -m pytest tests                            # 218 tests, about 3 minutes
 ```
 
 ### 4. Train the models
@@ -313,9 +313,12 @@ different numbers.
 ```bash
 python -m src.build_curated_dataset      # about 1 second
 python -m src.platform_status            # about 1 second
-python -m pytest tests                   # 215 tests, about 3 minutes
+python -m pytest tests                   # 218 tests, about 3 minutes
 git status --short data reports          # expect nothing, or only the .parquet file (see below)
 ```
+
+Pytest prints your own pass count and runtime on its final line. For this checkout,
+expect `218 passed`; a different result means your checkout or environment needs checking.
 
 The curated CSV and `reports/data_quality_report.csv` come out byte-identical. Only the bytes of the Parquet
 file can differ, depending on your `pyarrow` version; its contents match.
