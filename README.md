@@ -1,6 +1,6 @@
 # CPI Forecast
 
-[![content: AI-generated](book/australian_cpi_forecasting/_static/badges/ai-generated.svg)](https://juanvu1810.github.io/CPI-Forecast/intro.html#ai-acknowledgement) [![content: human-reviewed & edited](book/australian_cpi_forecasting/_static/badges/human-reviewed-edited.svg)](https://juanvu1810.github.io/CPI-Forecast/intro.html#ai-acknowledgement)
+[![content: AI-generated](book/australian_cpi_forecasting/_static/badges/ai-generated.svg)](https://juanvu1810.github.io/Australian-CPI-Forecast/intro.html#ai-acknowledgement) [![content: human-reviewed & edited](book/australian_cpi_forecasting/_static/badges/human-reviewed-edited.svg)](https://juanvu1810.github.io/Australian-CPI-Forecast/intro.html#ai-acknowledgement)
 
 Australian year-ended CPI inflation forecasting, taken from a university
 time-series assignment to an end-to-end project: reproducible data retrieval
@@ -14,9 +14,9 @@ test, and a FastAPI + Streamlit app with a Cloud Run deployment.
 | | |
 |---|---|
 | Interactive demo | https://cpi-forecast-demo.streamlit.app/ |
-| Jupyter Book (results and methodology) | https://juanvu1810.github.io/CPI-Forecast/ |
+| Jupyter Book (results and methodology) | https://juanvu1810.github.io/Australian-CPI-Forecast/ |
 | Forecast API docs | https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs |
-| Source code | https://github.com/JuanVu1810/CPI-Forecast |
+| Source code | https://github.com/JuanVu1810/Australian-CPI-Forecast |
 
 Start the book with *Key Findings*. The demo lets you run a live forecast, watch the
 Ensemble's simulated paths, try your own shock in the scenario engine and see the RBA
@@ -77,7 +77,7 @@ flowchart LR
 ### 1. Get the code and install
 
 ```bash
-git clone https://github.com/JuanVu1810/CPI-Forecast.git
+git clone https://github.com/JuanVu1810/Australian-CPI-Forecast.git
 cd CPI-Forecast
 python3.11 -m venv .venv
 source .venv/bin/activate
@@ -95,7 +95,7 @@ python -m pip install -r requirements.txt -c constraints.txt
 [constraints.txt](constraints.txt) pins the direct dependencies, plus numpy and scipy, to the environment
 that produced the results. The tests and monthly ETL workflows and the Docker image install with it too.
 Other packages still float; the book's
-[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
 section says how much that matters.
 
 ### 2. Data (optional: it is already in the repository)
@@ -238,7 +238,7 @@ scenario, RBA and credit endpoints (verified live 2026-09-21). On its single CPU
 `/forecast/scenario` takes about 40 to 46 seconds and `/rba-action` about 30 to
 45. The simulation-based outputs of those two can differ slightly from a local run;
 the book's
-[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
 section measures by how much.
 
 ### 6. Start Streamlit
@@ -294,7 +294,7 @@ This is the recipe for getting the same numbers as the checked-in files, and for
 It was tested on Linux (WSL2 Ubuntu, Python 3.11).
 
 The book's
-[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
 section explains what holds the results in place and measures where a rerun can still differ. This section is
 the recipe.
 
@@ -364,7 +364,7 @@ git diff --stat -- reports                                       # expect no out
 
 No output means every regenerated file is byte-identical to the checked-in one. If you see a difference,
 check the book's
-[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
 section before assuming something is wrong.
 
 **Optional: the Tableau exports.** With the API running (`uvicorn api.main:app --port 8000` in one terminal),
@@ -375,7 +375,7 @@ data was last written, so it changes whenever the ETL runs.
 ### Repeat the drift measurements
 
 The numbers behind the book's
-[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
 chart come from `python -m src.reproducibility_check`, whose sub-commands compare a rerun with a baseline and save
 the result to `reports/reproducibility_check.csv`. Each scenario is rerun in a scratch copy of the repo, so the
 checked-in model and analysis reports are never touched. Copy-paste commands, prerequisites, safety notes, helper
@@ -471,7 +471,7 @@ files and needs no API.
 | `docker build` fails at `COPY mlruns` | `mlruns/` does not exist. Train first, or restore the saved runs. |
 | `docker build` fails at `COPY constraints.txt` | The file is missing from the folder. It lives in the repository root. |
 | `python -m src.mlruns_snapshot restore` says `already has content` | It will not overwrite existing runs. Add `--merge` to add the saved runs next to yours. |
-| `git diff reports/` shows a change after a re-run | `tableau/dataset_overview.csv` (a date column) is expected to differ. For anything else see where a rerun can drift in the book's [Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on) section. |
+| `git diff reports/` shows a change after a re-run | `tableau/dataset_overview.csv` (a date column) is expected to differ. For anything else see where a rerun can drift in the book's [Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on) section. |
 | Import errors, or syntax errors from `src/models` | Wrong Python version. Use 3.11. |
 | Streamlit shows an API-unavailable banner in a tab | Start the API, or fix the "API base URL" box. |
 | `Address already in use` | Pass a different port, for example `uvicorn api.main:app --port 8001`. |
@@ -512,7 +512,7 @@ bank's real provision and must not be used for credit, regulatory or accounting
 decisions. The RBA classifier's fitted models are not statistically shown to
 beat its threshold baseline. The numbers reproduce on the machine that produced them;
 the book's
-[Reproducibility](https://juanvu1810.github.io/CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
+[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
 section lists where they might not.
 
 ## AI acknowledgement
@@ -537,7 +537,7 @@ them and I haven't marked them as human-reviewed. The CSV files beside them are 
 project's code computes from the data, so they aren't AI-written text and aren't tagged.
 
 The full explanation is in the
-[book's introduction](https://juanvu1810.github.io/CPI-Forecast/intro.html#ai-acknowledgement).
+[book's introduction](https://juanvu1810.github.io/Australian-CPI-Forecast/intro.html#ai-acknowledgement).
 
 ## Further reading
 

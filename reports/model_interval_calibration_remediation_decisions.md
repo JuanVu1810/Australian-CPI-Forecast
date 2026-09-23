@@ -1,6 +1,6 @@
 # Interval Calibration / Model Assumption Remediation Decisions
 
-[![content: AI-generated](../book/australian_cpi_forecasting/_static/badges/ai-generated.svg)](https://juanvu1810.github.io/CPI-Forecast/intro.html#ai-acknowledgement)
+[![content: AI-generated](../book/australian_cpi_forecasting/_static/badges/ai-generated.svg)](https://juanvu1810.github.io/Australian-CPI-Forecast/intro.html#ai-acknowledgement)
 
 Date: 2026-08-26 (latest fix: 2026-09-19)
 

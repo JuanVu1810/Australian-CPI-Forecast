@@ -27,7 +27,7 @@ bibtex_bibfiles:
 
 # Information about where the book exists on the web
 repository:
-  url: https://github.com/JuanVu1810/CPI-Forecast  # Online location of your book
+  url: https://github.com/JuanVu1810/Australian-CPI-Forecast  # Online location of your book
   path_to_book: book/australian_cpi_forecasting  # Optional path to your book, relative to the repository root
   branch: main  # Which branch of the repository should be used when creating links (optional)
 
@@ -54,7 +54,7 @@ sphinx:
       home_page_in_toc: true
       # The GitHub buttons in the page header. Set here for the same reason: the html.use_*_button
       # and repository: settings above never reach the theme once this block exists.
-      repository_url: https://github.com/JuanVu1810/CPI-Forecast
+      repository_url: https://github.com/JuanVu1810/Australian-CPI-Forecast
       repository_branch: main
       path_to_docs: book/australian_cpi_forecasting
       use_repository_button: true

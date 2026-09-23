@@ -1,6 +1,6 @@
 # Reproducibility runs: what was measured, how to repeat it, and what was kept
 
-[![content: AI-generated](../../book/australian_cpi_forecasting/_static/badges/ai-generated.svg)](https://juanvu1810.github.io/CPI-Forecast/intro.html#ai-acknowledgement)
+[![content: AI-generated](../../book/australian_cpi_forecasting/_static/badges/ai-generated.svg)](https://juanvu1810.github.io/Australian-CPI-Forecast/intro.html#ai-acknowledgement)
 
 Results live in `reports/reproducibility_check.csv` (one row per scenario/quantity) and
 `reports/reproducibility_check_files.csv` (per-file detail). This folder holds what's needed to repeat and audit them.
