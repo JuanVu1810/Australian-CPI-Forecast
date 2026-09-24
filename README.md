@@ -112,7 +112,8 @@ It writes `data/processed/`, `data/curated/quarterly_macro_features.csv` and
 `.parquet` (128 quarters, 54 columns), `data/analytics/cpi_forecast.duckdb`, and
 `reports/data_quality_report.csv`.
 
-To query the DuckDB database:
+To query the DuckDB database, run the ETL command above first. The database file is
+gitignored, so it does not exist on a fresh clone. Then, from the repository root:
 
 ```bash
 python - <<'EOF'
