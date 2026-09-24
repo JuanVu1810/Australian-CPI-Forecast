@@ -18,6 +18,8 @@ jobs:
       - name: Download source data
         run: python data_retrieval.py 1995 "$(date +%Y)" --output-dir dataset
       - name: Build curated dataset
-        run: python -m src.build_curated_dataset
+        run: python -m src.build_curated_dataset --load-postgres
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
       - name: Run tests
         run: python -m pytest tests

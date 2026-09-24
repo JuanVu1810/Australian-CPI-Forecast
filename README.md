@@ -38,7 +38,7 @@ call. This README only covers status and how to run the project.
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
 | Reproducibility | pinned versions (`constraints.txt`), saved model runs, and tests on the saved reports, SQL queries and model runs; see [Reproduce the results](#reproduce-the-results) |
 | GitHub Actions (tests, monthly scheduled ETL) | scaffolded; no Cloud Run deploy step |
-| Supabase PostgreSQL | schema scaffolded (`sql/schema_app_metadata.sql`); not deployed |
+| Supabase PostgreSQL | schema (`sql/schema_app_metadata.sql`) and the forecast snapshot (`python -m src.models.forecast_snapshot snapshot`) run against a hosted Supabase project on 2026-09-24: six rows written, one per model family for each of the headline and trimmed-mean targets. The quarter it recorded (2026Q1) was already published, so this shows the wiring works, not a live forecast record. Not read by the API or the Streamlit app |
 
 ## Choose how to run it
 
@@ -156,7 +156,7 @@ appendix and `python -m src.eda_export`, which writes
 ### 3. Run the tests
 
 ```bash
-python -m pytest tests                            # 218 tests, about 3 minutes
+python -m pytest tests                            # 226 tests, about 3 minutes
 ```
 
 ### 4. Train the models
@@ -313,12 +313,12 @@ different numbers.
 ```bash
 python -m src.build_curated_dataset      # about 1 second
 python -m src.platform_status            # about 1 second
-python -m pytest tests                   # 218 tests, about 3 minutes
+python -m pytest tests                   # 226 tests, about 3 minutes
 git status --short data reports          # expect nothing, or only the .parquet file (see below)
 ```
 
 Pytest prints your own pass count and runtime on its final line. For this checkout,
-expect `218 passed`; a different result means your checkout or environment needs checking.
+expect `226 passed`; a different result means your checkout or environment needs checking.
 
 The curated CSV and `reports/data_quality_report.csv` come out byte-identical. Only the bytes of the Parquet
 file can differ, depending on your `pyarrow` version; its contents match.
@@ -514,6 +514,13 @@ beat its threshold baseline. The numbers reproduce on the machine that produced 
 the book's
 [Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
 section lists where they might not.
+
+"Headline CPI" in this repository means the ABS seasonally adjusted, year-ended All
+groups CPI (series A3604508K), taken from the ABS analytical series on the pre-October
+2025 basis. It is not the original-terms figure the ABS quotes in its releases. For
+2026Q1 the repository holds 4.0% against the ABS's 4.6%, and the trimmed mean is 3.5%
+against 3.3%. The models are trained and scored on the series in the repository, so
+every accuracy check here, including the Supabase snapshot, uses it too.
 
 ## AI acknowledgement
 

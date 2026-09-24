@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -258,6 +259,7 @@ def records_to_frame(records: list[QualityRecord]) -> pd.DataFrame:
 
 
 def main() -> int:
+    started_at = datetime.now(timezone.utc)
     configure_logging()
     args = parse_args()
 
@@ -286,9 +288,13 @@ def main() -> int:
         )
 
     if args.load_postgres:
-        quality_records.append(
-            load_postgres_quality_report(records_to_frame(quality_records))
+        postgres_record = load_postgres_quality_report(
+            records_to_frame(quality_records),
+            curated=curated,
+            started_at=started_at,
         )
+        LOGGER.info("PostgreSQL load: %s (%s)", postgres_record.status, postgres_record.notes)
+        quality_records.append(postgres_record)
 
     save_curated_outputs(curated, curated_dir)
     save_quality_report(quality_records, reports_dir)
