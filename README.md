@@ -463,6 +463,61 @@ when the API is redeployed), so the same request repeated by anyone comes back
 instantly, and Cloud Run is not charged for it. The 4.3 Ensemble tab reads committed
 files and needs no API.
 
+## GitHub Actions
+
+Three workflows in `.github/workflows/` run on GitHub. Each one starts a fresh Ubuntu machine,
+downloads the code and installs Python 3.11. None of them deploys the API to Cloud Run, which
+stays a manual step (see [Deploy to Google Cloud Run](#deploy-to-google-cloud-run)).
+
+| Workflow | When it runs | Purpose |
+|---|---|---|
+| `tests.yml` | every push and pull request | checks that the code still works |
+| `scheduled_etl.yml` (`scheduled-etl`) | 18:00 UTC on the 1st of each month, and on demand | checks that the pipeline still works on freshly downloaded data |
+| `deploy_book.yml` (`deploy-book`) | pushes to `main` that change the book, and on demand | publishes the Jupyter Book to GitHub Pages |
+
+### tests.yml
+
+1. Install the packages at the pinned versions (`requirements.txt` with `constraints.txt`).
+2. Rebuild the curated dataset from the committed data. Some tests, such as the DuckDB query
+   tests, need the files this creates.
+3. Run the whole test suite with `pytest`.
+
+The result is a green tick or red cross next to the commit. It changes nothing.
+
+### scheduled_etl.yml
+
+1. Install the packages, as above.
+2. Download the latest source data from ABS, RBA, APRA and Yahoo Finance.
+3. Rebuild the curated dataset from it. If the repository has a `DATABASE_URL` secret, this step
+   also logs the run and its data-quality checks to Supabase. Use the Session pooler connection
+   string, because GitHub's runners are IPv4-only. Without the secret the logging is skipped, and
+   if the database cannot be reached the failure is recorded and the job carries on.
+4. Run the tests on the rebuilt data, except the byte-for-byte check of
+   `reports/svar_unemployment_forecast.csv`. Revised ABS or RBA figures can legitimately change
+   that report.
+5. Run that one check on its own as an informational step. It can fail without failing the job,
+   which tells you the source data has moved. `tests.yml` still enforces it on the committed data.
+
+Everything happens on a temporary copy of the repository that is thrown away when the job ends,
+so it never changes the committed data, reports, models or the deployed app. Green means the
+download, rebuild and tests all worked on today's data. Red means something broke, for example a
+source changing its format. The only lasting effect is the Supabase rows.
+
+### deploy_book.yml
+
+Two jobs run one after the other:
+
+1. Build: install the book's own requirements, turn the notebooks into web pages with
+   `jupyter-book build`, and package the result. It uses the saved notebook outputs and does not
+   re-run any model code.
+2. Deploy: publish that package to GitHub Pages. A new deployment waits for one already running
+   instead of cutting it off.
+
+The live book updates a minute or two after a book change is pushed.
+
+To start `scheduled-etl` or `deploy-book` by hand, open the **Actions** tab, choose the workflow
+and click **Run workflow**.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
