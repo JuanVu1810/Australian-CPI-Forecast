@@ -755,7 +755,7 @@ with scenario_tab:
         "Shock variable", options=SCENARIO_SHOCK_VARIABLES, format_func=lambda v: v.replace("_", " "), key="scenario_shock_variable"
     )
     scenario_shock_value = scenario_control_cols[2].number_input(
-        "Shock value", value=0.0, step=0.25, key="scenario_shock_value"
+        "Shock value", value=0.0, min_value=-1000.0, max_value=1000.0, step=0.25, key="scenario_shock_value"
     )
     scenario_max_horizon = scenario_control_cols[3].slider(
         "Max horizon (quarters)", min_value=1, max_value=MAX_FORECAST_HORIZON, value=MAX_FORECAST_HORIZON, key="scenario_max_horizon"

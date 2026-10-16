@@ -10,7 +10,7 @@ Outputs:
     data/curated/quarterly_macro_features.csv
     reports/data_quality_report.csv
 
-Parquet output is attempted when an optional Parquet engine is installed.
+Parquet output needs pyarrow, which requirements.txt installs.
 """
 
 from __future__ import annotations
@@ -231,13 +231,11 @@ def save_curated_outputs(df: pd.DataFrame, curated_dir: Path) -> None:
     df.to_csv(csv_path, index=False)
     LOGGER.info("Saved curated CSV: %s", csv_path)
 
+    # SVAR and the RBA classifier read the Parquet copy, so a missing engine must stop the build
+    # instead of leaving a stale file behind.
     parquet_path = curated_dir / "quarterly_macro_features.parquet"
-    try:
-        df.to_parquet(parquet_path, index=False)
-    except ImportError:
-        LOGGER.warning("Parquet engine not installed; skipped %s", parquet_path)
-    else:
-        LOGGER.info("Saved curated Parquet: %s", parquet_path)
+    df.to_parquet(parquet_path, index=False)
+    LOGGER.info("Saved curated Parquet: %s", parquet_path)
 
 
 def save_quality_report(records: list[QualityRecord], reports_dir: Path) -> None:
@@ -280,8 +278,17 @@ def main() -> int:
             )
         )
 
-    save_curated_outputs(curated, curated_dir)
+    # Save the report first, then refuse to overwrite the curated data if any check failed.
     save_quality_report(quality_records, reports_dir)
+    failed = [record.dataset for record in quality_records if record.status == "FAIL"]
+    if failed:
+        LOGGER.error(
+            "Data quality checks failed, curated data not written: %s. "
+            "data/processed was already rewritten; run `git checkout data/processed` to undo it.",
+            ", ".join(failed),
+        )
+        return 1
+    save_curated_outputs(curated, curated_dir)
 
     LOGGER.info(
         "Curated dataset complete: %s rows, %s columns",

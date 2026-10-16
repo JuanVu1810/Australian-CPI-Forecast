@@ -27,8 +27,6 @@ import readabs as ra
 import yfinance as yf
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-
 # Exact ABS series are used so the script does not download and save every
 # series in each catalogue. These identify the intended Australia-wide series.
 ABS_SERIES: dict[str, dict[str, str]] = {
@@ -565,7 +563,11 @@ def download_apra_credit_quality(
     end_year: int,
     save_meta: bool = True,
 ) -> dict[str, Any]:
-    """Download APRA QADIP and save the aggregate ADI credit-quality ratio."""
+    """Download APRA QADIP and save the aggregate ADI credit-quality ratio under ``output_dir/apra``.
+
+    Nothing outside ``output_dir`` is written. The copies kept in ``data/curated`` and
+    ``data/metadata`` are updated by hand from these files.
+    """
     apra_dir = output_dir / "apra"
     workbook_path = apra_dir / "apra_qadip_performance_sep2004_mar2026.xlsx"
 
@@ -580,16 +582,13 @@ def download_apra_credit_quality(
     filtered = tidy.loc[
         (quarters.year >= start_year) & (quarters.year <= end_year)
     ].copy()
-    curated_dir = PROJECT_ROOT / "data" / "curated"
-    metadata_dir = PROJECT_ROOT / "data" / "metadata"
-
-    data_record = save_csv(filtered, curated_dir / "credit_quality_quarterly.csv")
+    data_record = save_csv(filtered, apra_dir / "credit_quality_quarterly.csv")
     metadata_record = None
     if save_meta:
         notes = describe_apra_credit_quality_breaks(tidy)
         metadata_record = save_csv(
             notes,
-            metadata_dir / "credit_quality_quarterly_notes.csv",
+            apra_dir / "credit_quality_quarterly_notes.csv",
         )
 
     return {

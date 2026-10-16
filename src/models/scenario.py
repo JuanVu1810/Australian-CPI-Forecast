@@ -122,6 +122,8 @@ def compute_shock_size(
     expected_h1 = float(forecast.iloc[0][shock_variable])
     if not np.isfinite(expected_h1):
         raise ValueError(f"horizon-1 SVAR forecast for {shock_variable!r} is not finite.")
+    if not np.isfinite(shock_value):
+        raise ValueError("shock_value must be a finite number.")
     return float(shock_value) - expected_h1
 
 

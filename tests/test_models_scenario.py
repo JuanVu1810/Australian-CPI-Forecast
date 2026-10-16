@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from api import main as api_main
 from src.models import scenario
@@ -207,26 +208,38 @@ def test_run_scenario_keeps_tier1_paths_independent_of_shock_size(monkeypatch, t
     )
 
 
-def test_forecast_scenario_api_returns_caveat_and_adjusted_interval(monkeypatch):
-    fake_result = scenario.ScenarioResult(
+def _fake_scenario_result(horizons=(1, 2), forecast=(3.1, 3.2), lower=(2.6, 2.7), upper=(3.6, 3.7)):
+    n = len(horizons)
+    return scenario.ScenarioResult(
         target="headline",
         target_column="cpi_yoy",
         shock_variable="cash_rate",
         shock_value=4.35,
         shock_size=0.25,
-        horizons=(1, 2),
-        forecast=[3.1, 3.2],
-        interval_lower=[2.6, 2.7],
-        interval_upper=[3.6, 3.7],
-        quarters=["2026Q1", "2026Q2"],
+        horizons=tuple(horizons),
+        forecast=list(forecast),
+        interval_lower=list(lower),
+        interval_upper=list(upper),
+        quarters=["2026Q1", "2026Q2", "2026Q3", "2026Q4"][:n],
         forecast_origin="2025Q4",
         caveat=scenario.SCENARIO_CAVEAT,
-        baseline_paths=np.zeros((3, 2)),
-        shock_contribution=np.zeros((3, 2)),
-        combined_paths=np.zeros((3, 2)),
+        baseline_paths=np.zeros((3, n)),
+        shock_contribution=np.zeros((3, n)),
+        combined_paths=np.zeros((3, n)),
     )
 
-    monkeypatch.setattr(api_main.scenario, "run_scenario", lambda **kwargs: fake_result)
+
+def _write_factors(path, scale_by_horizon):
+    rows = ["model,horizon,scale_factor,calibration_n,target_coverage"]
+    rows += [f"ensemble,{h},{scale},40,0.8" for h, scale in scale_by_horizon.items()]
+    path.write_text("\n".join(rows) + "\n")
+
+
+def test_forecast_scenario_api_returns_caveat_and_calibrated_interval(monkeypatch, tmp_path):
+    factors = tmp_path / "factors.csv"
+    _write_factors(factors, {1: 2.0, 2: 3.0})
+    monkeypatch.setattr(api_main, "INTERVAL_CALIBRATION_FACTORS_PATH", factors)
+    monkeypatch.setattr(api_main.scenario, "run_scenario", lambda **kwargs: _fake_scenario_result())
 
     response = api_main.forecast_scenario(
         api_main.ScenarioForecastRequest(
@@ -240,6 +253,89 @@ def test_forecast_scenario_api_returns_caveat_and_adjusted_interval(monkeypatch)
 
     assert response["shock_size"] == 0.25
     assert response["forecast"] == [3.1, 3.2]
-    assert response["interval_lower"] == [2.6, 2.7]
-    assert response["interval_upper"] == [3.6, 3.7]
+    # Each side is widened around the forecast by that horizon's factor: 3.1 -/+ 2 * 0.5 and 3.2 -/+ 3 * 0.5.
+    np.testing.assert_allclose(response["interval_lower"], [2.1, 1.7])
+    np.testing.assert_allclose(response["interval_upper"], [4.1, 4.7])
     assert "fail multivariate residual whiteness and normality diagnostics" in response["caveat"]
+    assert api_main.UNCALIBRATED_SCENARIO_NOTE not in response["caveat"]
+
+
+def test_forecast_scenario_api_matches_factors_by_horizon_not_position(monkeypatch, tmp_path):
+    factors = tmp_path / "factors.csv"
+    _write_factors(factors, {1: 1.0, 2: 1.0, 3: 1.0, 4: 5.0})
+    monkeypatch.setattr(api_main, "INTERVAL_CALIBRATION_FACTORS_PATH", factors)
+    monkeypatch.setattr(
+        api_main.scenario,
+        "run_scenario",
+        lambda **kwargs: _fake_scenario_result(horizons=(4,), forecast=(3.0,), lower=(2.5,), upper=(3.5,)),
+    )
+
+    response = api_main.forecast_scenario(
+        api_main.ScenarioForecastRequest(shock_variable="cash_rate", shock_value=4.0, horizons=[4])
+    ).model_dump()
+
+    np.testing.assert_allclose(response["interval_lower"], [0.5])  # horizon 4 uses factor 5, not horizon 1's factor
+    np.testing.assert_allclose(response["interval_upper"], [5.5])
+
+
+def test_forecast_scenario_api_uses_the_trimmed_mean_factors_for_that_target(monkeypatch, tmp_path):
+    headline, trimmed = tmp_path / "headline.csv", tmp_path / "trimmed.csv"
+    _write_factors(headline, {1: 1.0})
+    _write_factors(trimmed, {1: 4.0})
+    monkeypatch.setattr(api_main, "INTERVAL_CALIBRATION_FACTORS_PATH", headline)
+    monkeypatch.setattr(api_main, "TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH", trimmed)
+    monkeypatch.setattr(
+        api_main.scenario,
+        "run_scenario",
+        lambda **kwargs: _fake_scenario_result(horizons=(1,), forecast=(3.0,), lower=(2.5,), upper=(3.5,)),
+    )
+
+    response = api_main.forecast_scenario(
+        api_main.ScenarioForecastRequest(
+            target="trimmed_mean", shock_variable="cash_rate", shock_value=4.0, horizons=[1]
+        )
+    ).model_dump()
+
+    np.testing.assert_allclose(response["interval_lower"], [1.0])
+
+
+def test_forecast_scenario_api_leaves_other_percentiles_raw_and_says_so(monkeypatch, tmp_path):
+    factors = tmp_path / "factors.csv"
+    _write_factors(factors, {1: 3.0, 2: 3.0})
+    monkeypatch.setattr(api_main, "INTERVAL_CALIBRATION_FACTORS_PATH", factors)
+    monkeypatch.setattr(api_main.scenario, "run_scenario", lambda **kwargs: _fake_scenario_result())
+
+    response = api_main.forecast_scenario(
+        api_main.ScenarioForecastRequest(
+            shock_variable="cash_rate", shock_value=4.35, horizons=[1, 2], interval_lower=0.2, interval_upper=0.8
+        )
+    ).model_dump()
+
+    assert response["interval_lower"] == [2.6, 2.7]
+    assert api_main.UNCALIBRATED_SCENARIO_NOTE in response["caveat"]
+
+
+def test_forecast_scenario_api_runs_a_repeated_request_once(monkeypatch, tmp_path):
+    factors = tmp_path / "factors.csv"
+    _write_factors(factors, {1: 1.0})
+    monkeypatch.setattr(api_main, "INTERVAL_CALIBRATION_FACTORS_PATH", factors)
+    calls = []
+
+    def fake_run_scenario(**kwargs):
+        calls.append(kwargs)
+        return _fake_scenario_result(horizons=(1,), forecast=(3.0,), lower=(2.5,), upper=(3.5,))
+
+    monkeypatch.setattr(api_main.scenario, "run_scenario", fake_run_scenario)
+    request = api_main.ScenarioForecastRequest(shock_variable="cash_rate", shock_value=4.0, horizons=[1])
+
+    first = api_main.forecast_scenario(request)
+    second = api_main.forecast_scenario(request)
+
+    assert len(calls) == 1
+    assert first == second
+
+
+def test_compute_shock_size_rejects_a_non_finite_shock_value():
+    forecast = pd.DataFrame({"cash_rate": [4.0]})
+    with pytest.raises(ValueError, match="finite"):
+        scenario.compute_shock_size(forecast, "cash_rate", float("nan"))

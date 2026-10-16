@@ -264,13 +264,21 @@ def test_rba_action_returns_live_policy_breakdown_and_marks_threshold(
 
     monkeypatch.setitem(api_main.FAMILY_HANDLERS, "ensemble", fake_headline_ensemble)
     monkeypatch.setitem(api_main.TRIMMED_MEAN_FAMILY_HANDLERS, "ensemble", fake_trimmed_ensemble)
+    predict_calls = []
+
+    def counting_predict_single_quarter(*args, **kwargs):
+        predict_calls.append(1)
+        return fake_predict_single_quarter(*args, **kwargs)
+
     monkeypatch.setattr(
         api_main.rba_classifier,
         "predict_single_quarter",
-        fake_predict_single_quarter,
+        counting_predict_single_quarter,
     )
 
     payload = api_main.rba_action().model_dump()
+    api_main.rba_action()
+    assert len(predict_calls) == 1  # the second request is served from the cache
 
     assert payload["target_quarter"] == "2022Q1"
     assert payload["forecast_origin"] == "2021Q4"
@@ -946,3 +954,68 @@ def test_public_message_shows_project_errors_but_hides_file_paths():
     hidden = api_main._public_message(FileNotFoundError(2, "No such file", "/app/secret/path.csv"))
     assert "/app" not in hidden
     assert "FileNotFoundError" in hidden
+
+
+def test_shipped_models_and_reports_serve_a_forecast():
+    """Smoke test on the committed models/, data/ and reports/ files the Docker image copies."""
+    api_main._load_interval_calibration_factors.cache_clear()
+    response = api_main.forecast_all(api_main.AllForecastsRequest(horizon=2, n_sims=100))
+
+    assert response.unavailable == []
+    assert {model.model_family for model in response.models} == {"sarima", "elastic_net", "ensemble"}
+    for model in response.models:
+        assert len(model.forecast) == 2
+        assert np.isfinite(model.forecast).all()
+
+
+def test_health_reports_missing_files_with_503(monkeypatch, tmp_path):
+    ok = api_main.Response()
+    assert api_main.health(ok)["status"] == "ok"
+    assert ok.status_code == 200
+
+    monkeypatch.setitem(api_main.HEADLINE_MODEL_PATHS, "sarima", tmp_path / "gone.joblib")
+    broken = api_main.Response()
+    payload = api_main.health(broken)
+
+    assert broken.status_code == 503
+    assert payload["status"] == "degraded"
+    assert payload["missing_files"] == [str(tmp_path / "gone.joblib")]
+
+
+def test_load_model_turns_an_unreadable_pickle_into_a_runtime_error(tmp_path):
+    bad = tmp_path / "sarima.joblib"
+    bad.write_bytes(b"not a pickle")
+
+    with pytest.raises(RuntimeError, match="sarima.joblib could not be loaded"):
+        api_main._load_model(bad)
+
+
+@pytest.mark.parametrize("shock_value", [float("nan"), float("inf"), 1e308])
+def test_scenario_request_rejects_non_finite_or_huge_shocks(shock_value):
+    with pytest.raises(ValueError):
+        api_main.ScenarioForecastRequest(shock_variable="cash_rate", shock_value=shock_value)
+
+
+def test_scenario_request_caps_the_number_of_simulations():
+    with pytest.raises(ValueError):
+        api_main.ScenarioForecastRequest(
+            shock_variable="cash_rate", shock_value=1.0, n_sims=api_main.MAX_SCENARIO_SIMS + 1
+        )
+
+
+def test_validation_error_response_survives_a_nan_input():
+    import asyncio
+    import json
+
+    from fastapi.exceptions import RequestValidationError
+
+    try:
+        api_main.ScenarioForecastRequest.model_validate_json(
+            '{"shock_variable":"cash_rate","shock_value":NaN}'
+        )
+    except ValueError as exc:
+        errors = exc.errors()
+    response = asyncio.run(api_main._validation_error(None, RequestValidationError(errors)))
+
+    assert response.status_code == 422
+    assert json.loads(response.body)["detail"][0]["loc"] == ["shock_value"]

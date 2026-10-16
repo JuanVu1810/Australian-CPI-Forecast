@@ -103,6 +103,10 @@ rebuilds the DuckDB database (about a second):
 python -m src.build_curated_dataset
 ```
 
+The build stops without writing `data/curated/` if any data-quality check in
+`reports/data_quality_report.csv` has status FAIL. The APRA credit-quality files are written under
+`dataset/apra/`; the copies in `data/curated/` and `data/metadata/` are updated by hand.
+
 It writes `data/processed/`, `data/curated/quarterly_macro_features.csv` and
 `.parquet` (128 quarters, 54 columns), `data/analytics/cpi_forecast.duckdb`, and
 `reports/data_quality_report.csv`.
@@ -209,11 +213,11 @@ curl -X POST http://localhost:8000/forecast/scenario \
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/health` | liveness and curated-dataset check |
+| GET | `/health` | `ok` only if the curated data, the four saved models and the calibration factors exist; otherwise 503 with the missing files |
 | GET | `/features` | row count, columns and quarter range of the curated dataset |
 | POST | `/forecast/all` | headline forecasts from every family; body: `horizon` (1 to 8, default 8), `n_sims`, `interval_lower`, `interval_upper` |
 | POST | `/forecast/trimmed-mean/all` | the same for trimmed-mean CPI |
-| POST | `/forecast/scenario` | SVAR shock scenario |
+| POST | `/forecast/scenario` | SVAR shock scenario; `shock_value` must be a finite number between -1000 and 1000, `n_sims` at most 2000. The default 10th/90th interval is widened with the same calibration factors as `/forecast/all`; other percentiles are returned raw and the caveat says so. Repeated requests are served from a cache |
 | GET | `/rba-action` | RBA cut/hold/hike readings from seven classifiers |
 | GET | `/credit-risk/stress-test` | illustrative credit stress and 12-month ECL |
 

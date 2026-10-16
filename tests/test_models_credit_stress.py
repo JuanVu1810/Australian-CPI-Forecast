@@ -149,3 +149,26 @@ def test_run_credit_stress_test_returns_segment_by_scenario_frame():
 def test_run_credit_stress_test_requires_weight_for_every_scenario():
     with pytest.raises(ValueError, match="Scenario weights missing"):
         credit_stress.run_credit_stress_test(scenario_deltas={"unknown_scenario": 1.0})
+
+
+def test_caveat_quotes_the_numbers_in_the_assumption_files():
+    """The caveat is hand-written text, so every figure it quotes must match the CSV or constant it came from."""
+    caveat = credit_stress.CREDIT_STRESS_CAVEAT
+    pd_base = credit_stress.load_pd_base_assumptions().set_index("segment")["pd_base"]
+    lgd_ead = credit_stress.load_lgd_ead_assumptions().set_index("segment")
+    discount = credit_stress.load_discount_rate_assumptions().set_index("segment")["discount_rate"]
+    weights = credit_stress.SCENARIO_PROBABILITY_WEIGHTS
+
+    quoted = [
+        f"{pd_base['mortgages'] * 100:.2f}% for the residential mortgage",
+        f"{pd_base['personal_loans'] * 100:.2f}% for other retail",
+        f"{credit_stress.PERSONAL_LOAN_UR_SENSITIVITY} for personal loans",
+        f"{credit_stress.MORTGAGE_UR_SENSITIVITY} for mortgages",
+        f"{lgd_ead.loc['mortgages', 'lgd'] * 100:.0f}% LGD / ${lgd_ead.loc['mortgages', 'ead_aud_m']:,.0f}m EAD",
+        f"{lgd_ead.loc['personal_loans', 'lgd'] * 100:.0f}% LGD / ${lgd_ead.loc['personal_loans', 'ead_aud_m']:,.0f}m EAD",
+        f"{discount['mortgages'] * 100:.2f}% for mortgages",
+        f"{discount['personal_loans'] * 100:.2f}% for personal_loans",
+        f"({weights['base'] * 100:g}% base, {weights['downside'] * 100:g}% downside, {weights['upside'] * 100:g}% upside)",
+    ]
+    missing = [text for text in quoted if text not in caveat]
+    assert not missing

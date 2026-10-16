@@ -5,7 +5,7 @@ Each model is a joblib file in ``models/`` written by its training script.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache, partial
 from inspect import signature
@@ -15,7 +15,9 @@ from typing import Annotated
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from src.models import (
@@ -54,6 +56,9 @@ TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH = Path(
     "reports/model_interval_calibration_validation_trimmed_mean.csv"
 )
 MAX_FORECAST_HORIZON = 8
+# The scenario endpoint refits an SVAR and simulates per request (~40s at 1000 draws), so it gets a lower cap.
+MAX_SCENARIO_SIMS = 2000
+MAX_ABS_SHOCK_VALUE = 1000.0
 VALIDATED_INTERVAL_LOWER = 0.1
 VALIDATED_INTERVAL_UPPER = 0.9
 HEADLINE_MODEL_PATHS = {"sarima": SARIMA_MODEL_PATH, "elastic_net": ELASTIC_NET_MODEL_PATH}
@@ -67,6 +72,9 @@ RBA_ACTION_CAVEAT = (
     "but no classifier is statistically shown to beat it because paired-bootstrap "
     "confidence intervals cross zero in reports/rba_classifier_evaluation.md."
 )
+UNCALIBRATED_SCENARIO_NOTE = (
+    "The interval is uncalibrated: it uses percentiles other than the validated 10th and 90th."
+)
 CREDIT_STRESS_DEFAULT_HORIZON = signature(
     svar.forecast_cumulative_unemployment_change_quantiles
 ).parameters["horizon"].default
@@ -76,6 +84,13 @@ app = FastAPI(
     version="0.2.0",
     description="Portfolio API serving CPI forecasts for every trained model family.",
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Return the usual 422 without echoing the input, which cannot be sent back when it is NaN."""
+    errors = [{"loc": error["loc"], "msg": error["msg"], "type": error["type"]} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 class AllForecastsRequest(BaseModel):
@@ -162,11 +177,12 @@ class CreditRiskStressTestResponse(BaseModel):
 class ScenarioForecastRequest(BaseModel):
     target: str = Field(default="headline")
     shock_variable: str
-    shock_value: float
+    shock_value: float = Field(allow_inf_nan=False, ge=-MAX_ABS_SHOCK_VALUE, le=MAX_ABS_SHOCK_VALUE)
     horizons: list[int] = Field(
-        default_factory=lambda: list(range(1, MAX_FORECAST_HORIZON + 1))
+        default_factory=lambda: list(range(1, MAX_FORECAST_HORIZON + 1)),
+        max_length=MAX_FORECAST_HORIZON,
     )
-    n_sims: int = Field(default=1000, ge=100, le=5000)
+    n_sims: int = Field(default=1000, ge=100, le=MAX_SCENARIO_SIMS)
     interval_lower: float = Field(default=VALIDATED_INTERVAL_LOWER, ge=0.0, lt=0.5)
     interval_upper: float = Field(default=VALIDATED_INTERVAL_UPPER, gt=0.5, le=1.0)
 
@@ -237,7 +253,13 @@ def _load_model(path: Path):
     """Load a fitted model saved by its training script."""
     if not path.exists():
         raise RuntimeError(f"Saved model {path.name} not found. Train the models first (see README).")
-    return joblib.load(path)
+    try:
+        return joblib.load(path)
+    except Exception as exc:  # a pickle from another statsmodels/scikit-learn version fails in many ways
+        raise RuntimeError(
+            f"Saved model {path.name} could not be loaded ({type(exc).__name__}). "
+            "Retrain it with the pinned package versions (see README)."
+        ) from exc
 
 
 def _sarima_forecast_metadata(values) -> tuple[str, list[str]]:
@@ -433,7 +455,9 @@ def _calibrated_interval_bounds_for_family(
     lower: float,
     upper: float,
     interval_calibration_factors_path: Path | None = None,
+    horizons: Sequence[int] | None = None,
 ) -> tuple[list[float], list[float]]:
+    """Widen the interval around the point forecast; ``horizons`` names each entry's horizon (default 1, 2, ...)."""
     if not _validated_interval_bounds(lower, upper):
         return interval_lower, interval_upper
 
@@ -441,11 +465,9 @@ def _calibrated_interval_bounds_for_family(
     requested_nominal = upper - lower
     calibrated_lower: list[float] = []
     calibrated_upper: list[float] = []
-    for position, (point, raw_lower, raw_upper) in enumerate(
-        zip(forecast, interval_lower, interval_upper),
-        start=1,
-    ):
-        row = factors.get((family, position))
+    horizons = range(1, len(forecast) + 1) if horizons is None else horizons
+    for horizon, point, raw_lower, raw_upper in zip(horizons, forecast, interval_lower, interval_upper):
+        row = factors.get((family, horizon))
         if row is None or (
             "target_coverage" in row
             and not np.isclose(float(row["target_coverage"]), requested_nominal)
@@ -720,11 +742,23 @@ TRIMMED_MEAN_FAMILY_HANDLERS: dict[str, FamilyHandler] = {
 
 
 @app.get("/health")
-def health() -> dict[str, object]:
+def health(response: Response) -> dict[str, object]:
+    """Report ok only when every file the forecast endpoints need is present (503 otherwise)."""
+    required_files = [
+        CURATED_DATA_PATH,
+        INTERVAL_CALIBRATION_FACTORS_PATH,
+        TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH,
+        *HEADLINE_MODEL_PATHS.values(),
+        *TRIMMED_MEAN_MODEL_PATHS.values(),
+    ]
+    missing = [str(path) for path in required_files if not path.exists()]
+    if missing:
+        response.status_code = 503
     return {
-        "status": "ok",
+        "status": "degraded" if missing else "ok",
         "curated_dataset_available": CURATED_DATA_PATH.exists(),
         "curated_dataset": str(CURATED_DATA_PATH),
+        "missing_files": missing,
     }
 
 
@@ -835,8 +869,9 @@ def forecast_trimmed_mean_all(request: AllForecastsRequest) -> AllForecastsRespo
     )
 
 
-@app.get("/rba-action", response_model=RbaActionResponse)
-def rba_action() -> RbaActionResponse:
+@lru_cache(maxsize=1)
+def _rba_action_response() -> RbaActionResponse:
+    """Fit and score the classifiers once. The seeds and data are fixed, so the answer only changes on redeploy."""
     n_sims = rba_classifier.DEFAULT_N_SIMS
     seed = rba_classifier.DEFAULT_SEED
     try:
@@ -871,6 +906,11 @@ def rba_action() -> RbaActionResponse:
         models=_rba_action_model_predictions(predictions),
         caveat=RBA_ACTION_CAVEAT,
     )
+
+
+@app.get("/rba-action", response_model=RbaActionResponse)
+def rba_action() -> RbaActionResponse:
+    return _rba_action_response()
 
 
 @app.get("/credit-risk/stress-test", response_model=CreditRiskStressTestResponse)
@@ -937,17 +977,26 @@ def credit_risk_stress_test(
     )
 
 
-@app.post("/forecast/scenario", response_model=ScenarioForecastResponse)
-def forecast_scenario(request: ScenarioForecastRequest) -> ScenarioForecastResponse:
+@lru_cache(maxsize=32)
+def _scenario_response(
+    target: str,
+    shock_variable: str,
+    shock_value: float,
+    horizons: tuple[int, ...],
+    n_sims: int,
+    interval_lower: float,
+    interval_upper: float,
+) -> ScenarioForecastResponse:
+    """Run one scenario. Seeds and data are fixed, so repeating a request gives the same answer."""
     try:
         result = scenario.run_scenario(
-            target=request.target,
-            shock_variable=request.shock_variable,
-            shock_value=request.shock_value,
-            horizons=tuple(request.horizons),
-            n_sims=request.n_sims,
-            lower_quantile=request.interval_lower,
-            upper_quantile=request.interval_upper,
+            target=target,
+            shock_variable=shock_variable,
+            shock_value=shock_value,
+            horizons=horizons,
+            n_sims=n_sims,
+            lower_quantile=interval_lower,
+            upper_quantile=interval_upper,
             curated_path=CURATED_DATA_PATH,
         )
     except ValueError as exc:
@@ -955,6 +1004,21 @@ def forecast_scenario(request: ScenarioForecastRequest) -> ScenarioForecastRespo
     except (RuntimeError, OSError) as exc:
         raise HTTPException(status_code=503, detail=_public_message(exc)) from exc
 
+    # Same calibration as /forecast/all, so the scenario band is comparable with the baseline band.
+    calibrated = _validated_interval_bounds(interval_lower, interval_upper)
+    interval_lower_values, interval_upper_values = _calibrated_interval_bounds_for_family(
+        family="ensemble",
+        forecast=result.forecast,
+        interval_lower=result.interval_lower,
+        interval_upper=result.interval_upper,
+        lower=interval_lower,
+        upper=interval_upper,
+        interval_calibration_factors_path=(
+            TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH if target == "trimmed_mean" else None
+        ),
+        horizons=result.horizons,
+    )
+    caveat = result.caveat if calibrated else f"{result.caveat} {UNCALIBRATED_SCENARIO_NOTE}"
     return ScenarioForecastResponse(
         target=result.target,
         shock_variable=result.shock_variable,
@@ -962,9 +1026,22 @@ def forecast_scenario(request: ScenarioForecastRequest) -> ScenarioForecastRespo
         shock_size=result.shock_size,
         horizons=list(result.horizons),
         forecast=result.forecast,
-        interval_lower=result.interval_lower,
-        interval_upper=result.interval_upper,
+        interval_lower=interval_lower_values,
+        interval_upper=interval_upper_values,
         quarters=result.quarters,
         forecast_origin=result.forecast_origin,
-        caveat=result.caveat,
+        caveat=caveat,
+    )
+
+
+@app.post("/forecast/scenario", response_model=ScenarioForecastResponse)
+def forecast_scenario(request: ScenarioForecastRequest) -> ScenarioForecastResponse:
+    return _scenario_response(
+        request.target,
+        request.shock_variable,
+        request.shock_value,
+        tuple(request.horizons),
+        request.n_sims,
+        request.interval_lower,
+        request.interval_upper,
     )
