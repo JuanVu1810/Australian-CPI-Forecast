@@ -1,3 +1,4 @@
+import joblib
 import numpy as np
 import pandas as pd
 import pytest
@@ -206,3 +207,15 @@ def test_safe_cv_splits_never_exceeds_available_examples():
     assert elastic_net._safe_cv_splits(n_examples=100, requested=4) == 4
     assert elastic_net._safe_cv_splits(n_examples=5, requested=4) == 4
     assert elastic_net._safe_cv_splits(n_examples=2, requested=4) == 2
+
+
+def test_saved_elastic_net_loads_back_with_the_same_forecast(tmp_path):
+    frame = _synthetic_frame()
+    fitted = elastic_net.fit_elastic_net_direct(frame, horizons=(1, 2), seed=123)
+    model_path = tmp_path / "elastic_net.joblib"
+
+    joblib.dump(fitted, model_path)
+    loaded = joblib.load(model_path)
+
+    assert type(loaded).__module__ == "src.models.elastic_net"  # a class from __main__ would not load in the API
+    np.testing.assert_array_equal(loaded.predict_next(frame), fitted.predict_next(frame))

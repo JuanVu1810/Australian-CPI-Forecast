@@ -36,7 +36,7 @@ data/analytics/*.duckdb.wal
 *.sqlite
 *.sqlite3
 
-# Local MLflow runs can grow quickly; keep tracked summaries in reports/ instead.
+# Old MLflow runs from before the models moved to models/*.joblib; safe to delete.
 mlruns/
 
 # Jupyter Book build output/cache (regenerate with `jupyter-book build`)

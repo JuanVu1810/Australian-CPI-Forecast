@@ -43,20 +43,6 @@ Writes to reports/tableau/:
                                 path decomposed into the zero-shock baseline,
                                 target own-shock, and four exogenous-shock
                                 contributions
-    drift_error_check.csv     -- every forecast that now has a real outcome,
-                                compared against that model's own historical
-                                walk-forward error distribution at that horizon
-    drift_error_history.csv   -- horizon-1 error time series per target x
-                                model, historical origins plus any newly
-                                graded origin, flagged by `is_recent`
-    drift_covariate_check.csv -- latest reading per macro variable ranked
-                                against its own full history, flagging inputs
-                                sitting at unusual levels right now
-
-    The three drift_*.csv exports never fit or refit a model -- they only
-    compare already-generated forecasts and reports, per the guardrail in
-    .ai/TABLEAU_DASHBOARD_GUIDE.md against refitting as a side effect of a
-    routine data refresh.
 """
 
 from __future__ import annotations
@@ -68,7 +54,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-from src.models import drift_monitor, svar
+from src.models import svar
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CURATED_DATA_PATH = PROJECT_ROOT / "data/curated/quarterly_macro_features.csv"
@@ -513,17 +499,8 @@ def main() -> None:
     build_svar_historical_decomposition_frame().to_csv(
         args.output_dir / "svar_historical_decomposition.csv", index=False
     )
-    drift_monitor.build_drift_error_check_frame(forecast_frame, historical_frame).to_csv(
-        args.output_dir / "drift_error_check.csv", index=False
-    )
-    drift_monitor.build_drift_error_history_frame(forecast_frame, historical_frame).to_csv(
-        args.output_dir / "drift_error_history.csv", index=False
-    )
-    drift_monitor.build_drift_covariate_frame(historical_frame).to_csv(
-        args.output_dir / "drift_covariate_check.csv", index=False
-    )
 
-    print(f"Wrote 14 CSVs to {args.output_dir}")
+    print(f"Wrote 11 CSVs to {args.output_dir}")
 
 
 if __name__ == "__main__":

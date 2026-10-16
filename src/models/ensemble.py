@@ -405,21 +405,6 @@ def _ensemble_prediction_frame(
     ]
 
 
-def _log_ensemble_config(weights: tuple[float, float] | dict[int, tuple[float, float]]) -> None:
-    from src.models import tracking
-
-    mlflow = tracking.configure_mlflow()
-    weights_for_log = (
-        {str(horizon): list(pair) for horizon, pair in weights.items()}
-        if isinstance(weights, dict)
-        else list(weights)
-    )
-    mlflow.log_dict(
-        {"weights": weights_for_log, "components": ["sarima", "elastic_net"]},
-        "model_preprocessing/ensemble_weights.json",
-    )
-
-
 def run_ensemble_comparison(
     curated_path: Path = CURATED_DATA_PATH,
     rba_path: Path = RBA_FORECAST_PATH,
@@ -434,21 +419,15 @@ def run_ensemble_comparison(
     sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
     elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
     include_rba: bool = True,
-    run_name: str = "ensemble_comparison",
-    model_family_tag: str = "ensemble",
     verbose: bool = False,
 ) -> pd.DataFrame:
-    """Run the ensemble comparison, write its report, and log an MLflow run."""
-    from src.models import tracking
-
+    """Run the ensemble comparison and write its report."""
     requested_horizons = tuple(int(horizon) for horizon in horizons)
-    weighting_scheme = "fixed"
     if weights is None:
         weights = horizon_rmse_weights(
             horizons=requested_horizons,
             path=dynamic_weights_source_path(target_column),
         )
-        weighting_scheme = "dynamic_inverse_rmse_per_horizon"
     elif not isinstance(weights, dict):
         weights = _validate_weights(weights)
     series = load_target_series(curated_path, target_column=target_column)
@@ -519,37 +498,6 @@ def run_ensemble_comparison(
     comparison_output_path.parent.mkdir(parents=True, exist_ok=True)
     comparison.round({"rmse": 6, "mae": 6}).to_csv(comparison_output_path, index=False)
 
-    tracking.log_model_run(
-        run_name=run_name,
-        model_name="ensemble",
-        metrics=comparison,
-        params={
-            "weights": weights,
-            "weighting_scheme": weighting_scheme,
-            "weighting_note": (
-                "Dynamic weights are derived from the same full walk-forward comparison "
-                "sample used to report the ensemble RMSE, so the ensemble metric is not "
-                "a strictly out-of-sample validation of the weighting scheme itself."
-                if weighting_scheme == "dynamic_inverse_rmse_per_horizon"
-                else ""
-            ),
-            "sarima_order": sarima_order,
-            "sarima_seasonal_order": sarima_seasonal_order,
-            "elastic_net_feature_columns": elastic_net_feature_columns,
-            "target_column": target_column,
-            "seed": seed,
-            "initial_train_size": initial_train_size,
-            "horizons": requested_horizons,
-        },
-        tags={
-            "model_family": model_family_tag,
-            "target_column": target_column,
-            "component_families": "sarima;elastic_net",
-            "run_role": "comparison_with_full_sample_model",
-        },
-        artifact_paths=[comparison_output_path],
-        model_logger=lambda: _log_ensemble_config(weights),
-    )
     return comparison
 
 
@@ -577,8 +525,6 @@ def run_trimmed_mean_ensemble_comparison(
         sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
         elastic_net_feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
         include_rba=False,
-        run_name="trimmed_mean_ensemble_comparison",
-        model_family_tag="trimmed_mean_ensemble",
         verbose=verbose,
     )
 

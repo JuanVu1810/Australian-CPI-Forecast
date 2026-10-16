@@ -17,12 +17,14 @@ from pathlib import Path
 import time
 from typing import Any
 
+import joblib
 import numpy as np
 import pandas as pd
 
 from src.models.evaluation import (
     CURATED_DATA_PATH,
     DEFAULT_HORIZONS,
+    ELASTIC_NET_MODEL_PATH,
     PROJECT_ROOT,
     RBA_FORECAST_PATH,
     TrainWindowScaler,
@@ -328,9 +330,9 @@ def fit_elastic_net_direct(
             seed=seed,
         )
 
-    # Full-training-window scaler kept only for MLflow logging metadata
-    # (documenting the feature scale at this origin); prediction/coefficients
-    # use each horizon's own pipeline-internal scaler above, not this one.
+    # Full-training-window scaler kept only to document the feature scale at this
+    # origin; prediction/coefficients use each horizon's own pipeline-internal
+    # scaler above, not this one.
     scaler = fit_train_window_scaler(clean.loc[:, list(feature_columns)])
 
     return ElasticNetDirectFit(
@@ -514,14 +516,11 @@ def run_elastic_net_comparison(
     sarima_order: tuple[int, int, int] | None = None,
     sarima_seasonal_order: tuple[int, int, int, int] | None = None,
     include_rba: bool = True,
-    run_name: str = "elastic_net_comparison",
-    model_family_tag: str = "elastic_net",
-    feature_set_label: str = "macro_core",
+    model_output_path: Path = ELASTIC_NET_MODEL_PATH,
     verbose: bool = False,
     max_quarter: pd.Period | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, float]:
     """Run the Elastic Net walk-forward backtest, comparison, and coefficient report."""
-    from src.models import tracking
     from src.models.sarima import DEFAULT_ORDER, DEFAULT_SEASONAL_ORDER
 
     started = time.perf_counter()
@@ -593,7 +592,7 @@ def run_elastic_net_comparison(
     )
 
     if verbose:
-        print("Fitting final full-sample Elastic Net for coefficients/MLflow logging...", flush=True)
+        print("Fitting final full-sample Elastic Net for coefficients and the saved model...", flush=True)
     full_frame = pd.concat([series.rename(target_column), exog], axis=1)
     final_fit = fit_elastic_net_direct(
         full_frame,
@@ -611,33 +610,8 @@ def run_elastic_net_comparison(
         {"coef": 6, "intercept": 6, "selected_alpha": 6, "selected_l1_ratio": 6}
     ).to_csv(coefficient_output_path, index=False)
 
-    tracking.log_model_run(
-        run_name=run_name,
-        model_name="elastic_net",
-        metrics=comparison,
-        params={
-            "order": "fixed_architecture",
-            "seasonal_order": "",
-            "features": feature_columns,
-            "target_column": target_column,
-            "sarima_order_for_comparison": sarima_order,
-            "sarima_seasonal_order_for_comparison": sarima_seasonal_order,
-            "selection_criterion": "elastic_net_cv_per_horizon",
-            "initial_train_size": initial_train_size,
-            "horizons": requested_horizons,
-            "l1_ratios": DEFAULT_L1_RATIOS,
-            "cv_splits": DEFAULT_CV_SPLITS,
-            "seed": seed,
-        },
-        tags={
-            "model_family": model_family_tag,
-            "target_column": target_column,
-            "feature_set_label": feature_set_label,
-            "run_role": "comparison_with_full_sample_model",
-        },
-        artifact_paths=[comparison_output_path, coefficient_output_path],
-        model_logger=lambda: tracking.log_elastic_net_model(final_fit, full_frame),
-    )
+    model_output_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(final_fit, model_output_path)
     runtime_seconds = time.perf_counter() - started
     return comparison, coefficients, runtime_seconds
 
@@ -675,4 +649,8 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # Re-import so the saved model's class is src.models.elastic_net.ElasticNetDirectFit.
+    # Defined in __main__ it could not be loaded by the API.
+    from src.models.elastic_net import main as main_from_module
+
+    main_from_module()

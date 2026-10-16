@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
+import joblib
 import numpy as np
 import pandas as pd
 
@@ -29,6 +30,12 @@ RBA_FORECAST_PATH = (
     PROJECT_ROOT / "dataset/rba/rba_historical_cpi_forecasts_by_horizon_1995_2026.csv"
 )
 COMPARISON_OUTPUT_PATH = PROJECT_ROOT / "reports/model_comparison_sarima.csv"
+# Fitted models the API serves, one joblib file each (see README "Train the models").
+MODELS_DIR = PROJECT_ROOT / "models"
+SARIMA_MODEL_PATH = MODELS_DIR / "sarima.joblib"
+ELASTIC_NET_MODEL_PATH = MODELS_DIR / "elastic_net.joblib"
+TRIMMED_MEAN_SARIMA_MODEL_PATH = MODELS_DIR / "trimmed_mean_sarima.joblib"
+TRIMMED_MEAN_ELASTIC_NET_MODEL_PATH = MODELS_DIR / "trimmed_mean_elastic_net.joblib"
 
 TARGET_COLUMN = "cpi_yoy"
 QUARTER_COLUMN = "quarter"
@@ -1007,13 +1014,10 @@ def run_sarima_comparison(
     order: tuple[int, int, int] | None = None,
     seasonal_order: tuple[int, int, int, int] | None = None,
     include_rba: bool = True,
-    run_name: str = "sarima_comparison",
-    model_family_tag: str = "sarima",
-    selection_criterion: str = "fixed_cpi_yoy_default",
+    model_output_path: Path = SARIMA_MODEL_PATH,
     max_quarter: pd.Period | None = None,
 ) -> pd.DataFrame:
-    """Run SARIMA, seasonal naive, and RBA comparison and save the metric table."""
-    from src.models import tracking
+    """Run SARIMA, seasonal naive, and RBA comparison; save the metric table and the final fit."""
     from src.models.sarima import (
         DEFAULT_ORDER,
         DEFAULT_SEASONAL_ORDER,
@@ -1054,27 +1058,8 @@ def run_sarima_comparison(
         order=order,
         seasonal_order=seasonal_order,
     )
-    tracking.log_model_run(
-        run_name=run_name,
-        model_name="sarima",
-        metrics=metrics,
-        params={
-            "order": order,
-            "seasonal_order": seasonal_order,
-            "features": (),
-            "target_column": target_column,
-            "selection_criterion": selection_criterion,
-            "initial_train_size": initial_train_size,
-            "horizons": horizons,
-        },
-        tags={
-            "model_family": model_family_tag,
-            "target_column": target_column,
-            "run_role": "comparison_with_full_sample_model",
-        },
-        artifact_paths=[output_path],
-        model_logger=lambda: tracking.log_statsmodels_model(final_fit),
-    )
+    model_output_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(final_fit, model_output_path)
     return metrics
 
 

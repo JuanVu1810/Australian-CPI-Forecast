@@ -450,7 +450,7 @@ def test_build_backtest_predictions_table_stacks_all_models_with_extras_preserve
     assert (other_model_rows["horizon_cap"] == 1).all()
 
 
-def test_trimmed_mean_model_comparison_refreshes_served_model_runs(monkeypatch, tmp_path):
+def test_trimmed_mean_model_comparison_refreshes_saved_models(monkeypatch, tmp_path):
     calls = {}
     expected = pd.DataFrame(
         {
@@ -490,13 +490,12 @@ def test_trimmed_mean_model_comparison_refreshes_served_model_runs(monkeypatch, 
     assert result is expected
     assert calls["joined"]["target_column"] == "trimmed_mean_cpi_yoy"
     assert calls["joined"]["elastic_net_feature_columns"][0] == "trimmed_mean_cpi_yoy_lag1"
-    assert calls["sarima"]["model_family_tag"] == "trimmed_mean_sarima"
+    assert calls["sarima"]["model_output_path"].name == "trimmed_mean_sarima.joblib"
     assert calls["sarima"]["target_column"] == "trimmed_mean_cpi_yoy"
     assert calls["sarima"]["include_rba"] is False
-    assert calls["elastic_net"]["model_family_tag"] == "trimmed_mean_elastic_net"
+    assert calls["elastic_net"]["model_output_path"].name == "trimmed_mean_elastic_net.joblib"
     assert calls["elastic_net"]["target_column"] == "trimmed_mean_cpi_yoy"
     assert calls["elastic_net"]["feature_columns"][0] == "trimmed_mean_cpi_yoy_lag1"
-    assert calls["elastic_net"]["feature_set_label"] == "trimmed_mean_primary_wti"
 
 
 def test_skip_origins_produces_a_chronologically_disjoint_origin_set():

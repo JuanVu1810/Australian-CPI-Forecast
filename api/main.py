@@ -1,7 +1,6 @@
 """FastAPI service serving CPI forecasts for every trained model family.
 
-Each family's most recent finished MLflow run is loaded directly (see
-``src/models/registry.py``) -- there is no promoted "champion" model.
+Each model is a joblib file in ``models/`` written by its training script.
 """
 
 from __future__ import annotations
@@ -11,12 +10,12 @@ from dataclasses import dataclass
 from functools import lru_cache, partial
 from inspect import signature
 from pathlib import Path
+from typing import Annotated
 
+import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
-from mlflow.exceptions import MlflowException
-from mlflow.tracking import MlflowClient
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from src.models import (
@@ -27,30 +26,26 @@ from src.models import (
     sarima,
     scenario,
     svar,
-    tracking,
 )
 from src.models.elastic_net import (
     TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
     TRIMMED_MEAN_TARGET_COLUMN,
     load_elastic_net_feature_frame,
 )
-from src.models.evaluation import TARGET_COLUMN, load_target_series
-from src.models.registry import (
-    TRIMMED_MEAN_MODEL_FAMILY_TAGS,
-    _client_and_experiment,
-    _latest_model_run_id,
-    _logged_model_uri,
+from src.models.evaluation import (
+    ELASTIC_NET_MODEL_PATH,
+    SARIMA_MODEL_PATH,
+    TARGET_COLUMN,
+    TRIMMED_MEAN_ELASTIC_NET_MODEL_PATH,
+    TRIMMED_MEAN_SARIMA_MODEL_PATH,
+    load_target_series,
 )
 
 
 CURATED_DATA_PATH = Path("data/curated/quarterly_macro_features.csv")
-INTERVAL_COVERAGE_REPORT_PATH = Path("reports/model_interval_coverage.csv")
 INTERVAL_CALIBRATION_FACTORS_PATH = Path("reports/model_interval_calibration_factors.csv")
 INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH = Path(
     "reports/model_interval_calibration_validation.csv"
-)
-TRIMMED_MEAN_INTERVAL_COVERAGE_REPORT_PATH = Path(
-    "reports/model_interval_coverage_trimmed_mean.csv"
 )
 TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH = Path(
     "reports/model_interval_calibration_factors_trimmed_mean.csv"
@@ -61,9 +56,10 @@ TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH = Path(
 MAX_FORECAST_HORIZON = 8
 VALIDATED_INTERVAL_LOWER = 0.1
 VALIDATED_INTERVAL_UPPER = 0.9
-TRIMMED_MEAN_FAMILY_RUN_TAGS = {
-    **TRIMMED_MEAN_MODEL_FAMILY_TAGS,
-    "ensemble": "trimmed_mean_ensemble",
+HEADLINE_MODEL_PATHS = {"sarima": SARIMA_MODEL_PATH, "elastic_net": ELASTIC_NET_MODEL_PATH}
+TRIMMED_MEAN_MODEL_PATHS = {
+    "sarima": TRIMMED_MEAN_SARIMA_MODEL_PATH,
+    "elastic_net": TRIMMED_MEAN_ELASTIC_NET_MODEL_PATH,
 }
 RBA_ACTION_CAVEAT = (
     "RBA action classifications are a documented comparison exercise, not a "
@@ -91,7 +87,6 @@ class AllForecastsRequest(BaseModel):
 
 class FamilyForecast(BaseModel):
     model_family: str
-    run_id: str
     horizon: int
     horizon_cap: int | None
     forecast: list[float]
@@ -226,11 +221,6 @@ def _optional_float(value: object) -> float | None:
     return float(value)
 
 
-def _mlflow_client() -> MlflowClient:
-    tracking.configure_mlflow()
-    return MlflowClient()
-
-
 def _current_elastic_net_frame(
     target_column: str = TARGET_COLUMN,
     feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
@@ -243,18 +233,11 @@ def _current_elastic_net_frame(
     return pd.concat([series.rename(target_column), exog], axis=1)
 
 
-def _load_elastic_net_fit(model_uri: str):
-    """Load the logged ElasticNetDirectFit via the sklearn flavor.
-
-    This project's serving code always uses MLflow's flavor-specific loaders
-    (``mlflow.statsmodels`` and here ``mlflow.sklearn``)
-    rather than the generic pyfunc flavor, so it gets back the real
-    ``ElasticNetDirectFit`` object -- including its ``predict_next`` method --
-    the same way the SARIMA branch gets back its real fitted object.
-    """
-    import mlflow.sklearn
-
-    return mlflow.sklearn.load_model(model_uri)
+def _load_model(path: Path):
+    """Load a fitted model saved by its training script."""
+    if not path.exists():
+        raise RuntimeError(f"Saved model {path.name} not found. Train the models first (see README).")
+    return joblib.load(path)
 
 
 def _sarima_forecast_metadata(values) -> tuple[str, list[str]]:
@@ -289,39 +272,29 @@ def _interval_from_paths(
     return lower_values.astype(float).tolist(), upper_values.astype(float).tolist()
 
 
+def _public_message(exc: Exception) -> str:
+    """Show this project's own error messages; hide file errors, which can name server paths."""
+    if isinstance(exc, (RuntimeError, ValueError)):
+        return str(exc)
+    return f"{type(exc).__name__} while reading a file on the server."
+
+
 def _parse_bool(value: object) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes"}
     return bool(value)
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=2)
 def _load_interval_coverage_report(
-    interval_coverage_report_path: Path | None = None,
-    interval_calibration_validation_report_path: Path | None = None,
-) -> dict[tuple[str, int], dict[str, object]]:
-    """Load non-circular interval diagnostics for the default served bounds."""
-    interval_coverage_report_path = (
-        INTERVAL_COVERAGE_REPORT_PATH
-        if interval_coverage_report_path is None
-        else interval_coverage_report_path
-    )
-    interval_calibration_validation_report_path = (
-        INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH
-        if interval_calibration_validation_report_path is None
-        else interval_calibration_validation_report_path
-    )
-    validation = _load_interval_calibration_validation_report(
-        interval_calibration_validation_report_path
-    )
-    if validation:
-        return validation
-    return _load_full_sample_interval_coverage_report(interval_coverage_report_path)
-
-def _load_interval_calibration_validation_report(
     path: Path | None = None,
 ) -> dict[tuple[str, int], dict[str, object]]:
-    """Load held-out calibrated coverage diagnostics used for API disclosure."""
+    """Load the held-out calibrated coverage report that the API discloses.
+
+    Only the held-out validation report is used. The in-sample coverage report would
+    look similar but is circular, so a missing report gives null coverage fields
+    instead of quietly switching to it.
+    """
     path = INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH if path is None else path
     if not path.exists():
         return {}
@@ -374,56 +347,6 @@ def _load_interval_calibration_validation_report(
     return coverage
 
 
-def _load_full_sample_interval_coverage_report(
-    path: Path | None = None,
-) -> dict[tuple[str, int], dict[str, object]]:
-    """Fallback loader for legacy/raw coverage reports when validation is absent."""
-    path = INTERVAL_COVERAGE_REPORT_PATH if path is None else path
-    if not path.exists():
-        return {}
-    try:
-        report = pd.read_csv(path)
-    except (OSError, ValueError):
-        return {}
-
-    required = {
-        "model",
-        "horizon",
-        "n",
-        "nominal_coverage",
-        "empirical_coverage",
-        "significantly_miscalibrated",
-    }
-    if not required.issubset(report.columns):
-        return {}
-
-    report = report.loc[~report["horizon"].astype(str).eq("overall")].copy()
-    report["horizon"] = pd.to_numeric(report["horizon"], errors="coerce")
-    report = report.dropna(
-        subset=[
-            "model",
-            "horizon",
-            "n",
-            "nominal_coverage",
-            "empirical_coverage",
-            "significantly_miscalibrated",
-        ]
-    )
-
-    coverage: dict[tuple[str, int], dict[str, object]] = {}
-    for _, row in report.iterrows():
-        key = (str(row["model"]), int(row["horizon"]))
-        coverage[key] = {
-            "nominal_coverage": float(row["nominal_coverage"]),
-            "empirical_coverage": float(row["empirical_coverage"]),
-            "coverage_n": int(row["n"]),
-            "significantly_miscalibrated": _parse_bool(
-                row["significantly_miscalibrated"]
-            ),
-        }
-    return coverage
-
-
 def _validated_interval_bounds(lower: float, upper: float) -> bool:
     return lower == VALIDATED_INTERVAL_LOWER and upper == VALIDATED_INTERVAL_UPPER
 
@@ -433,7 +356,6 @@ def _coverage_fields_for_family(
     horizon_served: int,
     lower: float,
     upper: float,
-    interval_coverage_report_path: Path | None = None,
     interval_calibration_validation_report_path: Path | None = None,
 ) -> tuple[list[float | None], list[int | None], list[bool | None]]:
     if not _validated_interval_bounds(lower, upper):
@@ -443,10 +365,7 @@ def _coverage_fields_for_family(
             [None] * horizon_served,
         )
 
-    coverage = _load_interval_coverage_report(
-        interval_coverage_report_path,
-        interval_calibration_validation_report_path,
-    )
+    coverage = _load_interval_coverage_report(interval_calibration_validation_report_path)
     requested_nominal = upper - lower
     empirical: list[float | None] = []
     sample_sizes: list[int | None] = []
@@ -468,22 +387,24 @@ def _coverage_fields_for_family(
     return empirical, sample_sizes, significant
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=2)
 def _load_interval_calibration_factors(
     path: Path | None = None,
 ) -> dict[tuple[str, int], dict[str, float]]:
     """Load static interval scale factors for the default validated interval."""
     path = INTERVAL_CALIBRATION_FACTORS_PATH if path is None else path
-    if not path.exists():
-        return {}
+    # Without these factors the API would silently serve the narrower, uncalibrated intervals.
+    required = {"model", "horizon", "scale_factor"}
     try:
         factors = pd.read_csv(path)
-    except (OSError, ValueError):
-        return {}
-
-    required = {"model", "horizon", "scale_factor"}
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Interval calibration factors {path.name} cannot be read."
+        ) from exc
     if not required.issubset(factors.columns):
-        return {}
+        raise HTTPException(
+            status_code=503, detail=f"Interval calibration factors {path.name} are malformed."
+        )
 
     factors = factors.copy()
     factors["horizon"] = pd.to_numeric(factors["horizon"], errors="coerce")
@@ -540,14 +461,12 @@ def _calibrated_interval_bounds_for_family(
 
 
 def _sarima_family_forecast(
-    model_uri: str,
+    model_paths: dict[str, Path],
     requested_horizon: int,
     n_sims: int,
     seed: int,
 ) -> FamilyForecastData:
-    import mlflow.statsmodels
-
-    fitted = mlflow.statsmodels.load_model(model_uri)
+    fitted = _load_model(model_paths["sarima"])
     point = fitted.forecast(steps=requested_horizon)
     draws = sarima.simulate_paths_from_fit(
         fitted,
@@ -567,7 +486,7 @@ def _sarima_family_forecast(
 
 
 def _elastic_net_family_forecast(
-    model_uri: str,
+    model_paths: dict[str, Path],
     requested_horizon: int,
     n_sims: int,
     seed: int,
@@ -575,7 +494,7 @@ def _elastic_net_family_forecast(
     feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
     forecast_origin: str | None = None,
 ) -> FamilyForecastData:
-    fitted = _load_elastic_net_fit(model_uri)
+    fitted = _load_model(model_paths["elastic_net"])
     current_frame = _current_elastic_net_frame(
         target_column=target_column,
         feature_columns=feature_columns,
@@ -619,130 +538,33 @@ def _elastic_net_family_forecast(
 
 
 def _ensemble_family_forecast(
-    model_uri: str,
+    model_paths: dict[str, Path],
     requested_horizon: int,
     n_sims: int,
     seed: int,
+    target_column: str = TARGET_COLUMN,
+    feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
 ) -> FamilyForecastData:
-    del model_uri
-    _, client, experiment = _client_and_experiment()
-    sarima_uri = _logged_model_uri(
-        client,
-        _latest_model_run_id(client, experiment.experiment_id, "sarima"),
-    )
-    elastic_net_uri = _logged_model_uri(
-        client,
-        _latest_model_run_id(client, experiment.experiment_id, "elastic_net"),
-    )
-    sarima_result = _sarima_family_forecast(
-        sarima_uri,
-        requested_horizon,
-        n_sims,
-        seed,
-    )
+    """Blend the SARIMA and Elastic Net forecasts with inverse-RMSE weights."""
+    sarima_result = _sarima_family_forecast(model_paths, requested_horizon, n_sims, seed)
     elastic_net_result = _elastic_net_family_forecast(
-        elastic_net_uri,
+        model_paths,
         requested_horizon,
         n_sims,
         seed + 1,
+        target_column=target_column,
+        feature_columns=feature_columns,
         forecast_origin=sarima_result.forecast_origin,
     )
-    if sarima_result.horizon_served != requested_horizon:
-        raise RuntimeError("SARIMA component did not serve the requested ensemble horizon.")
-    if elastic_net_result.horizon_served != requested_horizon:
-        raise RuntimeError(
-            "Elastic Net component did not serve the requested ensemble horizon."
-        )
     if sarima_result.quarters != elastic_net_result.quarters:
         raise RuntimeError("Ensemble components returned different forecast quarters.")
     if sarima_result.forecast_origin != elastic_net_result.forecast_origin:
         raise RuntimeError("Ensemble components returned different forecast origins.")
 
     horizons = tuple(range(1, requested_horizon + 1))
-    weights = ensemble.horizon_rmse_weights(horizons=horizons)
-    forecast = ensemble.combine_point_forecasts(
-        sarima_result.forecast,
-        elastic_net_result.forecast,
-        weights=weights,
-        horizons=horizons,
-    )
-    draws = ensemble.recenter_paths_to_median(
-        ensemble.combine_paths(
-            sarima_result.draws,
-            elastic_net_result.draws,
-            weights=weights,
-            horizons=horizons,
-        ),
-        forecast,
-    )
-    return FamilyForecastData(
-        forecast=forecast.astype(float).tolist(),
-        draws=draws,
-        quarters=sarima_result.quarters,
-        forecast_origin=sarima_result.forecast_origin,
-        horizon_served=requested_horizon,
-        horizon_cap=None,
-    )
-
-
-def _ensemble_trimmed_mean_family_forecast(
-    model_uri: str,
-    requested_horizon: int,
-    n_sims: int,
-    seed: int,
-) -> FamilyForecastData:
-    del model_uri
-    _, client, experiment = _client_and_experiment()
-    sarima_uri = _logged_model_uri(
-        client,
-        _latest_model_run_id(
-            client,
-            experiment.experiment_id,
-            "sarima",
-            model_family_tag=TRIMMED_MEAN_MODEL_FAMILY_TAGS["sarima"],
-        ),
-    )
-    elastic_net_uri = _logged_model_uri(
-        client,
-        _latest_model_run_id(
-            client,
-            experiment.experiment_id,
-            "elastic_net",
-            model_family_tag=TRIMMED_MEAN_MODEL_FAMILY_TAGS["elastic_net"],
-        ),
-    )
-    sarima_result = _sarima_family_forecast(
-        sarima_uri,
-        requested_horizon,
-        n_sims,
-        seed,
-    )
-    elastic_net_result = _elastic_net_family_forecast(
-        elastic_net_uri,
-        requested_horizon,
-        n_sims,
-        seed + 1,
-        target_column=TRIMMED_MEAN_TARGET_COLUMN,
-        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
-        forecast_origin=sarima_result.forecast_origin,
-    )
-    if sarima_result.horizon_served != requested_horizon:
-        raise RuntimeError(
-            "SARIMA component did not serve the requested trimmed-mean ensemble horizon."
-        )
-    if elastic_net_result.horizon_served != requested_horizon:
-        raise RuntimeError(
-            "Elastic Net component did not serve the requested trimmed-mean ensemble horizon."
-        )
-    if sarima_result.quarters != elastic_net_result.quarters:
-        raise RuntimeError("Trimmed-mean ensemble components returned different quarters.")
-    if sarima_result.forecast_origin != elastic_net_result.forecast_origin:
-        raise RuntimeError("Trimmed-mean ensemble components returned different origins.")
-
-    horizons = tuple(range(1, requested_horizon + 1))
     weights = ensemble.horizon_rmse_weights(
         horizons=horizons,
-        path=ensemble.TRIMMED_MEAN_DYNAMIC_WEIGHTS_SOURCE_PATH,
+        path=ensemble.dynamic_weights_source_path(target_column),
     )
     forecast = ensemble.combine_point_forecasts(
         sarima_result.forecast,
@@ -787,14 +609,14 @@ def _build_live_rba_action_row(n_sims: int, seed: int) -> pd.DataFrame:
             ),
         )
 
-    headline = _ensemble_family_forecast(
-        "ignored",
+    headline = FAMILY_HANDLERS["ensemble"](
+        HEADLINE_MODEL_PATHS,
         requested_horizon=1,
         n_sims=n_sims,
         seed=seed,
     )
-    trimmed_mean = _ensemble_trimmed_mean_family_forecast(
-        "ignored",
+    trimmed_mean = TRIMMED_MEAN_FAMILY_HANDLERS["ensemble"](
+        TRIMMED_MEAN_MODEL_PATHS,
         requested_horizon=1,
         n_sims=n_sims,
         seed=seed + 2,
@@ -874,20 +696,26 @@ def _rba_action_model_predictions(predictions: pd.DataFrame) -> list[RbaActionMo
     return rows
 
 
-FAMILY_HANDLERS: dict[str, Callable[[str, int, int, int], FamilyForecastData]] = {
+FamilyHandler = Callable[[dict[str, Path], int, int, int], FamilyForecastData]
+
+FAMILY_HANDLERS: dict[str, FamilyHandler] = {
     "sarima": _sarima_family_forecast,
     "elastic_net": _elastic_net_family_forecast,
     "ensemble": _ensemble_family_forecast,
 }
 
-TRIMMED_MEAN_FAMILY_HANDLERS: dict[str, Callable[[str, int, int, int], FamilyForecastData]] = {
+TRIMMED_MEAN_FAMILY_HANDLERS: dict[str, FamilyHandler] = {
     "sarima": _sarima_family_forecast,
     "elastic_net": partial(
         _elastic_net_family_forecast,
         target_column=TRIMMED_MEAN_TARGET_COLUMN,
         feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
     ),
-    "ensemble": _ensemble_trimmed_mean_family_forecast,
+    "ensemble": partial(
+        _ensemble_family_forecast,
+        target_column=TRIMMED_MEAN_TARGET_COLUMN,
+        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    ),
 }
 
 
@@ -913,44 +741,30 @@ def features() -> dict[str, object]:
 
 def _forecast_all_with_handlers(
     request: AllForecastsRequest,
-    family_handlers: dict[str, Callable[[str, int, int, int], FamilyForecastData]],
-    model_family_tags: dict[str, str] | None = None,
-    interval_coverage_report_path: Path | None = None,
+    family_handlers: dict[str, FamilyHandler],
+    model_paths: dict[str, Path],
     interval_calibration_factors_path: Path | None = None,
     interval_calibration_validation_report_path: Path | None = None,
 ) -> AllForecastsResponse:
     load_curated_data()
-    client = _mlflow_client()
-    try:
-        _, _, experiment = _client_and_experiment()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     models: list[FamilyForecast] = []
     unavailable: list[UnavailableFamily] = []
     anchor_forecast_origin: str | None = None
     for family, handler in family_handlers.items():
         try:
-            model_family_tag = None if model_family_tags is None else model_family_tags.get(family)
-            run_id = _latest_model_run_id(
-                client,
-                experiment.experiment_id,
-                family,
-                model_family_tag=model_family_tag,
-            )
-            model_uri = _logged_model_uri(client, run_id)
             if family == "elastic_net" and anchor_forecast_origin is not None:
                 result = handler(
-                    model_uri,
+                    model_paths,
                     request.horizon,
                     request.n_sims,
                     seed=42,
                     forecast_origin=anchor_forecast_origin,
                 )
             else:
-                result = handler(model_uri, request.horizon, request.n_sims, seed=42)
-        except (RuntimeError, MlflowException, OSError) as exc:
-            unavailable.append(UnavailableFamily(model_family=family, reason=str(exc)))
+                result = handler(model_paths, request.horizon, request.n_sims, seed=42)
+        except (RuntimeError, OSError) as exc:
+            unavailable.append(UnavailableFamily(model_family=family, reason=_public_message(exc)))
             continue
 
         interval_lower, interval_upper = _interval_from_paths(
@@ -973,7 +787,6 @@ def _forecast_all_with_handlers(
                 result.horizon_served,
                 request.interval_lower,
                 request.interval_upper,
-                interval_coverage_report_path=interval_coverage_report_path,
                 interval_calibration_validation_report_path=(
                     interval_calibration_validation_report_path
                 ),
@@ -982,7 +795,6 @@ def _forecast_all_with_handlers(
         models.append(
             FamilyForecast(
                 model_family=family,
-                run_id=run_id,
                 horizon=result.horizon_served,
                 horizon_cap=result.horizon_cap,
                 forecast=[float(value) for value in result.forecast],
@@ -1007,7 +819,7 @@ def _forecast_all_with_handlers(
 
 @app.post("/forecast/all", response_model=AllForecastsResponse)
 def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
-    return _forecast_all_with_handlers(request, FAMILY_HANDLERS)
+    return _forecast_all_with_handlers(request, FAMILY_HANDLERS, HEADLINE_MODEL_PATHS)
 
 
 @app.post("/forecast/trimmed-mean/all", response_model=AllForecastsResponse)
@@ -1015,8 +827,7 @@ def forecast_trimmed_mean_all(request: AllForecastsRequest) -> AllForecastsRespo
     return _forecast_all_with_handlers(
         request,
         TRIMMED_MEAN_FAMILY_HANDLERS,
-        model_family_tags=TRIMMED_MEAN_FAMILY_RUN_TAGS,
-        interval_coverage_report_path=TRIMMED_MEAN_INTERVAL_COVERAGE_REPORT_PATH,
+        TRIMMED_MEAN_MODEL_PATHS,
         interval_calibration_factors_path=TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH,
         interval_calibration_validation_report_path=(
             TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH
@@ -1044,8 +855,8 @@ def rba_action() -> RbaActionResponse:
         )
     except HTTPException:
         raise
-    except (ImportError, RuntimeError, MlflowException, OSError, ValueError) as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ImportError, RuntimeError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=_public_message(exc)) from exc
 
     threshold = predictions.loc[predictions["model"].eq("threshold")].iloc[0]
     return RbaActionResponse(
@@ -1064,7 +875,7 @@ def rba_action() -> RbaActionResponse:
 
 @app.get("/credit-risk/stress-test", response_model=CreditRiskStressTestResponse)
 def credit_risk_stress_test(
-    horizon: int = CREDIT_STRESS_DEFAULT_HORIZON,
+    horizon: Annotated[int, Query(ge=1, le=MAX_FORECAST_HORIZON)] = CREDIT_STRESS_DEFAULT_HORIZON,
 ) -> CreditRiskStressTestResponse:
     scenario_names = list(credit_stress.SCENARIO_QUANTILES)
     quantiles = [credit_stress.SCENARIO_QUANTILES[name] for name in scenario_names]
@@ -1080,7 +891,7 @@ def credit_risk_stress_test(
     except HTTPException:
         raise
     except (RuntimeError, ValueError, OSError) as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail=_public_message(exc)) from exc
 
     scenarios = [
         CreditRiskScenario(
@@ -1142,7 +953,7 @@ def forecast_scenario(request: ScenarioForecastRequest) -> ScenarioForecastRespo
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (RuntimeError, OSError) as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail=_public_message(exc)) from exc
 
     return ScenarioForecastResponse(
         target=result.target,

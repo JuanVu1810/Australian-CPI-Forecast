@@ -7,15 +7,14 @@ pyarrow
 pandera
 statsmodels
 scikit-learn
+joblib
 xgboost
-nbconvert
 fastapi
 uvicorn
 pydantic
 streamlit
 altair
 requests
-mlflow
 duckdb
 sqlalchemy
 psycopg2-binary

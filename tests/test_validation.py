@@ -1,7 +1,9 @@
 from datetime import date
 
+import numpy as np
 import pandas as pd
 
+from src.platform_validation import validate_curated_with_pandera
 from src.validation import (
     validate_credit_quality_quarterly,
     validate_curated_dataset,
@@ -72,3 +74,28 @@ def test_validate_credit_quality_quarterly_flags_future_and_range_errors():
     assert result.status == "FAIL"
     assert "future date values" in result.notes
     assert "outside 0-100 percent" in result.notes
+
+
+def test_pandera_schema_passes_for_expected_columns_and_allows_leading_missing_cpi():
+    curated = pd.DataFrame(
+        {
+            "quarter": ["2020Q1", "2020Q2", "2020Q3"],
+            "cpi_qoq": [np.nan, 0.5, 0.6],
+            "cpi_yoy": [np.nan, np.nan, 2.0],
+        }
+    )
+
+    record = validate_curated_with_pandera(curated)
+
+    assert record.status == "PASS"
+    assert record.rows == 3
+
+
+def test_pandera_schema_fails_for_missing_column_and_wrong_type():
+    missing_column = pd.DataFrame({"quarter": ["2020Q1"], "cpi_qoq": [0.5]})
+    text_cpi = pd.DataFrame(
+        {"quarter": ["2020Q1"], "cpi_qoq": ["0.5"], "cpi_yoy": [2.0]}
+    )  # a number stored as text must fail, not be converted
+
+    assert validate_curated_with_pandera(missing_column).status == "FAIL"
+    assert validate_curated_with_pandera(text_cpi).status == "FAIL"

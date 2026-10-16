@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -30,7 +29,7 @@ from src.features import (
     add_nonlinear_elastic_net_terms,
     order_feature_columns,
 )
-from src.platform_loads import load_postgres_quality_report, write_duckdb
+from src.platform_loads import write_duckdb
 from src.platform_validation import validate_curated_with_pandera
 from src.transform import (
     latest_dataset_path,
@@ -174,11 +173,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip the DuckDB analytical load attempted by default.",
     )
-    parser.add_argument(
-        "--load-postgres",
-        action="store_true",
-        help="Load the data-quality report to PostgreSQL/Supabase using DATABASE_URL.",
-    )
     return parser.parse_args()
 
 
@@ -259,7 +253,6 @@ def records_to_frame(records: list[QualityRecord]) -> pd.DataFrame:
 
 
 def main() -> int:
-    started_at = datetime.now(timezone.utc)
     configure_logging()
     args = parse_args()
 
@@ -286,15 +279,6 @@ def main() -> int:
                 db_path=Path(args.duckdb_path),
             )
         )
-
-    if args.load_postgres:
-        postgres_record = load_postgres_quality_report(
-            records_to_frame(quality_records),
-            curated=curated,
-            started_at=started_at,
-        )
-        LOGGER.info("PostgreSQL load: %s (%s)", postgres_record.status, postgres_record.notes)
-        quality_records.append(postgres_record)
 
     save_curated_outputs(curated, curated_dir)
     save_quality_report(quality_records, reports_dir)

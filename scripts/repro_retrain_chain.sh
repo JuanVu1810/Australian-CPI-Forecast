@@ -16,7 +16,6 @@ set -u
 cd "$1" || exit 2
 PY="$2"
 PORT="$3"
-export MLFLOW_DISABLE_AGENT_HINT=1
 rm -f .chain_done .chain_failed
 touch .chain_start
 sleep 1
@@ -34,7 +33,6 @@ run() {
 }
 
 run "$PY" -m src.build_curated_dataset
-run "$PY" -m src.platform_status
 run "$PY" -m src.models.evaluation
 run "$PY" -m src.models.elastic_net
 run "$PY" -m src.models.ensemble

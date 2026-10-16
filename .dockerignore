@@ -1,33 +1,16 @@
 .git
-.pytest_cache
 __pycache__
 *.pyc
-*.pyo
+.pytest_cache
+.ipynb_checkpoints
 
+# Not needed to serve the API
 dataset
 notebooks
 tests
-mlruns_snapshot
-
+book
+docs
+app
+mlruns
 data/analytics
 data/processed
-
-# Exclude reports/ by default, but the API reads a handful of these CSVs at
-# request time -- keep exactly those (interval calibration/coverage
-# diagnostics, both targets' dynamic ensemble weight sources, and the backtest
-# predictions /rba-action reads). Use reports/* (not a bare "reports") so the
-# negations below actually take effect; Docker cannot un-exclude files inside a
-# wholesale-ignored parent directory. When an endpoint starts reading a new
-# report, add it here, or the deployed image will 503 on that endpoint while
-# everything works locally.
-reports/*
-!reports/model_interval_coverage.csv
-!reports/model_interval_calibration_factors.csv
-!reports/model_interval_calibration_validation.csv
-!reports/model_interval_coverage_trimmed_mean.csv
-!reports/model_interval_calibration_factors_trimmed_mean.csv
-!reports/model_interval_calibration_validation_trimmed_mean.csv
-!reports/model_comparison_elastic_net.csv
-!reports/model_comparison_elastic_net_trimmed_mean.csv
-!reports/backtest_predictions.csv
-!reports/backtest_predictions_trimmed_mean.csv

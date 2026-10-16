@@ -1,29 +1,16 @@
 from types import SimpleNamespace
 
-import mlflow
-import mlflow.statsmodels
-from mlflow.tracking import MlflowClient
+import joblib
 import numpy as np
 import pandas as pd
 import pytest
 import statsmodels.api as sm
 
 from api import main as api_main
-from src.models import registry, tracking
 
 
 @pytest.fixture(autouse=True)
 def _clear_api_report_caches(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        api_main,
-        "INTERVAL_COVERAGE_REPORT_PATH",
-        tmp_path / "missing_interval_coverage.csv",
-    )
-    monkeypatch.setattr(
-        api_main,
-        "INTERVAL_CALIBRATION_FACTORS_PATH",
-        tmp_path / "missing_interval_calibration_factors.csv",
-    )
     monkeypatch.setattr(
         api_main,
         "INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH",
@@ -36,12 +23,24 @@ def _clear_api_report_caches(monkeypatch, tmp_path):
     api_main._load_interval_calibration_factors.cache_clear()
 
 
-def _configure_tmp_mlflow(monkeypatch, tmp_path, experiment_name="pytest-api-registry"):
-    mlflow.end_run()
-    monkeypatch.setenv("MLFLOW_TRACKING_URI", str(tmp_path / "mlruns"))
-    monkeypatch.setenv("MLFLOW_EXPERIMENT_NAME", experiment_name)
-    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
-    tracking.configure_mlflow()
+def _use_tmp_models(monkeypatch, tmp_path, with_elastic_net=False):
+    """Point the API at a tiny saved SARIMA (and optionally a placeholder Elastic Net file)."""
+    paths = {"sarima": tmp_path / "sarima.joblib", "elastic_net": tmp_path / "elastic_net.joblib"}
+    joblib.dump(_fit_tiny_statsmodels(), paths["sarima"])
+    if with_elastic_net:
+        joblib.dump({}, paths["elastic_net"])
+    monkeypatch.setattr(api_main, "HEADLINE_MODEL_PATHS", paths)
+    monkeypatch.setattr(api_main, "TRIMMED_MEAN_MODEL_PATHS", paths)
+
+
+def _patch_elastic_net_fit(monkeypatch, fit):
+    """Serve ``fit`` for the Elastic Net file; every other model loads for real."""
+    real_load_model = api_main._load_model
+    monkeypatch.setattr(
+        api_main,
+        "_load_model",
+        lambda path: fit if path.name == "elastic_net.joblib" else real_load_model(path),
+    )
 
 
 def _fit_tiny_statsmodels(train_end="2021Q4"):
@@ -57,26 +56,6 @@ def _fit_tiny_statsmodels(train_end="2021Q4"):
         enforce_stationarity=False,
         enforce_invertibility=False,
     ).fit(disp=False)
-
-
-def _log_run_with_model(family, rmse_overall, train_end="2021Q4"):
-    with mlflow.start_run(run_name=f"{family}_candidate") as run:
-        mlflow.set_tag("model_family", family)
-        mlflow.log_metric("rmse_overall", rmse_overall)
-        mlflow.log_metric("mae_overall", rmse_overall / 2)
-        for horizon in range(1, 9):
-            mlflow.log_metric(f"rmse_h{horizon}", rmse_overall + horizon / 100)
-            mlflow.log_metric(f"mae_h{horizon}", rmse_overall / 2 + horizon / 100)
-        tracking.log_statsmodels_model(_fit_tiny_statsmodels(train_end=train_end))
-        return run.info.run_id
-
-
-def _log_run_without_model(family, rmse_overall):
-    with mlflow.start_run(run_name=f"{family}_candidate") as run:
-        mlflow.set_tag("model_family", family)
-        mlflow.log_metric("rmse_overall", rmse_overall)
-        mlflow.log_metric("mae_overall", rmse_overall / 2)
-        return run.info.run_id
 
 
 def _write_curated_frame(path, end_quarter="2021Q4"):
@@ -102,23 +81,6 @@ def _write_rba_action_curated_frame(path, end_quarter="2021Q4"):
             "cash_rate": [2.5, 2.75, 3.0, 3.25],
             "cash_rate_lag1": [2.25, 2.5, 2.75, 3.0],
             "unemployment_rate_change_lag1": [0.1, -0.1, 0.0, 0.2],
-        }
-    ).to_csv(path, index=False)
-
-
-def _write_interval_coverage_report(path, nominal_coverage=0.8):
-    pd.DataFrame(
-        {
-            "model": ["sarima", "sarima", "elastic_net"],
-            "horizon": [1, 2, 1],
-            "n": [73, 73, 53],
-            "nominal_coverage": [nominal_coverage, nominal_coverage, nominal_coverage],
-            "empirical_coverage": [0.794521, 0.739726, 0.566038],
-            "coverage_ci_lower": [0.684, 0.624, 0.423],
-            "coverage_ci_upper": [0.880, 0.835, 0.702],
-            "binom_p_value": [0.884, 0.190, 0.0001],
-            "significantly_miscalibrated": [False, False, True],
-            "mean_interval_width": [1.416, 1.940, 1.854],
         }
     ).to_csv(path, index=False)
 
@@ -156,15 +118,14 @@ def _write_interval_calibration_factors(path, target_coverage=0.8):
     ).to_csv(path, index=False)
 
 
-def test_forecast_all_returns_registered_sarima_and_marks_missing_families(
+def test_forecast_all_returns_saved_sarima_and_marks_missing_families(
     monkeypatch,
     tmp_path,
 ):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-sarima-only")
+    _use_tmp_models(monkeypatch, tmp_path)
     curated_path = tmp_path / "curated.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    _log_run_with_model("sarima", 1.25)
 
     payload = api_main.forecast_all(
         api_main.AllForecastsRequest(horizon=2, n_sims=100)
@@ -175,15 +136,15 @@ def test_forecast_all_returns_registered_sarima_and_marks_missing_families(
     assert len(payload["models"][0]["forecast"]) == 2
     unavailable = {item["model_family"]: item["reason"] for item in payload["unavailable"]}
     assert set(unavailable) == {"elastic_net", "ensemble"}
-    assert "No finished MLflow run found" in unavailable["elastic_net"]
-    assert "No finished MLflow run found" in unavailable["ensemble"]
+    assert "elastic_net.joblib not found" in unavailable["elastic_net"]
+    assert "elastic_net.joblib not found" in unavailable["ensemble"]
 
 
 def test_trimmed_mean_forecast_all_uses_trimmed_handlers_and_calibration(
     monkeypatch,
     tmp_path,
 ):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-trimmed-forecast-all")
+    _use_tmp_models(monkeypatch, tmp_path)
     curated_path = tmp_path / "curated.csv"
     factors_path = tmp_path / "trimmed_calibration_factors.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
@@ -195,9 +156,8 @@ def test_trimmed_mean_forecast_all_uses_trimmed_handlers_and_calibration(
         factors_path,
     )
     api_main._load_interval_calibration_factors.cache_clear()
-    run_id = _log_run_with_model("trimmed_mean_sarima", 1.05)
 
-    def fake_trimmed_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
+    def fake_trimmed_sarima_family_forecast(model_paths, requested_horizon, n_sims, seed):
         return api_main.FamilyForecastData(
             forecast=[10.0, 20.0],
             draws=np.column_stack(
@@ -226,7 +186,6 @@ def test_trimmed_mean_forecast_all_uses_trimmed_handlers_and_calibration(
     assert payload["unavailable"] == []
     model = payload["models"][0]
     assert model["model_family"] == "sarima"
-    assert model["run_id"] == run_id
     assert model["forecast"] == [10.0, 20.0]
     np.testing.assert_allclose(model["interval_lower"], [8.4, 19.2])
     np.testing.assert_allclose(model["interval_upper"], [11.6, 20.8])
@@ -250,7 +209,7 @@ def test_rba_action_returns_live_policy_breakdown_and_marks_threshold(
         lambda curated_path: pd.DataFrame({"cpi_yoy": [2.0]}),
     )
 
-    def fake_headline_ensemble(model_uri, requested_horizon, n_sims, seed):
+    def fake_headline_ensemble(model_paths, requested_horizon, n_sims, seed):
         return api_main.FamilyForecastData(
             forecast=[3.2],
             draws=np.zeros((n_sims, 1)),
@@ -260,7 +219,7 @@ def test_rba_action_returns_live_policy_breakdown_and_marks_threshold(
             horizon_cap=None,
         )
 
-    def fake_trimmed_ensemble(model_uri, requested_horizon, n_sims, seed):
+    def fake_trimmed_ensemble(model_paths, requested_horizon, n_sims, seed):
         return api_main.FamilyForecastData(
             forecast=[2.7],
             draws=np.zeros((n_sims, 1)),
@@ -303,12 +262,8 @@ def test_rba_action_returns_live_policy_breakdown_and_marks_threshold(
             }
         )
 
-    monkeypatch.setattr(api_main, "_ensemble_family_forecast", fake_headline_ensemble)
-    monkeypatch.setattr(
-        api_main,
-        "_ensemble_trimmed_mean_family_forecast",
-        fake_trimmed_ensemble,
-    )
+    monkeypatch.setitem(api_main.FAMILY_HANDLERS, "ensemble", fake_headline_ensemble)
+    monkeypatch.setitem(api_main.TRIMMED_MEAN_FAMILY_HANDLERS, "ensemble", fake_trimmed_ensemble)
     monkeypatch.setattr(
         api_main.rba_classifier,
         "predict_single_quarter",
@@ -333,7 +288,7 @@ def test_rba_action_returns_live_policy_breakdown_and_marks_threshold(
     assert "documented comparison exercise" in payload["caveat"]
 
 
-def test_rba_action_converts_mlflow_errors_to_503(monkeypatch, tmp_path):
+def test_rba_action_converts_a_missing_model_to_503(monkeypatch, tmp_path):
     curated_path = tmp_path / "curated.csv"
     _write_rba_action_curated_frame(curated_path, end_quarter="2021Q4")
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
@@ -343,16 +298,16 @@ def test_rba_action_converts_mlflow_errors_to_503(monkeypatch, tmp_path):
         lambda: pd.DataFrame({"policy_action": ["cut", "hold", "hike"]}),
     )
 
-    def raise_mlflow_exception(model_uri, requested_horizon, n_sims, seed):
-        raise api_main.MlflowException("No finished MLflow run found.")
+    def raise_missing_model(model_paths, requested_horizon, n_sims, seed):
+        raise RuntimeError("Saved model sarima.joblib not found. Train the models first (see README).")
 
-    monkeypatch.setattr(api_main, "_ensemble_family_forecast", raise_mlflow_exception)
+    monkeypatch.setitem(api_main.FAMILY_HANDLERS, "ensemble", raise_missing_model)
 
     with pytest.raises(api_main.HTTPException) as exc_info:
         api_main.rba_action()
 
     assert exc_info.value.status_code == 503
-    assert "No finished MLflow run found" in exc_info.value.detail
+    assert "Saved model sarima.joblib not found" in exc_info.value.detail
 
 
 def test_credit_risk_stress_test_returns_svar_ecl_segments(monkeypatch, tmp_path):
@@ -498,13 +453,16 @@ def test_forecast_all_returns_sarima_and_elastic_net_with_draw_intervals(
         def predict_next(self, train_frame):
             return [10.0, 20.0, 30.0]
 
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-sarima-elastic")
+    _use_tmp_models(monkeypatch, tmp_path, with_elastic_net=True)
     curated_path = tmp_path / "curated.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    _log_run_with_model("sarima", 1.25)
-    _log_run_with_model("elastic_net", 1.15)
-    monkeypatch.setattr(api_main, "_load_elastic_net_fit", lambda model_uri: FakeElasticNetFit())
+    _patch_elastic_net_fit(monkeypatch, FakeElasticNetFit())
+    monkeypatch.setattr(  # the ensemble reads real report CSVs; it has its own tests
+        api_main,
+        "FAMILY_HANDLERS",
+        {name: api_main.FAMILY_HANDLERS[name] for name in ("sarima", "elastic_net")},
+    )
     monkeypatch.setattr(
         api_main,
         "_current_elastic_net_frame",
@@ -535,67 +493,24 @@ def test_forecast_all_returns_sarima_and_elastic_net_with_draw_intervals(
     assert models["elastic_net"]["forecast"] == [10.0, 20.0, 30.0]
 
 
-def test_forecast_all_attaches_interval_coverage_for_validated_bounds(
+def test_forecast_all_attaches_held_out_interval_coverage_for_validated_bounds(
     monkeypatch,
     tmp_path,
 ):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-coverage")
+    _use_tmp_models(monkeypatch, tmp_path)
     curated_path = tmp_path / "curated.csv"
-    coverage_path = tmp_path / "coverage.csv"
-    _write_curated_frame(curated_path, end_quarter="2021Q4")
-    _write_interval_coverage_report(coverage_path)
-    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    monkeypatch.setattr(api_main, "INTERVAL_COVERAGE_REPORT_PATH", coverage_path)
-    api_main._load_interval_coverage_report.cache_clear()
-    sarima_run_id = _log_run_with_model("sarima", 1.25)
-
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
-        return api_main.FamilyForecastData(
-            forecast=[1.0, 2.0],
-            draws=np.tile(np.array([0.5, 2.5]), (n_sims, 1)),
-            quarters=["2022Q1", "2022Q2"],
-            forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
-        )
-
-    monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"sarima": fake_sarima_family_forecast})
-
-    payload = api_main.forecast_all(
-        api_main.AllForecastsRequest(horizon=2, n_sims=100)
-    ).model_dump()
-
-    assert payload["unavailable"] == []
-    model = payload["models"][0]
-    assert model["model_family"] == "sarima"
-    assert model["run_id"] == sarima_run_id
-    assert model["empirical_coverage"] == [0.794521, 0.739726]
-    assert model["coverage_n"] == [73, 73]
-    assert model["significantly_miscalibrated"] == [False, False]
-
-
-def test_forecast_all_prefers_held_out_calibration_validation_for_disclosure(
-    monkeypatch,
-    tmp_path,
-):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-validation-coverage")
-    curated_path = tmp_path / "curated.csv"
-    coverage_path = tmp_path / "full_sample_coverage.csv"
     validation_path = tmp_path / "held_out_validation.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
-    _write_interval_coverage_report(coverage_path)
     _write_interval_calibration_validation_report(validation_path)
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    monkeypatch.setattr(api_main, "INTERVAL_COVERAGE_REPORT_PATH", coverage_path)
     monkeypatch.setattr(
         api_main,
         "INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH",
         validation_path,
     )
     api_main._load_interval_coverage_report.cache_clear()
-    sarima_run_id = _log_run_with_model("sarima", 1.25)
 
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
+    def fake_sarima_family_forecast(model_paths, requested_horizon, n_sims, seed):
         return api_main.FamilyForecastData(
             forecast=[1.0, 2.0],
             draws=np.tile(np.array([0.5, 2.5]), (n_sims, 1)),
@@ -613,7 +528,6 @@ def test_forecast_all_prefers_held_out_calibration_validation_for_disclosure(
 
     model = payload["models"][0]
     assert model["model_family"] == "sarima"
-    assert model["run_id"] == sarima_run_id
     assert model["empirical_coverage"] == [0.681818, 0.590909]
     assert model["coverage_n"] == [22, 22]
     assert model["significantly_miscalibrated"] == [False, True]
@@ -623,17 +537,20 @@ def test_forecast_all_leaves_interval_coverage_null_for_unvalidated_bounds(
     monkeypatch,
     tmp_path,
 ):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-coverage-bounds")
+    _use_tmp_models(monkeypatch, tmp_path)
     curated_path = tmp_path / "curated.csv"
-    coverage_path = tmp_path / "coverage.csv"
+    validation_path = tmp_path / "held_out_validation.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
-    _write_interval_coverage_report(coverage_path)
+    _write_interval_calibration_validation_report(validation_path)
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    monkeypatch.setattr(api_main, "INTERVAL_COVERAGE_REPORT_PATH", coverage_path)
+    monkeypatch.setattr(
+        api_main,
+        "INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH",
+        validation_path,
+    )
     api_main._load_interval_coverage_report.cache_clear()
-    _log_run_with_model("sarima", 1.25)
 
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
+    def fake_sarima_family_forecast(model_paths, requested_horizon, n_sims, seed):
         return api_main.FamilyForecastData(
             forecast=[1.0, 2.0],
             draws=np.tile(np.array([0.5, 2.5]), (n_sims, 1)),
@@ -660,47 +577,11 @@ def test_forecast_all_leaves_interval_coverage_null_for_unvalidated_bounds(
     assert model["significantly_miscalibrated"] == [None, None]
 
 
-def test_forecast_all_leaves_interval_coverage_null_for_report_nominal_mismatch(
-    monkeypatch,
-    tmp_path,
-):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-coverage-nominal")
-    curated_path = tmp_path / "curated.csv"
-    coverage_path = tmp_path / "coverage.csv"
-    _write_curated_frame(curated_path, end_quarter="2021Q4")
-    _write_interval_coverage_report(coverage_path, nominal_coverage=0.7)
-    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    monkeypatch.setattr(api_main, "INTERVAL_COVERAGE_REPORT_PATH", coverage_path)
-    api_main._load_interval_coverage_report.cache_clear()
-    _log_run_with_model("sarima", 1.25)
-
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
-        return api_main.FamilyForecastData(
-            forecast=[1.0, 2.0],
-            draws=np.tile(np.array([0.5, 2.5]), (n_sims, 1)),
-            quarters=["2022Q1", "2022Q2"],
-            forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
-        )
-
-    monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"sarima": fake_sarima_family_forecast})
-
-    payload = api_main.forecast_all(
-        api_main.AllForecastsRequest(horizon=2, n_sims=100)
-    ).model_dump()
-
-    model = payload["models"][0]
-    assert model["empirical_coverage"] == [None, None]
-    assert model["coverage_n"] == [None, None]
-    assert model["significantly_miscalibrated"] == [None, None]
-
-
 def test_forecast_all_leaves_interval_coverage_null_for_validation_nominal_mismatch(
     monkeypatch,
     tmp_path,
 ):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-validation-nominal")
+    _use_tmp_models(monkeypatch, tmp_path)
     curated_path = tmp_path / "curated.csv"
     validation_path = tmp_path / "held_out_validation.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
@@ -712,9 +593,8 @@ def test_forecast_all_leaves_interval_coverage_null_for_validation_nominal_misma
         validation_path,
     )
     api_main._load_interval_coverage_report.cache_clear()
-    _log_run_with_model("sarima", 1.25)
 
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
+    def fake_sarima_family_forecast(model_paths, requested_horizon, n_sims, seed):
         return api_main.FamilyForecastData(
             forecast=[1.0, 2.0],
             draws=np.tile(np.array([0.5, 2.5]), (n_sims, 1)),
@@ -740,16 +620,13 @@ def test_forecast_all_leaves_interval_coverage_null_when_report_missing(
     monkeypatch,
     tmp_path,
 ):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-coverage-missing")
+    _use_tmp_models(monkeypatch, tmp_path)
     curated_path = tmp_path / "curated.csv"
-    coverage_path = tmp_path / "missing_coverage.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    monkeypatch.setattr(api_main, "INTERVAL_COVERAGE_REPORT_PATH", coverage_path)
-    api_main._load_interval_coverage_report.cache_clear()
-    sarima_run_id = _log_run_with_model("sarima", 1.25)
+    api_main._load_interval_coverage_report.cache_clear()  # the validation report is missing in this test
 
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
+    def fake_sarima_family_forecast(model_paths, requested_horizon, n_sims, seed):
         return api_main.FamilyForecastData(
             forecast=[1.0, 2.0],
             draws=np.tile(np.array([0.5, 2.5]), (n_sims, 1)),
@@ -766,7 +643,6 @@ def test_forecast_all_leaves_interval_coverage_null_when_report_missing(
     ).model_dump()
 
     assert payload["unavailable"] == []
-    assert payload["models"][0]["run_id"] == sarima_run_id
     assert payload["models"][0]["empirical_coverage"] == [None, None]
     assert payload["models"][0]["coverage_n"] == [None, None]
     assert payload["models"][0]["significantly_miscalibrated"] == [None, None]
@@ -776,7 +652,7 @@ def test_forecast_all_applies_interval_calibration_for_validated_bounds(
     monkeypatch,
     tmp_path,
 ):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-calibration")
+    _use_tmp_models(monkeypatch, tmp_path)
     curated_path = tmp_path / "curated.csv"
     factors_path = tmp_path / "calibration_factors.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
@@ -784,9 +660,8 @@ def test_forecast_all_applies_interval_calibration_for_validated_bounds(
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
     monkeypatch.setattr(api_main, "INTERVAL_CALIBRATION_FACTORS_PATH", factors_path)
     api_main._load_interval_calibration_factors.cache_clear()
-    _log_run_with_model("sarima", 1.25)
 
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
+    def fake_sarima_family_forecast(model_paths, requested_horizon, n_sims, seed):
         return api_main.FamilyForecastData(
             forecast=[10.0, 20.0],
             draws=np.column_stack(
@@ -816,7 +691,7 @@ def test_forecast_all_scales_a_skewed_interval_on_each_side_around_the_point(
     monkeypatch,
     tmp_path,
 ):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-calibration-skewed")
+    _use_tmp_models(monkeypatch, tmp_path)
     curated_path = tmp_path / "curated.csv"
     factors_path = tmp_path / "calibration_factors.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
@@ -824,9 +699,8 @@ def test_forecast_all_scales_a_skewed_interval_on_each_side_around_the_point(
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
     monkeypatch.setattr(api_main, "INTERVAL_CALIBRATION_FACTORS_PATH", factors_path)
     api_main._load_interval_calibration_factors.cache_clear()
-    _log_run_with_model("sarima", 1.25)
 
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
+    def fake_sarima_family_forecast(model_paths, requested_horizon, n_sims, seed):
         # raw 10th/90th percentiles land at about 9.8 and 12.0 around a point of 10.0
         return api_main.FamilyForecastData(
             forecast=[10.0],
@@ -852,42 +726,31 @@ def test_forecast_all_scales_a_skewed_interval_on_each_side_around_the_point(
     assert upper_dist > 3 * lower_dist
 
 
-def test_forecast_all_keeps_raw_intervals_when_calibration_report_missing(
+def test_forecast_all_refuses_to_serve_when_calibration_factors_are_missing(
     monkeypatch,
     tmp_path,
 ):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-calibration-missing")
+    _use_tmp_models(monkeypatch, tmp_path)
     curated_path = tmp_path / "curated.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    _log_run_with_model("sarima", 1.25)
+    monkeypatch.setattr(
+        api_main, "INTERVAL_CALIBRATION_FACTORS_PATH", tmp_path / "missing_factors.csv"
+    )
+    api_main._load_interval_calibration_factors.cache_clear()
 
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
-        return api_main.FamilyForecastData(
-            forecast=[10.0],
-            draws=np.linspace(9.0, 11.0, n_sims).reshape(n_sims, 1),
-            quarters=["2022Q1"],
-            forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
-        )
+    with pytest.raises(api_main.HTTPException) as exc_info:
+        api_main.forecast_all(api_main.AllForecastsRequest(horizon=1, n_sims=100))
 
-    monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"sarima": fake_sarima_family_forecast})
-
-    payload = api_main.forecast_all(
-        api_main.AllForecastsRequest(horizon=1, n_sims=100)
-    ).model_dump()
-
-    model = payload["models"][0]
-    np.testing.assert_allclose(model["interval_lower"], [9.2])
-    np.testing.assert_allclose(model["interval_upper"], [10.8])
+    assert exc_info.value.status_code == 503
+    assert "missing_factors.csv" in exc_info.value.detail
 
 
 def test_forecast_all_keeps_raw_intervals_when_calibration_bounds_do_not_match(
     monkeypatch,
     tmp_path,
 ):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-calibration-bounds")
+    _use_tmp_models(monkeypatch, tmp_path)
     curated_path = tmp_path / "curated.csv"
     factors_path = tmp_path / "calibration_factors.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
@@ -895,9 +758,8 @@ def test_forecast_all_keeps_raw_intervals_when_calibration_bounds_do_not_match(
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
     monkeypatch.setattr(api_main, "INTERVAL_CALIBRATION_FACTORS_PATH", factors_path)
     api_main._load_interval_calibration_factors.cache_clear()
-    _log_run_with_model("sarima", 1.25)
 
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
+    def fake_sarima_family_forecast(model_paths, requested_horizon, n_sims, seed):
         return api_main.FamilyForecastData(
             forecast=[10.0],
             draws=np.linspace(9.0, 11.0, n_sims).reshape(n_sims, 1),
@@ -934,13 +796,11 @@ def test_forecast_all_marks_elastic_net_horizon_mismatch_unavailable(
         def predict_next(self, train_frame):
             return [10.0, 20.0]
 
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-elastic-missing")
+    _use_tmp_models(monkeypatch, tmp_path, with_elastic_net=True)
     curated_path = tmp_path / "curated.csv"
     _write_curated_frame(curated_path, end_quarter="2021Q4")
     monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    _log_run_with_model("sarima", 1.25)
-    _log_run_with_model("elastic_net", 1.15)
-    monkeypatch.setattr(api_main, "_load_elastic_net_fit", lambda model_uri: FakeElasticNetFit())
+    _patch_elastic_net_fit(monkeypatch, FakeElasticNetFit())
     monkeypatch.setattr(
         api_main,
         "_current_elastic_net_frame",
@@ -960,21 +820,11 @@ def test_forecast_all_marks_elastic_net_horizon_mismatch_unavailable(
     assert "does not have fitted horizons [3]" in unavailable["elastic_net"]
 
 
-def test_forecast_all_ensemble_uses_component_model_uris_without_own_model_artifact(
-    monkeypatch,
-    tmp_path,
-):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-forecast-all-ensemble")
-    curated_path = tmp_path / "curated.csv"
-    _write_curated_frame(curated_path, end_quarter="2021Q4")
-    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    sarima_run_id = _log_run_with_model("sarima", 1.25)
-    elastic_net_run_id = _log_run_with_model("elastic_net", 1.15)
-    ensemble_run_id = _log_run_without_model("ensemble", 1.05)
-    seen_component_uris = {}
+def _fake_ensemble_components(monkeypatch, seen):
+    """Replace the two component forecasts so the ensemble blend can be checked by hand."""
 
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
-        seen_component_uris["sarima"] = model_uri
+    def fake_sarima_family_forecast(model_paths, requested_horizon, n_sims, seed):
+        seen["sarima_model_paths"] = model_paths
         return api_main.FamilyForecastData(
             forecast=[1.0, 2.0, 3.0],
             draws=np.tile(np.array([1.0, 2.0, 3.0]), (n_sims, 1)),
@@ -985,84 +835,7 @@ def test_forecast_all_ensemble_uses_component_model_uris_without_own_model_artif
         )
 
     def fake_elastic_net_family_forecast(
-        model_uri,
-        requested_horizon,
-        n_sims,
-        seed,
-        forecast_origin=None,
-    ):
-        seen_component_uris["elastic_net"] = model_uri
-        seen_component_uris["elastic_forecast_origin"] = forecast_origin
-        return api_main.FamilyForecastData(
-            forecast=[3.0, 4.0, 5.0],
-            draws=np.tile(np.array([3.0, 4.0, 5.0]), (n_sims, 1)),
-            quarters=["2022Q1", "2022Q2", "2022Q3"],
-            forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
-        )
-
-    monkeypatch.setattr(api_main, "_sarima_family_forecast", fake_sarima_family_forecast)
-    monkeypatch.setattr(
-        api_main,
-        "_elastic_net_family_forecast",
-        fake_elastic_net_family_forecast,
-    )
-    monkeypatch.setattr(
-        api_main.ensemble,
-        "horizon_rmse_weights",
-        lambda horizons: {horizon: (0.25, 0.75) for horizon in horizons},
-    )
-
-    payload = api_main.forecast_all(
-        api_main.AllForecastsRequest(horizon=3, n_sims=100)
-    ).model_dump()
-
-    models = {model["model_family"]: model for model in payload["models"]}
-    assert "ensemble" in models
-    assert models["ensemble"]["run_id"] == ensemble_run_id
-    assert models["ensemble"]["horizon"] == 3
-    assert models["ensemble"]["horizon_cap"] is None
-    assert models["ensemble"]["forecast"] == [2.5, 3.5, 4.5]
-    assert models["ensemble"]["quarters"] == ["2022Q1", "2022Q2", "2022Q3"]
-    assert len(models["ensemble"]["interval_lower"]) == 3
-    assert len(models["ensemble"]["interval_upper"]) == 3
-    client = MlflowClient()
-    assert seen_component_uris["sarima"] == registry._logged_model_uri(
-        client,
-        sarima_run_id,
-    )
-    assert seen_component_uris["elastic_net"] == registry._logged_model_uri(
-        client,
-        elastic_net_run_id,
-    )
-    assert seen_component_uris["elastic_forecast_origin"] == "2021Q4"
-    assert ensemble_run_id not in seen_component_uris["sarima"]
-    assert ensemble_run_id not in seen_component_uris["elastic_net"]
-
-
-def test_trimmed_mean_ensemble_uses_trimmed_components_and_dynamic_weights(
-    monkeypatch,
-    tmp_path,
-):
-    _configure_tmp_mlflow(monkeypatch, tmp_path, "pytest-trimmed-ensemble-components")
-    sarima_run_id = _log_run_with_model("trimmed_mean_sarima", 1.25)
-    elastic_net_run_id = _log_run_with_model("trimmed_mean_elastic_net", 1.15)
-    seen_component_uris = {}
-
-    def fake_sarima_family_forecast(model_uri, requested_horizon, n_sims, seed):
-        seen_component_uris["sarima"] = model_uri
-        return api_main.FamilyForecastData(
-            forecast=[1.0, 2.0, 3.0],
-            draws=np.tile(np.array([1.0, 2.0, 3.0]), (n_sims, 1)),
-            quarters=["2022Q1", "2022Q2", "2022Q3"],
-            forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
-        )
-
-    def fake_elastic_net_family_forecast(
-        model_uri,
+        model_paths,
         requested_horizon,
         n_sims,
         seed,
@@ -1070,10 +843,10 @@ def test_trimmed_mean_ensemble_uses_trimmed_components_and_dynamic_weights(
         feature_columns,
         forecast_origin=None,
     ):
-        seen_component_uris["elastic_net"] = model_uri
-        seen_component_uris["elastic_target"] = target_column
-        seen_component_uris["elastic_features"] = feature_columns
-        seen_component_uris["elastic_forecast_origin"] = forecast_origin
+        seen["elastic_net_model_paths"] = model_paths
+        seen["elastic_target"] = target_column
+        seen["elastic_features"] = feature_columns
+        seen["elastic_forecast_origin"] = forecast_origin
         return api_main.FamilyForecastData(
             forecast=[3.0, 4.0, 5.0],
             draws=np.tile(np.array([3.0, 4.0, 5.0]), (n_sims, 1)),
@@ -1083,44 +856,70 @@ def test_trimmed_mean_ensemble_uses_trimmed_components_and_dynamic_weights(
             horizon_cap=None,
         )
 
-    monkeypatch.setattr(api_main, "_sarima_family_forecast", fake_sarima_family_forecast)
-    monkeypatch.setattr(
-        api_main,
-        "_elastic_net_family_forecast",
-        fake_elastic_net_family_forecast,
-    )
-    seen_weights_call = {}
-
     def fake_horizon_rmse_weights(horizons, path=None):
-        seen_weights_call["path"] = path
+        seen["weights_path"] = path
         return {horizon: (0.25, 0.75) for horizon in horizons}
 
-    monkeypatch.setattr(
-        api_main.ensemble,
-        "horizon_rmse_weights",
-        fake_horizon_rmse_weights,
-    )
+    monkeypatch.setattr(api_main, "_sarima_family_forecast", fake_sarima_family_forecast)
+    monkeypatch.setattr(api_main, "_elastic_net_family_forecast", fake_elastic_net_family_forecast)
+    monkeypatch.setattr(api_main.ensemble, "horizon_rmse_weights", fake_horizon_rmse_weights)
 
-    result = api_main._ensemble_trimmed_mean_family_forecast(
-        "ignored",
+
+def test_forecast_all_ensemble_blends_sarima_and_elastic_net_with_inverse_rmse_weights(
+    monkeypatch,
+    tmp_path,
+):
+    curated_path = tmp_path / "curated.csv"
+    _write_curated_frame(curated_path, end_quarter="2021Q4")
+    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
+    monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"ensemble": api_main._ensemble_family_forecast})
+    seen = {}
+    _fake_ensemble_components(monkeypatch, seen)
+
+    payload = api_main.forecast_all(
+        api_main.AllForecastsRequest(horizon=3, n_sims=100)
+    ).model_dump()
+
+    ensemble = payload["models"][0]
+    assert ensemble["model_family"] == "ensemble"
+    assert ensemble["horizon"] == 3
+    assert ensemble["horizon_cap"] is None
+    assert ensemble["forecast"] == [2.5, 3.5, 4.5]
+    assert ensemble["quarters"] == ["2022Q1", "2022Q2", "2022Q3"]
+    assert len(ensemble["interval_lower"]) == 3
+    assert len(ensemble["interval_upper"]) == 3
+    assert seen["sarima_model_paths"] is api_main.HEADLINE_MODEL_PATHS
+    assert seen["elastic_net_model_paths"] is api_main.HEADLINE_MODEL_PATHS
+    assert seen["weights_path"] == api_main.ensemble.DYNAMIC_WEIGHTS_SOURCE_PATH
+    assert seen["elastic_forecast_origin"] == "2021Q4"
+
+
+def test_trimmed_mean_ensemble_uses_trimmed_components_and_dynamic_weights(monkeypatch):
+    seen = {}
+    _fake_ensemble_components(monkeypatch, seen)
+
+    result = api_main.TRIMMED_MEAN_FAMILY_HANDLERS["ensemble"](
+        api_main.TRIMMED_MEAN_MODEL_PATHS,
         requested_horizon=3,
         n_sims=100,
         seed=42,
     )
 
-    assert seen_weights_call["path"] == api_main.ensemble.TRIMMED_MEAN_DYNAMIC_WEIGHTS_SOURCE_PATH
+    assert seen["weights_path"] == api_main.ensemble.TRIMMED_MEAN_DYNAMIC_WEIGHTS_SOURCE_PATH
     assert result.forecast == [2.5, 3.5, 4.5]
     assert result.quarters == ["2022Q1", "2022Q2", "2022Q3"]
     assert result.horizon_cap is None
-    client = MlflowClient()
-    assert seen_component_uris["sarima"] == registry._logged_model_uri(client, sarima_run_id)
-    assert seen_component_uris["elastic_net"] == registry._logged_model_uri(
-        client,
-        elastic_net_run_id,
-    )
-    assert seen_component_uris["elastic_target"] == "trimmed_mean_cpi_yoy"
-    assert seen_component_uris["elastic_features"][0] == "trimmed_mean_cpi_yoy_lag1"
-    assert seen_component_uris["elastic_forecast_origin"] == "2021Q4"
+    assert seen["sarima_model_paths"] is api_main.TRIMMED_MEAN_MODEL_PATHS
+    assert seen["elastic_target"] == "trimmed_mean_cpi_yoy"
+    assert seen["elastic_features"][0] == "trimmed_mean_cpi_yoy_lag1"
+    assert seen["elastic_forecast_origin"] == "2021Q4"
+
+
+def test_credit_stress_horizon_is_limited_to_the_forecast_horizons():
+    openapi = api_main.app.openapi()
+    horizon = openapi["paths"]["/credit-risk/stress-test"]["get"]["parameters"][0]["schema"]
+    assert horizon["minimum"] == 1
+    assert horizon["maximum"] == api_main.MAX_FORECAST_HORIZON
 
 
 def test_interval_from_paths_matches_numpy_percentile():
@@ -1138,3 +937,12 @@ def test_interval_from_paths_matches_numpy_percentile():
     expected = np.percentile(draws, [25.0, 75.0], axis=0)
     np.testing.assert_allclose(lower, expected[0])
     np.testing.assert_allclose(upper, expected[1])
+
+
+def test_public_message_shows_project_errors_but_hides_file_paths():
+    assert api_main._public_message(RuntimeError("Saved model sarima.joblib not found.")) == (
+        "Saved model sarima.joblib not found."
+    )
+    hidden = api_main._public_message(FileNotFoundError(2, "No such file", "/app/secret/path.csv"))
+    assert "/app" not in hidden
+    assert "FileNotFoundError" in hidden

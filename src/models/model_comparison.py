@@ -31,6 +31,8 @@ from src.models.evaluation import (
     DEFAULT_HORIZONS,
     PROJECT_ROOT,
     RBA_FORECAST_PATH,
+    TRIMMED_MEAN_ELASTIC_NET_MODEL_PATH,
+    TRIMMED_MEAN_SARIMA_MODEL_PATH,
     compute_baseline_predictions,
     compute_metric_table,
     load_target_series,
@@ -335,10 +337,10 @@ def refresh_trimmed_mean_served_model_runs(
     max_origins: int | None = None,
     verbose: bool = False,
 ) -> None:
-    """Log full-sample trimmed-mean model artifacts used by FastAPI serving."""
+    """Save the full-sample trimmed-mean models used by FastAPI serving."""
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     if verbose:
-        print("Refreshing trimmed-mean SARIMA served MLflow run...", flush=True)
+        print("Refreshing the saved trimmed-mean SARIMA model...", flush=True)
     run_sarima_comparison(
         curated_path=curated_path,
         output_path=TRIMMED_MEAN_SARIMA_COMPARISON_OUTPUT_PATH,
@@ -348,14 +350,12 @@ def refresh_trimmed_mean_served_model_runs(
         order=TRIMMED_MEAN_DEFAULT_ORDER,
         seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
         include_rba=False,
-        run_name="trimmed_mean_sarima_comparison",
-        model_family_tag="trimmed_mean_sarima",
-        selection_criterion="fixed_trimmed_mean_default",
+        model_output_path=TRIMMED_MEAN_SARIMA_MODEL_PATH,
         max_quarter=svar.FORECAST_ORIGIN_PIN,
     )
 
     if verbose:
-        print("Refreshing trimmed-mean Elastic Net served MLflow run...", flush=True)
+        print("Refreshing the saved trimmed-mean Elastic Net model...", flush=True)
     run_elastic_net_comparison(
         curated_path=curated_path,
         rba_path=RBA_FORECAST_PATH,
@@ -370,9 +370,7 @@ def refresh_trimmed_mean_served_model_runs(
         sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
         sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
         include_rba=False,
-        run_name="trimmed_mean_elastic_net_comparison",
-        model_family_tag="trimmed_mean_elastic_net",
-        feature_set_label="trimmed_mean_primary_wti",
+        model_output_path=TRIMMED_MEAN_ELASTIC_NET_MODEL_PATH,
         verbose=verbose,
         max_quarter=svar.FORECAST_ORIGIN_PIN,
     )

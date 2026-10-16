@@ -7,6 +7,14 @@ Results live in `reports/reproducibility_check.csv` (one row per scenario/quanti
 All runs were made 2026-09-22 (Australian time) on one machine, always in scratch copies of the repo — never the checkout,
 since the model scripts write into `reports/` and `data/`.
 
+> **Note, 2026-10-16.** These runs were measured when the fitted models were stored as MLflow runs
+> (restored from `mlruns_snapshot/`) and when `reports/tableau/` also held three drift exports. Both were
+> later removed: the models are now `joblib` files in `models/`, written from the same fitted objects.
+> The API returned the same forecasts, intervals, credit stress and RBA numbers before and after the
+> change, apart from the dropped `run_id` field. The saved API responses below still contain `run_id`,
+> which the comparison ignores. The recipes below that say `mlruns_snapshot restore` mean "serve the saved
+> models"; with the new layout that is simply a clean copy of the repo.
+
 ## What is saved here
 
 | File | What it is |

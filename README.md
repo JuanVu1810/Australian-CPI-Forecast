@@ -15,7 +15,7 @@ test, and a FastAPI + Streamlit app with a Cloud Run deployment.
 |---|---|
 | Interactive demo | https://cpi-forecast-demo.streamlit.app/ |
 | Jupyter Book (results and methodology) | https://juanvu1810.github.io/Australian-CPI-Forecast/ |
-| Forecast API docs | https://cpi-forecast-api-887232555982.asia-southeast1.run.app/docs |
+| Forecast API docs | https://cpi-forecast-juan-vqvgjnkdra-as.a.run.app/docs |
 | Source code | https://github.com/JuanVu1810/Australian-CPI-Forecast |
 
 Start the book with *Key Findings*. The demo lets you run a live forecast, watch the
@@ -31,14 +31,14 @@ call. This README only covers status and how to run the project.
 | SVAR and scenario engine | implemented locally; illustrative, since both VAR systems fail residual whiteness and normality diagnostics |
 | RBA policy-action classifier | implemented; served by the Cloud Run API since 2026-09-21 |
 | Credit-risk stress test and illustrative 12-month ECL | implemented; illustrative only; served by the Cloud Run API since 2026-09-21 |
-| MLflow tracking | implemented locally (file store in `mlruns/`, gitignored; a saved copy of the served runs is in `mlruns_snapshot/`); no champion model or Model Registry |
+| Saved models | the fitted SARIMA and Elastic Net models (headline and trimmed mean) are `joblib` files in `models/`, committed to the repository (about 5 MB); the API loads them. No experiment tracking, no model registry |
 | FastAPI | implemented, 7 endpoints; live on Cloud Run |
-| Docker and Google Cloud Run | deployed, verified live 2026-09-21 (image `redeploy-20260921-e905627`, revision `cpi-forecast-api-00016-vig`). Serves the forecast, trimmed-mean, scenario, RBA and credit endpoints; redeploy is manual |
+| Docker and Google Cloud Run | deployed 2026-10-16 as the Cloud Run service `cpi-forecast-juan` (image in Artifact Registry repo `cpi-forecast`), checked the same day through the Streamlit demo. Serves the forecast, trimmed-mean, scenario, RBA and credit endpoints; redeploy is manual |
 | Streamlit | deployed on Streamlit Community Cloud, verified live 2026-09-21: <https://cpi-forecast-demo.streamlit.app/>. A four-tab interactive demo that goes with the book (live forecast, Ensemble path reveal, scenario engine, RBA call) |
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
-| Reproducibility | pinned versions (`constraints.txt`), saved model runs, and tests on the saved reports, SQL queries and model runs; see [Reproduce the results](#reproduce-the-results) |
-| GitHub Actions (tests, monthly scheduled ETL) | scaffolded; no Cloud Run deploy step |
-| Supabase PostgreSQL | schema (`sql/schema_app_metadata.sql`) and the forecast snapshot (`python -m src.models.forecast_snapshot snapshot`) run against a hosted Supabase project on 2026-09-24: six rows written, one per model family for each of the headline and trimmed-mean targets. The quarter it recorded (2026Q1) was already published, so this shows the wiring works, not a live forecast record. Not read by the API or the Streamlit app |
+| Reproducibility | pinned versions (`constraints.txt`), saved models, and tests on the saved reports, SQL queries and models; see [Reproduce the results](#reproduce-the-results) |
+| GitHub Actions (tests, book deployment) | implemented; no Cloud Run deploy step |
+| Supabase PostgreSQL | optional example, see [the appendix](#optional-supabase-postgresql-example): one table and one saved query. Not read by the API or the Streamlit app |
 
 ## Choose how to run it
 
@@ -46,13 +46,8 @@ call. This README only covers status and how to run the project.
 |---|---|---|
 | Read the results | the book, or the live API docs | nothing |
 | Run everything: ETL, tests, training, API, Streamlit, book | [Python](#run-with-python) | Python 3.11; about 45 minutes of model training |
-| Check that I get the same results as the checked-in files | [Reproduce the results](#reproduce-the-results) | Python 3.11; about 10 minutes if you restore the saved runs, over an hour if you retrain |
-| Serve just the API in a container | [Docker](#run-with-docker-api-only) | Docker, plus the trained models (train them, or restore `mlruns_snapshot/`) |
-
-**Docker alone is not enough on a fresh clone.** The trained models live in
-`mlruns/`, which is gitignored, and the image build copies that folder. Train
-once with the Python path, or restore the saved runs with
-`python -m src.mlruns_snapshot restore`, then build the image.
+| Check that I get the same results as the checked-in files | [Reproduce the results](#reproduce-the-results) | Python 3.11; about 10 minutes with the saved models, over an hour if you retrain |
+| Serve just the API in a container | [Docker](#run-with-docker-api-only) | Docker only: the models are in the repository |
 
 ```mermaid
 flowchart LR
@@ -60,7 +55,7 @@ flowchart LR
     R --> E["ETL<br/>src.build_curated_dataset"]
     E --> C["data/curated/<br/>+ DuckDB"]
     C --> T["Train: 5 commands<br/>(about 45 min)"]
-    T --> M["mlruns/<br/>MLflow file store"]
+    T --> M["models/<br/>joblib files"]
     M --> A["FastAPI :8000"]
     A --> S["Streamlit :8501"]
     M --> D["Docker image<br/>(API only)"]
@@ -72,7 +67,7 @@ flowchart LR
 
 - **Python 3.11** (what CI and the Dockerfile use). Older versions such as 3.8 cannot import `src/models`.
 - **git**, and network access for `pip install` (and for the optional data download).
-- **Windows:** use WSL2. The commands below are bash, and the Docker build's MLflow path rewriter only handles POSIX paths.
+- **Windows:** use WSL2. The commands below are bash.
 
 ### 1. Get the code and install
 
@@ -93,7 +88,7 @@ python -m pip install -r requirements.txt -c constraints.txt
 ```
 
 [constraints.txt](constraints.txt) pins the direct dependencies, plus numpy and scipy, to the environment
-that produced the results. The tests and monthly ETL workflows and the Docker image install with it too.
+that produced the results. The tests workflow and the Docker image install with it too.
 Other packages still float; the book's
 [Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
 section says how much that matters.
@@ -157,43 +152,31 @@ appendix and `python -m src.eda_export`, which writes
 ### 3. Run the tests
 
 ```bash
-python -m pytest tests                            # 226 tests, about 3 minutes
+python -m pytest tests                            # 207 tests, about 3 minutes
 ```
 
 ### 4. Train the models
 
-The API serves each model family from its latest finished MLflow run, so the
-runs must exist first. To skip training, restore the saved runs (see below).
-Otherwise run these five commands once, in this order:
+The API loads four saved models from `models/` (`sarima`, `elastic_net`, `trimmed_mean_sarima` and
+`trimmed_mean_elastic_net`, each a `.joblib` file). They are already in the repository, trained on the data up
+to the 2025Q4 forecast origin, so **you can skip this step**. To retrain, run these five commands once, in
+this order:
 
-| Command | Logs | Time* |
+| Command | Saves | Time* |
 |---|---|---|
-| `python -m src.models.evaluation` | headline SARIMA | 25 s |
-| `python -m src.models.elastic_net` | headline Elastic Net | 9 min |
-| `python -m src.models.ensemble` | headline Ensemble | 9 min |
-| `python -m src.models.model_comparison --target trimmed_mean` | trimmed-mean SARIMA and Elastic Net | 17 min |
-| `python -m src.models.ensemble --target trimmed_mean` | trimmed-mean Ensemble | 10 min |
+| `python -m src.models.evaluation` | `models/sarima.joblib` | 25 s |
+| `python -m src.models.elastic_net` | `models/elastic_net.joblib` | 9 min |
+| `python -m src.models.ensemble` | nothing (the Ensemble blends the two models above) | 9 min |
+| `python -m src.models.model_comparison --target trimmed_mean` | `models/trimmed_mean_sarima.joblib` and `models/trimmed_mean_elastic_net.joblib` | 17 min |
+| `python -m src.models.ensemble --target trimmed_mean` | nothing | 10 min |
 
 \*Measured on one WSL2 machine; expect variation.
 
-Runs go to `mlruns/` (MLflow experiment "CPI Forecast"). Training also rewrites
-the CSVs in `reports/`. With the pinned versions they match the committed files;
+Training also rewrites the CSVs in `reports/`. With the pinned versions they match the committed files;
 see [Reproduce the results](#reproduce-the-results) for how to check. Only the bytes
-of the Parquet file from step 2 can differ, depending on your `pyarrow` version.
-
-**Skip training: restore the saved runs.** `mlruns_snapshot/` (about 5.5 MB) holds the
-latest finished run of each served model family, trained on the data up to the
-2025Q4 forecast origin. Restore it into an empty `mlruns/`:
-
-```bash
-python -m src.mlruns_snapshot restore                 # add --merge if mlruns/ already has runs
-```
-
-The API then serves the same forecasts as the checked-in `reports/tableau/forecast.csv`.
-The saved models were trained with the versions in `constraints.txt`, so install with it.
-After retraining, your new runs are the latest, so the API uses them instead. To refresh
-the saved copy after retraining, run `python -m src.mlruns_snapshot build`. It replaces
-this machine's paths with placeholders and drops the MLflow user fields.
+of the Parquet file from step 2 can differ, depending on your `pyarrow` version. Install with
+`constraints.txt` before retraining or loading the models, because a model saved with one version of
+scikit-learn or statsmodels may not load with another.
 
 ### 5. Start the API
 
@@ -211,7 +194,7 @@ curl -X POST http://localhost:8000/forecast/all \
 
 `/forecast/all` returns `models` (one entry each for `sarima`, `elastic_net` and
 `ensemble`, with `forecast`, `interval_lower`, `interval_upper`, `quarters` and
-`forecast_origin`) and `unavailable` (families with no trained run). A scenario
+`forecast_origin`) and `unavailable` (families whose model file is missing). A scenario
 request shocks one SVAR variable to a level:
 
 ```bash
@@ -280,14 +263,11 @@ Everything has a working default; set these only to change it.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MLFLOW_TRACKING_URI` | `mlruns` | where runs are logged and read |
-| `MLFLOW_EXPERIMENT_NAME` | `CPI Forecast` | experiment the API reads from |
 | `API_BASE_URL` | `http://localhost:8000` | API the Streamlit app calls |
 | `CPI_DEMO_HOSTED` | unset | set to `1` on a public deployment: locks the API address to `API_BASE_URL` and swaps the local "start uvicorn" messages for visitor-friendly ones |
 | `PORT` | `8000` | port the Docker image listens on |
 
-`.env.example` also lists the Supabase setting. A normal run does not
-use them.
+`.env.example` also lists the optional Supabase setting (`DATABASE_URL`). A normal run does not use it.
 
 ## Reproduce the results
 
@@ -313,29 +293,25 @@ different numbers.
 
 ```bash
 python -m src.build_curated_dataset      # about 1 second
-python -m src.platform_status            # about 1 second
-python -m pytest tests                   # 226 tests, about 3 minutes
+python -m pytest tests                   # 207 tests, about 3 minutes
 git status --short data reports          # expect nothing, or only the .parquet file (see below)
 ```
 
 Pytest prints your own pass count and runtime on its final line. For this checkout,
-expect `226 passed`; a different result means your checkout or environment needs checking.
+expect `207 passed`; a different result means your checkout or environment needs checking.
 
 The curated CSV and `reports/data_quality_report.csv` come out byte-identical. Only the bytes of the Parquet
 file can differ, depending on your `pyarrow` version; its contents match.
 
-### 3. Get the model runs
+### 3. Get the models
 
 Pick one.
 
-**A. Restore the saved runs (seconds).** These are the runs behind the checked-in forecasts.
+**A. Use the saved models (nothing to do).** `models/` is in the repository. These are the models behind the
+checked-in forecasts.
 
-```bash
-python -m src.mlruns_snapshot restore
-```
-
-**B. Retrain (about 45 minutes).** Run the five commands in [step 4](#4-train-the-models) above. New runs get
-new IDs and timestamps, so the `mlruns/` folder is never file-identical between machines. The results are.
+**B. Retrain (about 45 minutes).** Run the five commands in [step 4](#4-train-the-models) above. They overwrite
+`models/`. The files can differ in bytes between machines; compare the forecasts, not the files.
 
 ### 4. Check that you got the same results
 
@@ -393,48 +369,58 @@ API locally with Python, skip Docker. Running the container locally does not dep
 anything to Cloud Run.
 
 This image serves FastAPI only. It does not run the ETL, training or tests, and does
-not include Streamlit, notebooks or the book. First [train or restore the saved runs](#4-train-the-models)
-on the host so `mlruns/` exists; without it the build fails at `COPY mlruns`.
-The image installs with `constraints.txt`, so that file must be in the folder.
+not include Streamlit, notebooks or the book. The models are copied in from `models/`,
+which is in the repository, so a fresh clone builds as it is.
 
 ```bash
-docker build -t cpi-forecast-api:latest .
-docker run --rm -d --name cpi-forecast-api -p 127.0.0.1:8000:8000 cpi-forecast-api:latest
+docker build -t cpi-forecast-api .
+docker run --rm -d --name cpi-forecast-api -p 127.0.0.1:8000:8000 cpi-forecast-api
 curl http://127.0.0.1:8000/health
 curl -X POST http://127.0.0.1:8000/forecast/all \
   -H "Content-Type: application/json" -d '{"horizon": 4}'
 docker stop cpi-forecast-api
 ```
 
-The build rewrites the absolute host paths that MLflow stored in `mlruns/` so
-they resolve to `/app/mlruns` inside the container.
-
-`.dockerignore` keeps most of `reports/` out of the image and allows back only the
-CSVs the API reads at request time. If an endpoint starts reading a new report or
-data file, add it there (or copy its folder in the `Dockerfile`), or the deployed
-image will return 503 for that endpoint while everything works locally.
+The `Dockerfile` copies `reports/` whole, so a new report the API reads needs no extra step.
 
 ### Deploy to Google Cloud Run
 
-Push the pre-built image and deploy it directly. Do not use a git-triggered
-build: `mlruns/` is gitignored, so a build from git would have no models. (`mlruns_snapshot/` is
-committed but kept out of the image; restore it into `mlruns/` before you build.)
+The live service is `cpi-forecast-juan` in `asia-southeast1`. The steps below push the exact image
+you tested to Artifact Registry and deploy it. Commit first, so the image tag names the code in it.
 
 ```bash
-gcloud auth configure-docker <region>-docker.pkg.dev
-docker tag cpi-forecast-api:latest <region>-docker.pkg.dev/<project-id>/<repo>/cpi-forecast-api:latest
-docker push <region>-docker.pkg.dev/<project-id>/<repo>/cpi-forecast-api:latest
+PROJECT=<project-id>; REGION=asia-southeast1; SERVICE=cpi-forecast-juan
+REPO=$REGION-docker.pkg.dev/$PROJECT/cpi-forecast
+TAG=$(git rev-parse --short HEAD)
 
-gcloud run deploy cpi-forecast-api \
-  --image <region>-docker.pkg.dev/<project-id>/<repo>/cpi-forecast-api:latest \
-  --memory 2Gi \
-  --allow-unauthenticated
+docker build -t $REPO/cpi-forecast-api:$TAG .          # then run and check it locally, as above
+gcloud auth login
+gcloud config set project $PROJECT
+gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin $REGION-docker.pkg.dev
+docker push $REPO/cpi-forecast-api:$TAG
 ```
 
-Cloud Run sets `PORT` and the image listens on it. Redeploying after model or
-API changes is manual. The live service was built before the Dockerfile started using
-`constraints.txt`; a rebuild from this repo installs the pinned versions, so compare the
-new revision's outputs on a private tag before you switch traffic.
+The first deploy creates the service:
+
+```bash
+gcloud run deploy $SERVICE --image $REPO/cpi-forecast-api:$TAG --region $REGION \
+  --cpu 1 --memory 2Gi --concurrency 4 --timeout 300 \
+  --min-instances 0 --max-instances 3 --allow-unauthenticated
+```
+
+Later deploys can hold the new version back, test it, then switch:
+
+```bash
+gcloud run deploy $SERVICE --image $REPO/cpi-forecast-api:$TAG --region $REGION \
+  --no-traffic --tag candidate                                   # test the candidate URL it prints
+gcloud run services update-traffic $SERVICE --region $REGION --to-latest
+gcloud run services update-traffic $SERVICE --region $REGION --to-revisions <older-revision>=100   # roll back
+```
+
+`--max-instances 3` caps how many copies Cloud Run starts, which limits the bill if someone hammers
+the public endpoints. `--concurrency 4` stops several 40-second simulations sharing one CPU. Cloud Run
+sets `PORT` and the image listens on it. The image installs with `constraints.txt`, so check a new
+revision's forecasts against the old one before you switch traffic.
 
 ## Host the Streamlit demo
 
@@ -451,7 +437,7 @@ The demo can run on Streamlit Community Cloud from this GitHub repo, at a public
 3. Under **Advanced settings > Secrets**, add:
 
    ```toml
-   API_BASE_URL = "https://cpi-forecast-api-887232555982.asia-southeast1.run.app"
+   API_BASE_URL = "https://cpi-forecast-juan-vqvgjnkdra-as.a.run.app"
    CPI_DEMO_HOSTED = "1"
    ```
 
@@ -465,14 +451,13 @@ files and needs no API.
 
 ## GitHub Actions
 
-Three workflows in `.github/workflows/` run on GitHub. Each one starts a fresh Ubuntu machine,
+Two workflows in `.github/workflows/` run on GitHub. Each one starts a fresh Ubuntu machine,
 downloads the code and installs Python 3.11. None of them deploys the API to Cloud Run, which
 stays a manual step (see [Deploy to Google Cloud Run](#deploy-to-google-cloud-run)).
 
 | Workflow | When it runs | Purpose |
 |---|---|---|
 | `tests.yml` | every push and pull request | checks that the code still works |
-| `scheduled_etl.yml` (`scheduled-etl`) | 18:00 UTC on the 1st of each month, and on demand | checks that the pipeline still works on freshly downloaded data |
 | `deploy_book.yml` (`deploy-book`) | pushes to `main` that change the book, and on demand | publishes the Jupyter Book to GitHub Pages |
 
 ### tests.yml
@@ -483,25 +468,6 @@ stays a manual step (see [Deploy to Google Cloud Run](#deploy-to-google-cloud-ru
 3. Run the whole test suite with `pytest`.
 
 The result is a green tick or red cross next to the commit. It changes nothing.
-
-### scheduled_etl.yml
-
-1. Install the packages, as above.
-2. Download the latest source data from ABS, RBA, APRA and Yahoo Finance.
-3. Rebuild the curated dataset from it. If the repository has a `DATABASE_URL` secret, this step
-   also logs the run and its data-quality checks to Supabase. Use the Session pooler connection
-   string, because GitHub's runners are IPv4-only. Without the secret the logging is skipped, and
-   if the database cannot be reached the failure is recorded and the job carries on.
-4. Run the tests on the rebuilt data, except the byte-for-byte check of
-   `reports/svar_unemployment_forecast.csv`. Revised ABS or RBA figures can legitimately change
-   that report.
-5. Run that one check on its own as an informational step. It can fail without failing the job,
-   which tells you the source data has moved. `tests.yml` still enforces it on the committed data.
-
-Everything happens on a temporary copy of the repository that is thrown away when the job ends,
-so it never changes the committed data, reports, models or the deployed app. Green means the
-download, rebuild and tests all worked on today's data. Red means something broke, for example a
-source changing its format. The only lasting effect is the Supabase rows.
 
 ### deploy_book.yml
 
@@ -515,18 +481,17 @@ Two jobs run one after the other:
 
 The live book updates a minute or two after a book change is pushed.
 
-To start `scheduled-etl` or `deploy-book` by hand, open the **Actions** tab, choose the workflow
+To start `deploy-book` by hand, open the **Actions** tab, choose the workflow
 and click **Run workflow**.
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
-| `/forecast/all` returns HTTP 200 with an empty `models` list and `unavailable` entries reading "No finished MLflow run found for ..." | The models are not trained or restored. Run [step 4](#4-train-the-models). |
-| `/forecast/trimmed-mean/all` lists only `ensemble` as unavailable | The last command in step 4 was skipped. |
-| `docker build` fails at `COPY mlruns` | `mlruns/` does not exist. Train first, or restore the saved runs. |
+| `/forecast/all` returns HTTP 200 with `unavailable` entries reading "Saved model ... not found" | A file in `models/` is missing. Run `git checkout models` or retrain with [step 4](#4-train-the-models). |
+| `/forecast/all` fails to load a model with an unpickling or version error | The packages differ from the ones that saved the model. Install with `-c constraints.txt`. |
+| `/forecast/all` returns HTTP 503 about "interval calibration factors" | `reports/model_interval_calibration_factors*.csv` is missing or malformed. Restore it from git. |
 | `docker build` fails at `COPY constraints.txt` | The file is missing from the folder. It lives in the repository root. |
-| `python -m src.mlruns_snapshot restore` says `already has content` | It will not overwrite existing runs. Add `--merge` to add the saved runs next to yours. |
 | `git diff reports/` shows a change after a re-run | `tableau/dataset_overview.csv` (a date column) is expected to differ. For anything else see where a rerun can drift in the book's [Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on) section. |
 | Import errors, or syntax errors from `src/models` | Wrong Python version. Use 3.11. |
 | Streamlit shows an API-unavailable banner in a tab | Start the API, or fix the "API base URL" box. |
@@ -537,18 +502,18 @@ and click **Run workflow**.
 ```text
 .
 +-- api/                 FastAPI service (api/main.py)
-+-- app/                 Streamlit demo (streamlit_app.py); pages_archive/ holds the retired multi-page version
++-- app/                 Streamlit demo (streamlit_app.py)
 +-- book/                Jupyter Book source (book/australian_cpi_forecasting)
 +-- data/                processed series, curated dataset, metadata; analytics/ holds the DuckDB file built by the ETL
 +-- dataset/             raw downloads from ABS, RBA, APRA and Yahoo Finance
-+-- mlruns_snapshot/     saved copy of the served model runs (restore: python -m src.mlruns_snapshot restore)
++-- models/              the four saved models the API serves (joblib files)
 +-- notebooks/           the original assignment notebook and the EDA source
 +-- reports/             model comparison and interval CSVs, plus the decision notes below
-+-- scripts/             rewrite_mlruns_paths.py, used by the Docker build
-+-- sql/                 three tested DuckDB queries and the Postgres metadata schema
-+-- src/                 ETL, validation and features; src/models/ holds every model; mlruns_snapshot.py builds and restores the saved runs
-+-- tests/               pytest suite, including checks on the saved reports, SQL queries and model runs
-+-- .github/workflows/   CI, scheduled ETL and book deployment
++-- scripts/             helpers for the reproducibility audit
++-- sql/                 three tested DuckDB queries (queries/) and the optional Postgres example (postgres/)
++-- src/                 ETL, validation and features; src/models/ holds every model
++-- tests/               pytest suite, including checks on the saved reports, SQL queries and models
++-- .github/workflows/   tests and book deployment
 +-- data_retrieval.py, Dockerfile, constraints.txt, requirements.txt, requirements-data.txt, requirements-notebooks.txt
 ```
 
@@ -582,7 +547,7 @@ every accuracy check here, including the Supabase snapshot, uses it too.
 
 A large part of this project was written with AI. It sits outside my own field (macroeconomics,
 time-series econometrics and credit risk), so I used Codex and Claude Code together, as a review
-loop over shared project notes in `.ai/`, to help me learn it and to write the code, formulas and
+loop over shared project notes (an `.ai/` folder I keep locally; it is not in this repository), to help me learn it and to write the code, formulas and
 explanations. I reviewed the results to check how valid they are, but I can't guarantee they are
 comparable to expert or published work, because of the time I had.
 
@@ -601,6 +566,31 @@ project's code computes from the data, so they aren't AI-written text and aren't
 
 The full explanation is in the
 [book's introduction](https://juanvu1810.github.io/Australian-CPI-Forecast/intro.html#ai-acknowledgement).
+
+## Optional: Supabase PostgreSQL example
+
+A small example of saving forecasts in a hosted PostgreSQL database and querying them with SQL. It
+is not part of the forecasting story: no model, the API, Streamlit or the ETL reads this table.
+
+- `sql/postgres/forecast_snapshots.sql` creates one table, `forecast_snapshots` (target, model, forecast
+  origin, target quarter, point forecast, actual). Its key stops a rerun from saving a row twice.
+- `sql/postgres/forecast_errors.sql` compares each saved forecast with the observed CPI.
+- `python -m src.models.forecast_snapshot` saves the one-quarter-ahead forecast of each model for both
+  targets and prints the comparison. Set `DATABASE_URL` first (use the Session pooler connection string
+  from Supabase). Without it the command saves nothing and says so.
+
+The quarter it saves (2026Q1) was already published when it was run, so this is a retrospective wiring
+check, not a live forecast record. Result of the query on those six rows (the actual is the repository's
+series, see the note on headline CPI above):
+
+| target | model | quarter | forecast | actual | error |
+|---|---|---|---|---|---|
+| headline | elastic_net | 2026Q1 | 2.743 | 4.0 | 1.257 |
+| headline | ensemble | 2026Q1 | 3.154 | 4.0 | 0.846 |
+| headline | sarima | 2026Q1 | 3.384 | 4.0 | 0.616 |
+| trimmed_mean | elastic_net | 2026Q1 | 2.860 | 3.5 | 0.640 |
+| trimmed_mean | ensemble | 2026Q1 | 3.298 | 3.5 | 0.202 |
+| trimmed_mean | sarima | 2026Q1 | 3.508 | 3.5 | -0.008 |
 
 ## Further reading
 

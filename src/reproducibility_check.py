@@ -17,7 +17,8 @@ thread. Helpers: ``scripts/repro_retrain_chain.sh`` (retrain and regenerate) and
 (classifier predictions under a given kernel).
 
     book_rebuild    jupyter-book build twice into empty folders; compare-files on the HTML pages
-    restore         restore mlruns_snapshot/ into an empty copy, serve it, run tableau_export; compare-files
+    restore         (measured 2026-09-22, when the models were saved as MLflow runs, restored from mlruns_snapshot/)
+                    serve the saved models from an empty copy, run tableau_export; compare-files
     retrain_new     a fresh venv with unpinned requirements, then the README's training commands and report
                     scripts; compare-files on every file the run rewrote
     one_thread      serve the restored runs with OPENBLAS_NUM_THREADS=1; compare-api against the default
@@ -61,7 +62,8 @@ SUMMARY_COLUMNS = [
 ]
 DETAIL_COLUMNS = ["scenario_id", "file", "byte_identical", "cells_compared", "cells_changed", "max_abs_diff"]
 
-# Keys that are expected to differ between any two runs (new run IDs) and say nothing about the results.
+# Keys that are expected to differ between any two runs and say nothing about the results. The API no longer
+# returns run_id; the saved responses from the MLflow days still contain it.
 IGNORED_KEYS = {"run_id"}
 
 

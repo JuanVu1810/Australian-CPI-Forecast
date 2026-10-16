@@ -402,8 +402,6 @@ def test_run_ensemble_comparison_smoke_on_tiny_synthetic_frame(tmp_path, monkeyp
     curated_path = tmp_path / "curated.csv"
     output_path = tmp_path / "reports/model_comparison_ensemble.csv"
     _write_curated_csv(curated_path, frame)
-    logged = {}
-
     monkeypatch.setattr(
         ensemble,
         "forecast_sarima",
@@ -423,14 +421,6 @@ def test_run_ensemble_comparison_smoke_on_tiny_synthetic_frame(tmp_path, monkeyp
         ),
     )
 
-    def fake_log_model_run(**kwargs):
-        logged.update(kwargs)
-        return "run-id"
-
-    from src.models import tracking
-
-    monkeypatch.setattr(tracking, "log_model_run", fake_log_model_run)
-
     result = ensemble.run_ensemble_comparison(
         curated_path=curated_path,
         rba_path=tmp_path / "missing_rba.csv",
@@ -445,14 +435,9 @@ def test_run_ensemble_comparison_smoke_on_tiny_synthetic_frame(tmp_path, monkeyp
     assert not result.empty
     assert not result.loc[result["model"].eq("ensemble")].empty
     assert output_path.exists()
-    assert logged["run_name"] == "ensemble_comparison"
-    assert logged["model_name"] == "ensemble"
-    assert logged["tags"]["model_family"] == "ensemble"
-    assert logged["tags"]["component_families"] == "sarima;elastic_net"
-    assert callable(logged["model_logger"])
 
 
-def test_run_trimmed_mean_ensemble_comparison_uses_trimmed_logging_config(monkeypatch):
+def test_run_trimmed_mean_ensemble_comparison_uses_trimmed_config(monkeypatch):
     calls = {}
 
     def fake_run_ensemble_comparison(**kwargs):
@@ -468,8 +453,6 @@ def test_run_trimmed_mean_ensemble_comparison_uses_trimmed_logging_config(monkey
     assert calls["elastic_net_feature_columns"][0] == "trimmed_mean_cpi_yoy_lag1"
     assert calls["include_rba"] is False
     assert calls["weights"] is None
-    assert calls["run_name"] == "trimmed_mean_ensemble_comparison"
-    assert calls["model_family_tag"] == "trimmed_mean_ensemble"
 
 
 def test_main_runs_the_headline_ensemble_by_default(monkeypatch):
