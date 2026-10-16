@@ -11,6 +11,5 @@ tests
 book
 docs
 app
-mlruns
 data/analytics
 data/processed
