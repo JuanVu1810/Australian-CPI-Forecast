@@ -16,8 +16,6 @@ Parquet output needs pyarrow, which requirements.txt installs.
 from __future__ import annotations
 
 import argparse
-import logging
-from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
@@ -46,117 +44,23 @@ from src.validation import (
 )
 
 
-LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class SeriesSpec:
-    name: str
-    path: Path
-    value_col: str
-    output_col: str
-    agg: str
-
-
+# One row per source series: (output column name, source file, value column in that file,
+# how to turn it into one value per quarter).
 SERIES_SPECS = [
-    SeriesSpec(
-        name="cpi_qoq",
-        path=Path("dataset/abs/cpi_qoq_1995_2026.csv"),
-        value_col="cpi_qoq",
-        output_col="cpi_qoq",
-        agg="last",
-    ),
-    SeriesSpec(
-        name="cpi_yoy",
-        path=Path("dataset/abs/cpi_yoy_1995_2026.csv"),
-        value_col="cpi_yoy",
-        output_col="cpi_yoy",
-        agg="last",
-    ),
-    SeriesSpec(
-        name="trimmed_mean_cpi_qoq",
-        path=Path("dataset/abs/trimmed_mean_cpi_qoq_1995_2026.csv"),
-        value_col="trimmed_mean_cpi_qoq",
-        output_col="trimmed_mean_cpi_qoq",
-        agg="last",
-    ),
-    SeriesSpec(
-        name="trimmed_mean_cpi_yoy",
-        path=Path("dataset/abs/trimmed_mean_cpi_yoy_1995_2026.csv"),
-        value_col="trimmed_mean_cpi_yoy",
-        output_col="trimmed_mean_cpi_yoy",
-        agg="last",
-    ),
-    SeriesSpec(
-        name="unemployment_rate",
-        path=Path("dataset/abs/unemployment_rate_1995_2026.csv"),
-        value_col="unemployment_rate",
-        output_col="unemployment_rate",
-        agg="mean",
-    ),
-    SeriesSpec(
-        name="cash_rate",
-        path=Path("dataset/rba/cash_rate_1995_2026.csv"),
-        value_col="cash_rate",
-        output_col="cash_rate",
-        agg="mean",
-    ),
-    SeriesSpec(
-        name="wage_price_index",
-        path=Path("dataset/abs/wage_price_index_1995_2026.csv"),
-        value_col="wage_price_index",
-        output_col="wage_price_index",
-        agg="last",
-    ),
-    SeriesSpec(
-        name="producer_price_index",
-        path=Path("dataset/abs/producer_price_index_1995_2026.csv"),
-        value_col="producer_price_index",
-        output_col="producer_price_index",
-        agg="last",
-    ),
-    SeriesSpec(
-        name="commodity_price_index",
-        path=Path("dataset/rba/commodity_prices_1995_2026.csv"),
-        value_col="GRCPAIAD",
-        output_col="commodity_price_index",
-        agg="mean",
-    ),
-    SeriesSpec(
-        name="wti_price",
-        path=Path("dataset/market/wti_crude_oil_1995_2025.csv"),
-        value_col="Close",
-        output_col="wti_price",
-        agg="mean",
-    ),
-    SeriesSpec(
-        name="brent_price",
-        path=Path("dataset/market/brent_crude_oil_1995_2025.csv"),
-        value_col="Close",
-        output_col="brent_price",
-        agg="mean",
-    ),
-    SeriesSpec(
-        name="aud_usd",
-        path=Path("dataset/rba/aud_usd_exchange_rate_1995_2026.csv"),
-        value_col="FXRUSD",
-        output_col="aud_usd",
-        agg="mean",
-    ),
-    SeriesSpec(
-        name="household_spending",
-        path=Path("dataset/abs/household_spending_1995_2026.csv"),
-        value_col="household_spending",
-        output_col="household_spending",
-        agg="mean",
-    ),
-    SeriesSpec(
-        name="inflation_expectations_business",
-        path=Path("dataset/rba/inflation_expectations_1995_2026.csv"),
-        value_col="GBUSEXP",
-        output_col="inflation_expectations_business",
-        agg="mean",
-    ),
+    ("cpi_qoq", "dataset/abs/cpi_qoq_1995_2026.csv", "cpi_qoq", "last"),
+    ("cpi_yoy", "dataset/abs/cpi_yoy_1995_2026.csv", "cpi_yoy", "last"),
+    ("trimmed_mean_cpi_qoq", "dataset/abs/trimmed_mean_cpi_qoq_1995_2026.csv", "trimmed_mean_cpi_qoq", "last"),
+    ("trimmed_mean_cpi_yoy", "dataset/abs/trimmed_mean_cpi_yoy_1995_2026.csv", "trimmed_mean_cpi_yoy", "last"),
+    ("unemployment_rate", "dataset/abs/unemployment_rate_1995_2026.csv", "unemployment_rate", "mean"),
+    ("cash_rate", "dataset/rba/cash_rate_1995_2026.csv", "cash_rate", "mean"),
+    ("wage_price_index", "dataset/abs/wage_price_index_1995_2026.csv", "wage_price_index", "last"),
+    ("producer_price_index", "dataset/abs/producer_price_index_1995_2026.csv", "producer_price_index", "last"),
+    ("commodity_price_index", "dataset/rba/commodity_prices_1995_2026.csv", "GRCPAIAD", "mean"),
+    ("wti_price", "dataset/market/wti_crude_oil_1995_2025.csv", "Close", "mean"),
+    ("brent_price", "dataset/market/brent_crude_oil_1995_2025.csv", "Close", "mean"),
+    ("aud_usd", "dataset/rba/aud_usd_exchange_rate_1995_2026.csv", "FXRUSD", "mean"),
+    ("household_spending", "dataset/abs/household_spending_1995_2026.csv", "household_spending", "mean"),
+    ("inflation_expectations_business", "dataset/rba/inflation_expectations_1995_2026.csv", "GBUSEXP", "mean"),
 ]
 
 
@@ -176,48 +80,36 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
-
-
 def build_quarterly_frames(
-    specs: list[SeriesSpec],
+    specs: list[tuple[str, str, str, str]],
     processed_dir: Path,
 ) -> tuple[list[pd.DataFrame], list[QualityRecord]]:
-    frames: list[pd.DataFrame] = []
-    quality_records: list[QualityRecord] = []
+    """Read each source file, check it, convert it to quarters and save it; return the frames and checks."""
+    frames = []
+    quality_records = []
 
-    for spec in specs:
-        source_path = latest_dataset_path(spec.path)
-        LOGGER.info("Processing %s from %s", spec.name, source_path)
+    for name, path, value_col, agg in specs:
+        source_path = latest_dataset_path(Path(path))
+        print(f"Processing {name} from {source_path}")
         source = read_csv(source_path)
         date_col = find_date_column(source)
         quality_records.append(
             validate_time_series(
                 source,
-                dataset=f"raw:{spec.name}",
+                dataset=f"raw:{name}",
                 date_col=date_col,
-                value_cols=[spec.value_col],
+                value_cols=[value_col],
             )
         )
 
-        quarterly = to_quarterly(
-            source,
-            value_col=spec.value_col,
-            output_col=spec.output_col,
-            agg=spec.agg,  # type: ignore[arg-type]
-            date_col=date_col,
-        )
-        save_processed_frame(quarterly, processed_dir, spec.name)
+        quarterly = to_quarterly(source, value_col=value_col, output_col=name, agg=agg, date_col=date_col)
+        save_processed_frame(quarterly, processed_dir, name)
         quality_records.append(
             validate_time_series(
                 quarterly,
-                dataset=f"processed:{spec.name}",
+                dataset=f"processed:{name}",
                 date_col="quarter",
-                value_cols=[spec.output_col],
+                value_cols=[name],
             )
         )
         frames.append(quarterly)
@@ -229,21 +121,13 @@ def save_curated_outputs(df: pd.DataFrame, curated_dir: Path) -> None:
     curated_dir.mkdir(parents=True, exist_ok=True)
     csv_path = curated_dir / "quarterly_macro_features.csv"
     df.to_csv(csv_path, index=False)
-    LOGGER.info("Saved curated CSV: %s", csv_path)
+    print(f"Saved curated CSV: {csv_path}")
 
     # SVAR and the RBA classifier read the Parquet copy, so a missing engine must stop the build
     # instead of leaving a stale file behind.
     parquet_path = curated_dir / "quarterly_macro_features.parquet"
     df.to_parquet(parquet_path, index=False)
-    LOGGER.info("Saved curated Parquet: %s", parquet_path)
-
-
-def save_quality_report(records: list[QualityRecord], reports_dir: Path) -> None:
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    report = pd.DataFrame([record.as_dict() for record in records])
-    path = reports_dir / "data_quality_report.csv"
-    report.to_csv(path, index=False)
-    LOGGER.info("Saved data quality report: %s", path)
+    print(f"Saved curated Parquet: {parquet_path}")
 
 
 def records_to_frame(records: list[QualityRecord]) -> pd.DataFrame:
@@ -251,14 +135,9 @@ def records_to_frame(records: list[QualityRecord]) -> pd.DataFrame:
 
 
 def main() -> int:
-    configure_logging()
     args = parse_args()
 
-    processed_dir = Path(args.processed_dir)
-    curated_dir = Path(args.curated_dir)
-    reports_dir = Path(args.reports_dir)
-
-    frames, quality_records = build_quarterly_frames(SERIES_SPECS, processed_dir)
+    frames, quality_records = build_quarterly_frames(SERIES_SPECS, Path(args.processed_dir))
     curated = merge_quarterly_frames(frames)
     curated = add_growth_rates(curated)
     curated = add_lag_features(curated)
@@ -279,22 +158,22 @@ def main() -> int:
         )
 
     # Save the report first, then refuse to overwrite the curated data if any check failed.
-    save_quality_report(quality_records, reports_dir)
+    reports_dir = Path(args.reports_dir)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report_path = reports_dir / "data_quality_report.csv"
+    records_to_frame(quality_records).to_csv(report_path, index=False)
+    print(f"Saved data quality report: {report_path}")
+
     failed = [record.dataset for record in quality_records if record.status == "FAIL"]
     if failed:
-        LOGGER.error(
-            "Data quality checks failed, curated data not written: %s. "
-            "data/processed was already rewritten; run `git checkout data/processed` to undo it.",
-            ", ".join(failed),
+        print(
+            f"Data quality checks failed, curated data not written: {', '.join(failed)}. "
+            "data/processed was already rewritten; run `git checkout data/processed` to undo it."
         )
         return 1
-    save_curated_outputs(curated, curated_dir)
+    save_curated_outputs(curated, Path(args.curated_dir))
 
-    LOGGER.info(
-        "Curated dataset complete: %s rows, %s columns",
-        len(curated),
-        len(curated.columns),
-    )
+    print(f"Curated dataset complete: {len(curated)} rows, {len(curated.columns)} columns")
     return 0
 
 

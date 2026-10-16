@@ -5,10 +5,9 @@ Each model is a joblib file in ``models/`` written by its training script.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from functools import lru_cache, partial
-from inspect import signature
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
@@ -75,9 +74,8 @@ RBA_ACTION_CAVEAT = (
 UNCALIBRATED_SCENARIO_NOTE = (
     "The interval is uncalibrated: it uses percentiles other than the validated 10th and 90th."
 )
-CREDIT_STRESS_DEFAULT_HORIZON = signature(
-    svar.forecast_cumulative_unemployment_change_quantiles
-).parameters["horizon"].default
+# Four quarters ahead, the same default as svar.forecast_cumulative_unemployment_change_quantiles.
+CREDIT_STRESS_DEFAULT_HORIZON = 4
 
 app = FastAPI(
     title="Australian CPI Forecast API",
@@ -203,6 +201,8 @@ class ScenarioForecastResponse(BaseModel):
 
 @dataclass(frozen=True)
 class FamilyForecastData:
+    """One model family's point forecast and simulated draws, before intervals are added."""
+
     forecast: list[float]
     draws: np.ndarray
     quarters: list[str]
@@ -212,6 +212,7 @@ class FamilyForecastData:
 
 
 def load_curated_data() -> pd.DataFrame:
+    """Read the curated CSV sorted by quarter; 503 if it is missing or lacks the target."""
     if not CURATED_DATA_PATH.exists():
         raise HTTPException(
             status_code=503,
@@ -227,11 +228,13 @@ def load_curated_data() -> pd.DataFrame:
 
 
 def next_quarters(last_quarter: str, horizon: int) -> list[str]:
+    """The ``horizon`` quarter labels after ``last_quarter``."""
     start = pd.Period(last_quarter, freq="Q") + 1
     return [str(start + offset) for offset in range(horizon)]
 
 
 def _optional_float(value: object) -> float | None:
+    """NaN becomes None (JSON null), anything else a float."""
     if pd.isna(value):
         return None
     return float(value)
@@ -241,6 +244,7 @@ def _current_elastic_net_frame(
     target_column: str = TARGET_COLUMN,
     feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
 ) -> pd.DataFrame:
+    """Target plus Elastic Net features from the full curated data, indexed by quarter."""
     series = load_target_series(CURATED_DATA_PATH, target_column=target_column)
     exog = load_elastic_net_feature_frame(
         CURATED_DATA_PATH,
@@ -263,6 +267,7 @@ def _load_model(path: Path):
 
 
 def _sarima_forecast_metadata(values) -> tuple[str, list[str]]:
+    """Forecast origin and quarter labels read from the SARIMA forecast's date index."""
     index = getattr(values, "index", None)
     if index is None or len(index) == 0:
         raise HTTPException(
@@ -286,6 +291,7 @@ def _interval_from_paths(
     lower: float,
     upper: float,
 ) -> tuple[list[float], list[float]]:
+    """Lower and upper percentiles of the simulated draws at each horizon."""
     lower_values, upper_values = np.percentile(
         np.asarray(draws, dtype=float),
         [lower * 100, upper * 100],
@@ -302,6 +308,7 @@ def _public_message(exc: Exception) -> str:
 
 
 def _parse_bool(value: object) -> bool:
+    """Read a CSV true/false cell that may come back as text."""
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes"}
     return bool(value)
@@ -355,7 +362,7 @@ def _load_interval_coverage_report(
         ]
     )
 
-    coverage: dict[tuple[str, int], dict[str, object]] = {}
+    coverage = {}
     for _, row in report.iterrows():
         key = (str(row["model"]), int(row["horizon"]))
         coverage[key] = {
@@ -370,6 +377,7 @@ def _load_interval_coverage_report(
 
 
 def _validated_interval_bounds(lower: float, upper: float) -> bool:
+    """True only for the 10th/90th percentile interval that the calibration and coverage reports cover."""
     return lower == VALIDATED_INTERVAL_LOWER and upper == VALIDATED_INTERVAL_UPPER
 
 
@@ -380,6 +388,7 @@ def _coverage_fields_for_family(
     upper: float,
     interval_calibration_validation_report_path: Path | None = None,
 ) -> tuple[list[float | None], list[int | None], list[bool | None]]:
+    """Held-out coverage, sample size and miscalibration flag per horizon; None where there is no matching report row."""
     if not _validated_interval_bounds(lower, upper):
         return (
             [None] * horizon_served,
@@ -389,23 +398,19 @@ def _coverage_fields_for_family(
 
     coverage = _load_interval_coverage_report(interval_calibration_validation_report_path)
     requested_nominal = upper - lower
-    empirical: list[float | None] = []
-    sample_sizes: list[int | None] = []
-    significant: list[bool | None] = []
+    empirical = []
+    sample_sizes = []
+    significant = []
     for horizon in range(1, horizon_served + 1):
         row = coverage.get((family, horizon))
-        if row is not None and not np.isclose(
-            float(row["nominal_coverage"]),
-            requested_nominal,
-        ):
-            row = None
-        empirical.append(
-            None if row is None else float(row["empirical_coverage"])
-        )
-        sample_sizes.append(None if row is None else int(row["coverage_n"]))
-        significant.append(
-            None if row is None else bool(row["significantly_miscalibrated"])
-        )
+        if row is None or not np.isclose(float(row["nominal_coverage"]), requested_nominal):
+            empirical.append(None)
+            sample_sizes.append(None)
+            significant.append(None)
+        else:
+            empirical.append(float(row["empirical_coverage"]))
+            sample_sizes.append(int(row["coverage_n"]))
+            significant.append(bool(row["significantly_miscalibrated"]))
     return empirical, sample_sizes, significant
 
 
@@ -435,7 +440,7 @@ def _load_interval_calibration_factors(
         factors["target_coverage"] = pd.to_numeric(factors["target_coverage"], errors="coerce")
     factors = factors.dropna(subset=["model", "horizon", "scale_factor"])
 
-    result: dict[tuple[str, int], dict[str, float]] = {}
+    result = {}
     for _, row in factors.iterrows():
         scale_factor = float(row["scale_factor"])
         if not np.isfinite(scale_factor) or scale_factor < 0:
@@ -463,8 +468,8 @@ def _calibrated_interval_bounds_for_family(
 
     factors = _load_interval_calibration_factors(interval_calibration_factors_path)
     requested_nominal = upper - lower
-    calibrated_lower: list[float] = []
-    calibrated_upper: list[float] = []
+    calibrated_lower = []
+    calibrated_upper = []
     horizons = range(1, len(forecast) + 1) if horizons is None else horizons
     for horizon, point, raw_lower, raw_upper in zip(horizons, forecast, interval_lower, interval_upper):
         row = factors.get((family, horizon))
@@ -488,6 +493,7 @@ def _sarima_family_forecast(
     n_sims: int,
     seed: int,
 ) -> FamilyForecastData:
+    """Forecast and simulate from the saved SARIMA model."""
     fitted = _load_model(model_paths["sarima"])
     point = fitted.forecast(steps=requested_horizon)
     draws = sarima.simulate_paths_from_fit(
@@ -516,6 +522,7 @@ def _elastic_net_family_forecast(
     feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
     forecast_origin: str | None = None,
 ) -> FamilyForecastData:
+    """Forecast and simulate from the saved Elastic Net model, optionally from an earlier ``forecast_origin``."""
     fitted = _load_model(model_paths["elastic_net"])
     current_frame = _current_elastic_net_frame(
         target_column=target_column,
@@ -525,19 +532,10 @@ def _elastic_net_family_forecast(
         origin_period = pd.Period(forecast_origin, freq="Q")
         current_frame = current_frame.loc[current_frame.index <= origin_period]
     horizon_to_value = dict(zip(fitted.horizons, fitted.predict_next(current_frame)))
-    missing = [
-        horizon
-        for horizon in range(1, requested_horizon + 1)
-        if horizon not in horizon_to_value
-    ]
+    missing = [horizon for horizon in range(1, requested_horizon + 1) if horizon not in horizon_to_value]
     if missing:
-        raise RuntimeError(
-            f"Elastic Net model does not have fitted horizons {missing}."
-        )
-    forecast = [
-        float(horizon_to_value[horizon])
-        for horizon in range(1, requested_horizon + 1)
-    ]
+        raise RuntimeError(f"Elastic Net model does not have fitted horizons {missing}.")
+    forecast = [float(horizon_to_value[horizon]) for horizon in range(1, requested_horizon + 1)]
     draws = elastic_net.simulate_paths_from_fit(
         fitted,
         current_frame,
@@ -614,6 +612,7 @@ def _ensemble_family_forecast(
 
 
 def _build_live_rba_action_row(n_sims: int, seed: int) -> pd.DataFrame:
+    """The classifier's input row for the next quarter: both ensemble forecasts plus the origin's macro values."""
     curated = load_curated_data()
     required_columns = {
         "quarter",
@@ -666,11 +665,7 @@ def _build_live_rba_action_row(n_sims: int, seed: int) -> pd.DataFrame:
         )
 
     latest = origin_rows.iloc[0]
-    null_columns = [
-        column
-        for column in sorted(required_columns)
-        if pd.isna(latest[column])
-    ]
+    null_columns = [column for column in sorted(required_columns) if pd.isna(latest[column])]
     if null_columns:
         raise HTTPException(
             status_code=503,
@@ -697,6 +692,7 @@ def _build_live_rba_action_row(n_sims: int, seed: int) -> pd.DataFrame:
 
 
 def _rba_action_model_predictions(predictions: pd.DataFrame) -> list[RbaActionModelPrediction]:
+    """One response entry per classifier, in MODEL_ORDER."""
     rows = []
     for model in rba_classifier.MODEL_ORDER:
         model_rows = predictions.loc[predictions["model"].eq(model)]
@@ -718,26 +714,53 @@ def _rba_action_model_predictions(predictions: pd.DataFrame) -> list[RbaActionMo
     return rows
 
 
-FamilyHandler = Callable[[dict[str, Path], int, int, int], FamilyForecastData]
+def _trimmed_mean_elastic_net_family_forecast(
+    model_paths: dict[str, Path],
+    requested_horizon: int,
+    n_sims: int,
+    seed: int,
+    forecast_origin: str | None = None,
+) -> FamilyForecastData:
+    """Elastic Net forecast for trimmed-mean CPI, using its own target and features."""
+    return _elastic_net_family_forecast(
+        model_paths,
+        requested_horizon,
+        n_sims,
+        seed,
+        target_column=TRIMMED_MEAN_TARGET_COLUMN,
+        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+        forecast_origin=forecast_origin,
+    )
 
-FAMILY_HANDLERS: dict[str, FamilyHandler] = {
+
+def _trimmed_mean_ensemble_family_forecast(
+    model_paths: dict[str, Path],
+    requested_horizon: int,
+    n_sims: int,
+    seed: int,
+) -> FamilyForecastData:
+    """Ensemble forecast for trimmed-mean CPI, using its own target and features."""
+    return _ensemble_family_forecast(
+        model_paths,
+        requested_horizon,
+        n_sims,
+        seed,
+        target_column=TRIMMED_MEAN_TARGET_COLUMN,
+        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    )
+
+
+# Which function produces each model family's forecast, per target.
+FAMILY_HANDLERS = {
     "sarima": _sarima_family_forecast,
     "elastic_net": _elastic_net_family_forecast,
     "ensemble": _ensemble_family_forecast,
 }
 
-TRIMMED_MEAN_FAMILY_HANDLERS: dict[str, FamilyHandler] = {
+TRIMMED_MEAN_FAMILY_HANDLERS = {
     "sarima": _sarima_family_forecast,
-    "elastic_net": partial(
-        _elastic_net_family_forecast,
-        target_column=TRIMMED_MEAN_TARGET_COLUMN,
-        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
-    ),
-    "ensemble": partial(
-        _ensemble_family_forecast,
-        target_column=TRIMMED_MEAN_TARGET_COLUMN,
-        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
-    ),
+    "elastic_net": _trimmed_mean_elastic_net_family_forecast,
+    "ensemble": _trimmed_mean_ensemble_family_forecast,
 }
 
 
@@ -764,6 +787,7 @@ def health(response: Response) -> dict[str, object]:
 
 @app.get("/features")
 def features() -> dict[str, object]:
+    """Row count, columns and quarter range of the curated dataset."""
     df = load_curated_data()
     return {
         "rows": len(df),
@@ -775,16 +799,18 @@ def features() -> dict[str, object]:
 
 def _forecast_all_with_handlers(
     request: AllForecastsRequest,
-    family_handlers: dict[str, FamilyHandler],
+    family_handlers: dict,
     model_paths: dict[str, Path],
     interval_calibration_factors_path: Path | None = None,
     interval_calibration_validation_report_path: Path | None = None,
 ) -> AllForecastsResponse:
+    """Run every family's handler, then add calibrated intervals and coverage; failed families go to ``unavailable``."""
     load_curated_data()
 
-    models: list[FamilyForecast] = []
-    unavailable: list[UnavailableFamily] = []
-    anchor_forecast_origin: str | None = None
+    models = []
+    unavailable = []
+    # Elastic Net forecasts from the same origin as SARIMA so the families line up.
+    anchor_forecast_origin = None
     for family, handler in family_handlers.items():
         try:
             if family == "elastic_net" and anchor_forecast_origin is not None:
@@ -815,16 +841,12 @@ def _forecast_all_with_handlers(
             upper=request.interval_upper,
             interval_calibration_factors_path=interval_calibration_factors_path,
         )
-        empirical_coverage, coverage_n, significantly_miscalibrated = (
-            _coverage_fields_for_family(
-                family,
-                result.horizon_served,
-                request.interval_lower,
-                request.interval_upper,
-                interval_calibration_validation_report_path=(
-                    interval_calibration_validation_report_path
-                ),
-            )
+        empirical_coverage, coverage_n, significantly_miscalibrated = _coverage_fields_for_family(
+            family,
+            result.horizon_served,
+            request.interval_lower,
+            request.interval_upper,
+            interval_calibration_validation_report_path=interval_calibration_validation_report_path,
         )
         models.append(
             FamilyForecast(
@@ -853,11 +875,13 @@ def _forecast_all_with_handlers(
 
 @app.post("/forecast/all", response_model=AllForecastsResponse)
 def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
+    """Headline CPI forecasts from every model family."""
     return _forecast_all_with_handlers(request, FAMILY_HANDLERS, HEADLINE_MODEL_PATHS)
 
 
 @app.post("/forecast/trimmed-mean/all", response_model=AllForecastsResponse)
 def forecast_trimmed_mean_all(request: AllForecastsRequest) -> AllForecastsResponse:
+    """Trimmed-mean CPI forecasts from every model family."""
     return _forecast_all_with_handlers(
         request,
         TRIMMED_MEAN_FAMILY_HANDLERS,
@@ -888,21 +912,18 @@ def _rba_action_response() -> RbaActionResponse:
             threshold_seed=seed,
             sarima_series=load_target_series(CURATED_DATA_PATH, target_column=TARGET_COLUMN),
         )
-    except HTTPException:
-        raise
-    except (ImportError, RuntimeError, OSError, ValueError) as exc:
+    except (RuntimeError, OSError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=_public_message(exc)) from exc
 
     threshold = predictions.loc[predictions["model"].eq("threshold")].iloc[0]
+    live = live_row.iloc[0]
     return RbaActionResponse(
-        target_quarter=str(live_row.iloc[0]["target_quarter"]),
-        forecast_origin=str(
-            pd.Period(str(live_row.iloc[0]["target_quarter"]), freq="Q") - 1
-        ),
+        target_quarter=str(live["target_quarter"]),
+        forecast_origin=str(pd.Period(str(live["target_quarter"]), freq="Q") - 1),
         reportable_model="threshold",
         reportable_action=str(threshold["predicted_action"]),
-        headline_forecast=float(live_row.iloc[0]["headline_forecast"]),
-        trimmed_mean_forecast=float(live_row.iloc[0]["trimmed_mean_forecast"]),
+        headline_forecast=float(live["headline_forecast"]),
+        trimmed_mean_forecast=float(live["trimmed_mean_forecast"]),
         models=_rba_action_model_predictions(predictions),
         caveat=RBA_ACTION_CAVEAT,
     )
@@ -910,6 +931,7 @@ def _rba_action_response() -> RbaActionResponse:
 
 @app.get("/rba-action", response_model=RbaActionResponse)
 def rba_action() -> RbaActionResponse:
+    """Next quarter's cut/hold/hike call from every classifier; the threshold rule is the reportable one."""
     return _rba_action_response()
 
 
@@ -917,6 +939,7 @@ def rba_action() -> RbaActionResponse:
 def credit_risk_stress_test(
     horizon: Annotated[int, Query(ge=1, le=MAX_FORECAST_HORIZON)] = CREDIT_STRESS_DEFAULT_HORIZON,
 ) -> CreditRiskStressTestResponse:
+    """Illustrative 12-month expected credit loss under downside, base and upside unemployment scenarios."""
     scenario_names = list(credit_stress.SCENARIO_QUANTILES)
     quantiles = [credit_stress.SCENARIO_QUANTILES[name] for name in scenario_names]
     try:
@@ -925,11 +948,7 @@ def credit_risk_stress_test(
         )
         target_quarter = next_quarters(forecast_origin, horizon)[-1]
         scenario_deltas = dict(zip(scenario_names, deltas))
-        stress_frame = credit_stress.run_credit_stress_test(
-            scenario_deltas=scenario_deltas
-        )
-    except HTTPException:
-        raise
+        stress_frame = credit_stress.run_credit_stress_test(scenario_deltas=scenario_deltas)
     except (RuntimeError, ValueError, OSError) as exc:
         raise HTTPException(status_code=503, detail=_public_message(exc)) from exc
 
@@ -943,15 +962,9 @@ def credit_risk_stress_test(
     ]
     segments = []
     for segment, segment_frame in stress_frame.groupby("segment", sort=False):
-        pd_stressed_by_scenario = dict(
-            zip(segment_frame["scenario"], segment_frame["pd_stressed"].astype(float))
-        )
-        ecl_by_scenario = dict(
-            zip(segment_frame["scenario"], segment_frame["ecl_aud_m"].astype(float))
-        )
-        ecl_weighted = float(
-            (segment_frame["probability_weight"] * segment_frame["ecl_aud_m"]).sum()
-        )
+        pd_stressed_by_scenario = dict(zip(segment_frame["scenario"], segment_frame["pd_stressed"].astype(float)))
+        ecl_by_scenario = dict(zip(segment_frame["scenario"], segment_frame["ecl_aud_m"].astype(float)))
+        ecl_weighted = float((segment_frame["probability_weight"] * segment_frame["ecl_aud_m"]).sum())
         first_row = segment_frame.iloc[0]
         segments.append(
             CreditStressSegmentResult(
@@ -1036,6 +1049,7 @@ def _scenario_response(
 
 @app.post("/forecast/scenario", response_model=ScenarioForecastResponse)
 def forecast_scenario(request: ScenarioForecastRequest) -> ScenarioForecastResponse:
+    """CPI forecast after a user-chosen macro shock (SVAR impulse responses added to ensemble draws)."""
     return _scenario_response(
         request.target,
         request.shock_variable,

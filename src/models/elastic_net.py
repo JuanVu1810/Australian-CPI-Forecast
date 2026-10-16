@@ -58,23 +58,10 @@ ELASTIC_NET_FEATURE_COLUMNS = (
     "cpi_yoy_lag4",
     *ELASTIC_NET_MACRO_FEATURE_COLUMNS,
 )
-# Originally scoped for the now-removed SARIMAX "primary WTI vs Brent-alt"
-# oil-proxy comparison, this macro block only ever carried the two oil/
-# commodity terms -- `cash_rate_change_lag1`, `unemployment_rate_change_lag1`,
-# and `inflation_expectations_business_lag1` were screened in
-# reports/model_refit_phase1_decisions.md (Trimmed-Mean Exogenous Feature
-# Decision) but flagged "retain only for nested/diagnostic spec" and never
-# promoted into this Elastic Net block, unlike the headline block above where
-# the equivalent variables (plus a PPI term) are primary features. That gap
-# left the trimmed-mean model with 5 macro features against headline's 9,
-# and was found (2026-09-19) to cause the live full-sample fit to collapse to
-# an intercept-only model (every coefficient zero) at horizons 5-8 -- see the
-# dated note in .ai/PROJECT_BRIEF.md. All four candidates are `I(0)` per the
-# same phase-1 stationarity table and pass a VIF re-check (max 5.58 across
-# the full 11-feature matrix, 101 complete rows 2001Q1-2026Q1) with no drop
-# in usable sample (wti_growth_lag1 was already the binding availability
-# constraint). `ppi_growth_lag1` (not `_lag2`) matches trimmed mean's own
-# phase-1 lag screening, not headline's.
+# WHY these nine: with only the five oil/commodity terms the trimmed-mean fit collapsed to an
+# intercept-only model at horizons 5-8 (found 2026-09-19), so the cash-rate, unemployment and
+# expectations terms were added. All are I(0) and pass a VIF re-check (max 5.58). ppi_growth_lag1
+# (not lag2) follows trimmed mean's own lag screening. See reports/model_refit_phase1_decisions.md.
 TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_MACRO_FEATURE_COLUMNS = (
     "cash_rate_change_lag1",
     "unemployment_rate_change_lag1",
@@ -114,10 +101,8 @@ DEFAULT_SEED = 42
 DEFAULT_L1_RATIOS = (0.1, 0.5, 0.7, 0.9, 0.95, 0.99, 1.0)
 DEFAULT_ALPHAS = tuple(np.logspace(-3, 1, 10))
 DEFAULT_CV_SPLITS = 4
-# joblib's process-pool backend re-spawns workers on every GridSearchCV.fit()
-# call; since this runs once per horizon per walk-forward origin (hundreds of
-# short-lived calls), n_jobs>1 is dominated by spawn overhead rather than
-# compute -- sequential is faster in practice for this workload.
+# Sequential is faster here: GridSearchCV runs hundreds of tiny fits, and starting worker
+# processes for each one costs more than it saves.
 DEFAULT_GRID_SEARCH_N_JOBS = 1
 DEFAULT_MAX_ITER = 10_000
 
@@ -143,14 +128,7 @@ class ElasticNetDirectFit:
     oos_residuals: dict[int, pd.Series]
 
     def predict_next(self, train_frame: pd.DataFrame) -> np.ndarray:
-        """Predict all fitted horizons from the most recent origin-time row.
-
-        ``models[horizon]`` is a fitted ``scaler -> ElasticNet`` sklearn
-        ``Pipeline`` (see ``fit_elastic_net_direct``), so this passes raw,
-        unscaled feature values -- the pipeline's own scaler step (fit on
-        that horizon's full training window during the final refit) applies
-        the transform internally.
-        """
+        """Predict every fitted horizon from the latest complete feature row (raw values; each pipeline scales them)."""
         clean = pd.DataFrame(train_frame).loc[:, list(self.feature_columns)].dropna().astype(float)
         if clean.empty:
             raise ValueError("forecast frame has no complete feature rows.")
@@ -166,6 +144,7 @@ def clean_elastic_net_frame(
     target_column: str = TARGET_COLUMN,
     feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
 ) -> pd.DataFrame:
+    """Keep the target and feature columns, drop incomplete rows, and check the quarters are consecutive."""
     columns = (target_column, *feature_columns)
     missing = set(columns).difference(frame.columns)
     if missing:
@@ -182,12 +161,7 @@ def load_elastic_net_feature_frame(
     feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
     max_quarter: pd.Period | None = None,
 ) -> pd.DataFrame:
-    """Load the Elastic Net feature block with a quarterly index.
-
-    ``max_quarter``, when given, drops any rows after that quarter -- see
-    ``evaluation.load_target_series`` for why (pinning walk-forward callers to
-    a fixed origin cutoff instead of growing with the curated CSV).
-    """
+    """Load the Elastic Net feature columns with a quarterly index, optionally cut at ``max_quarter``."""
     required_columns = ("quarter", *feature_columns)
     df = pd.read_csv(path, usecols=list(required_columns))
     df.index = pd.PeriodIndex(df.pop("quarter").astype(str), freq="Q")
@@ -211,16 +185,10 @@ def _time_series_oos_residuals(
     max_iter: int,
     seed: int,
 ) -> pd.Series:
-    """Genuinely out-of-sample residuals from the already-selected hyperparameters.
+    """Out-of-sample residuals from TimeSeriesSplit folds, using the already-chosen alpha and l1_ratio.
 
-    ``sklearn.model_selection.cross_val_predict`` cannot be used with
-    ``TimeSeriesSplit`` here: it requires every row to appear in some test
-    fold, but ``TimeSeriesSplit``'s initial training-only block never does
-    ("cross_val_predict only works for partitions"). This loops the same
-    fold shape manually and only keeps rows that land in a test fold. The
-    final ``ElasticNetDirectFit.models[horizon]`` pipeline (fit on the whole
-    window) is not reused for residuals: its residuals are in-sample and
-    understate true forecast-error variance, especially at longer horizons.
+    WHY a manual loop: cross_val_predict refuses TimeSeriesSplit because the first block is never a
+    test fold. In-sample residuals from the final fit would understate the forecast error.
     """
     from sklearn.linear_model import ElasticNet
     from sklearn.model_selection import TimeSeriesSplit
@@ -228,7 +196,7 @@ def _time_series_oos_residuals(
     from sklearn.preprocessing import StandardScaler
 
     cv = TimeSeriesSplit(n_splits=n_splits)
-    residual_frames: list[pd.Series] = []
+    residual_frames = []
     for train_idx, test_idx in cv.split(x):
         pipeline = Pipeline(
             [
@@ -247,17 +215,6 @@ def _time_series_oos_residuals(
     return residuals
 
 
-def _elastic_net_horizon_training_xy(
-    clean: pd.DataFrame,
-    horizon: int,
-    feature_columns: tuple[str, ...],
-    target_column: str,
-) -> tuple[pd.DataFrame, pd.Series]:
-    x = clean.loc[:, list(feature_columns)].iloc[: len(clean) - horizon]
-    y = clean[target_column].iloc[horizon:]
-    return x, y
-
-
 def fit_elastic_net_direct(
     train_frame: pd.DataFrame,
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
@@ -270,21 +227,10 @@ def fit_elastic_net_direct(
     seed: int = DEFAULT_SEED,
     n_jobs: int = DEFAULT_GRID_SEARCH_N_JOBS,
 ) -> ElasticNetDirectFit:
-    """Fit one scaler+ElasticNet pipeline per horizon on a chronological train window.
+    """Fit one scaler + ElasticNet pipeline per horizon, tuning alpha and l1_ratio with chronological CV.
 
-    Each horizon's alpha/l1_ratio is selected by ``GridSearchCV`` over a
-    ``StandardScaler -> ElasticNet`` ``Pipeline`` with ``TimeSeriesSplit``
-    folds -- chronological, not sklearn's default shuffled K-fold. Using
-    ``ElasticNetCV`` directly (the previous approach) fit one scaler on the
-    *entire* training window before any inner-CV split, so every fold's
-    validation portion still leaked into the mean/std used to scale its own
-    training portion. Wrapping the scaler inside the ``Pipeline`` that
-    ``GridSearchCV`` cross-validates fixes this: for every candidate
-    alpha/l1_ratio and every fold, the pipeline (scaler included) is cloned
-    and fit on that fold's training rows only. ``refit=True`` (the default)
-    then refits the winning pipeline -- scaler included -- on the *entire*
-    training window for the final model, which is legitimate: that window is
-    exactly what's available at this forecast origin.
+    WHY the scaler sits inside the pipeline: GridSearchCV then refits it on each fold's training
+    rows only, so no validation row leaks into the scaling. The winner is refit on the whole window.
     """
     from sklearn.linear_model import ElasticNet
     from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
@@ -293,17 +239,14 @@ def fit_elastic_net_direct(
 
     clean = clean_elastic_net_frame(train_frame, target_column=target_column, feature_columns=feature_columns)
 
-    models: dict[int, Any] = {}
-    oos_residuals: dict[int, pd.Series] = {}
+    models = {}
+    oos_residuals = {}
     for horizon in horizons:
         if len(clean) <= horizon:
             raise ValueError(f"training frame is too short for horizon {horizon}.")
-        x, y = _elastic_net_horizon_training_xy(
-            clean=clean,
-            horizon=horizon,
-            feature_columns=feature_columns,
-            target_column=target_column,
-        )
+        # Direct forecasting: features at quarter t predict the target at t + horizon.
+        x = clean.loc[:, list(feature_columns)].iloc[: len(clean) - horizon]
+        y = clean[target_column].iloc[horizon:]
         n_splits = _safe_cv_splits(len(x), cv_splits)
         pipeline = Pipeline(
             [
@@ -345,10 +288,6 @@ def fit_elastic_net_direct(
     )
 
 
-def forecast_from_fit(fitted: ElasticNetDirectFit, train_frame: pd.DataFrame) -> np.ndarray:
-    return fitted.predict_next(train_frame)
-
-
 def forecast_elastic_net_direct(
     train_frame: pd.DataFrame,
     steps: int = FORECAST_HORIZON,
@@ -365,17 +304,11 @@ def forecast_elastic_net_direct(
         feature_columns=feature_columns,
         target_column=target_column,
     )
-    return forecast_from_fit(fitted, train_frame)[:steps]
+    return fitted.predict_next(train_frame)[:steps]
 
 
 def _elastic_net_residual_matrix(fitted: ElasticNetDirectFit) -> pd.DataFrame:
-    """Join each horizon's out-of-sample CV residuals on shared origin dates.
-
-    Using ``fitted.oos_residuals`` (computed once, out-of-sample, in
-    ``fit_elastic_net_direct``) instead of predicting with the final
-    full-window pipeline keeps the cross-horizon error correlation a joint
-    bootstrap draw needs, without the in-sample understatement of variance.
-    """
+    """Join each horizon's out-of-sample residuals on shared dates, so one bootstrap draw keeps the cross-horizon correlation."""
     residuals = [fitted.oos_residuals[horizon].rename(horizon) for horizon in fitted.horizons]
     matrix = pd.concat(residuals, axis=1, join="inner").dropna()
     if matrix.empty:
@@ -451,13 +384,8 @@ def simulate_elastic_net_paths(
 
 
 def coefficient_table(fitted: ElasticNetDirectFit) -> pd.DataFrame:
-    """Extract per-horizon coefficients, intercept, and selected alpha/l1_ratio.
-
-    ``fitted.models[horizon]`` is a ``scaler -> ElasticNet`` Pipeline
-    (``fit_elastic_net_direct``), so coefficients/intercept/alpha/l1_ratio
-    are read off its ``"model"`` step.
-    """
-    rows: list[dict[str, object]] = []
+    """One row per horizon and feature: coefficient (on scaled features), intercept and chosen alpha/l1_ratio."""
+    rows = []
     for horizon, pipeline in fitted.models.items():
         model = pipeline.named_steps["model"]
         for feature, coef in zip(fitted.feature_columns, model.coef_):
@@ -487,6 +415,7 @@ def _comparison_metadata(
     selected_seasonal_order: str = "",
     selected_by: str = "elastic_net_cv_per_horizon",
 ) -> pd.DataFrame:
+    """Add the description columns the comparison report expects in front of the metric table."""
     result = metrics.copy()
     result.insert(0, "group_id", group_id)
     result.insert(1, "group_name", group_name)
@@ -534,18 +463,20 @@ def run_elastic_net_comparison(
         curated_path, feature_columns=feature_columns, max_quarter=max_quarter
     )
 
+    def forecast_elastic_net(train_frame, steps):
+        return forecast_elastic_net_direct(
+            train_frame, steps=steps, seed=seed, feature_columns=feature_columns, target_column=target_column
+        )
+
+    def forecast_sarima_baseline(train, steps):
+        return forecast_sarima(train, steps=steps, order=sarima_order, seasonal_order=sarima_seasonal_order)
+
     if verbose:
         print("Running Elastic Net direct-multihorizon walk-forward backtest...", flush=True)
     elastic_net_predictions = walk_forward_backtest_direct_multihorizon(
         series=series,
         exog=exog,
-        forecast_func=lambda train_frame, steps: forecast_elastic_net_direct(
-            train_frame,
-            steps=steps,
-            seed=seed,
-            feature_columns=feature_columns,
-            target_column=target_column,
-        ),
+        forecast_func=forecast_elastic_net,
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
         model_name="elastic_net",
@@ -557,12 +488,7 @@ def run_elastic_net_comparison(
 
     sarima = walk_forward_backtest(
         series=series,
-        forecast_func=lambda train, steps: forecast_sarima(
-            train,
-            steps=steps,
-            order=sarima_order,
-            seasonal_order=sarima_seasonal_order,
-        ),
+        forecast_func=forecast_sarima_baseline,
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
         model_name="sarima",

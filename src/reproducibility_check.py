@@ -80,15 +80,17 @@ def _upsert(path: Path, rows: pd.DataFrame, key: list[str], columns: list[str]) 
         old = old[~old["scenario_id"].isin(rows["scenario_id"].unique())]
         merged = pd.concat([old, rows], ignore_index=True)
         merged = merged.drop_duplicates(subset=key, keep="last")
-        # keep scenario order: first appearance of each scenario_id
-        order = {sid: i for i, sid in enumerate(pd.unique(merged["scenario_id"]))}
-        merged = merged.sort_values("scenario_id", key=lambda s: s.map(order), kind="stable")
+        # Keep scenarios in the order they first appear; rows inside a scenario keep their order.
+        scenario_order = list(pd.unique(merged["scenario_id"]))
+        merged["_scenario_order"] = merged["scenario_id"].map(scenario_order.index)
+        merged = merged.sort_values("_scenario_order", kind="stable").drop(columns="_scenario_order")
     else:
         merged = rows
     merged.to_csv(path, index=False, float_format="%.6g", lineterminator="\n")
 
 
 def _summary_row(args, quantity: str, unit: str, n_compared: int, n_changed: int, max_abs_diff: float | None) -> dict:
+    """One row of the summary CSV for the scenario named on the command line."""
     return {
         "scenario_id": args.scenario_id,
         "scenario": args.scenario,
@@ -128,6 +130,7 @@ def compare_frames(base: pd.DataFrame, cand: pd.DataFrame) -> tuple[int, int, fl
 
 
 def _compare_one(base_path: Path, cand_path: Path) -> tuple[bool, int, int, float]:
+    """(byte identical, cells compared, cells changed, max abs diff) for one file pair; cell counts only for CSVs."""
     identical = base_path.read_bytes() == cand_path.read_bytes()
     if identical:
         cells = 0
@@ -141,6 +144,7 @@ def _compare_one(base_path: Path, cand_path: Path) -> tuple[bool, int, int, floa
 
 
 def cmd_compare_files(args) -> None:
+    """Compare regenerated files with the baseline copies and save the summary and per-file detail."""
     baseline, candidate = Path(args.baseline), Path(args.candidate)
     if args.newer_than:
         marker = Path(args.newer_than).stat().st_mtime
@@ -200,23 +204,25 @@ def cmd_compare_files(args) -> None:
 
 
 def _request(url: str, payload: dict | None, timeout: int) -> dict:
+    """GET (no payload) or POST JSON to the API and return the parsed response."""
     data = None if payload is None else json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.load(resp)
 
 
-def _leaves(obj, path=""):
+def _flatten(obj, path: str, out: dict) -> dict:
+    """Store every leaf value of a nested JSON object in ``out`` under a path like "/models[0]/forecast[2]"."""
     if isinstance(obj, dict):
         for key, value in obj.items():
-            if key in IGNORED_KEYS:
-                continue
-            yield from _leaves(value, f"{path}/{key}")
+            if key not in IGNORED_KEYS:
+                _flatten(value, f"{path}/{key}", out)
     elif isinstance(obj, list):
         for i, value in enumerate(obj):
-            yield from _leaves(value, f"{path}[{i}]")
+            _flatten(value, f"{path}[{i}]", out)
     else:
-        yield path, obj
+        out[path] = obj
+    return out
 
 
 def compare_json(base: dict, cand: dict, groups=None) -> dict[str, tuple[int, int, float]]:
@@ -225,8 +231,9 @@ def compare_json(base: dict, cand: dict, groups=None) -> dict[str, tuple[int, in
     ``groups`` is an optional list of ``(name, unit, regex)``. A number whose path matches a regex is counted under that
     group's name; the remaining numbers are counted under "other numbers". Without groups every number is "numbers".
     """
-    b, c = dict(_leaves(base)), dict(_leaves(cand))
-    out: dict[str, list] = {}
+    b = _flatten(base, "", {})
+    c = _flatten(cand, "", {})
+    out = {}
 
     def add(kind: str, changed: bool, diff: float = 0.0) -> None:
         entry = out.setdefault(kind, [0, 0, 0.0])
@@ -273,6 +280,7 @@ API_CALLS = {
 
 
 def cmd_compare_api(args) -> None:
+    """Call the same endpoints on two APIs and save how many numbers and labels differ."""
     rows = []
     for quantity, (path, payload, groups) in API_CALLS.items():
         if args.only and quantity not in args.only:
@@ -305,12 +313,17 @@ CUTOFF_ROW = re.compile(r"^\|\s*ordered_logit\s*\|\s*\d{4}Q\d\s*\|\s*\d{4}Q\d\s*
 
 
 def _read_git(spec: str) -> str:
+    """Text of a file at a git revision, given as "REV:PATH"."""
     return subprocess.run(["git", "show", spec], cwd=PROJECT_ROOT, check=True, capture_output=True, text=True).stdout
 
 
 def predictions_from_report(text: str) -> pd.DataFrame:
     """The per-quarter prediction table that older versions of the RBA classifier report carried."""
-    rows = [m.groups() for m in map(PREDICTION_ROW.match, text.splitlines()) if m]
+    rows = []
+    for line in text.splitlines():
+        match = PREDICTION_ROW.match(line)
+        if match:
+            rows.append(match.groups())
     return pd.DataFrame(rows, columns=["target_quarter", "model", "predicted_action"])
 
 
@@ -332,7 +345,7 @@ def cmd_compare_classifier(args) -> None:
         base = pd.read_csv(args.baseline)
     calls = [0, 0]
     ordered_calls = [0, 0]
-    probs: dict[str, list] = {}
+    probs = {}
     for cand_path in args.candidate:
         merged = base.merge(pd.read_csv(cand_path), on=key, suffixes=("_base", "_cand"), validate="one_to_one")
         if not len(merged):
@@ -383,13 +396,12 @@ def cmd_compare_classifier(args) -> None:
 
 
 def _git_csv(rev: str, path: str) -> pd.DataFrame:
-    text = subprocess.run(
-        ["git", "show", f"{rev}:{path}"], cwd=PROJECT_ROOT, check=True, capture_output=True, text=True
-    ).stdout
-    return pd.read_csv(io.StringIO(text))
+    """Read a CSV as it was at a git revision."""
+    return pd.read_csv(io.StringIO(_read_git(f"{rev}:{path}")))
 
 
 def cmd_data_vintages(args) -> None:
+    """Compare two downloads of the same series taken from git history."""
     old = _git_csv(args.old_rev, args.old_path)
     new = _git_csv(args.new_rev, args.new_path)
     value = [c for c in old.columns if c != "date"][0]
@@ -409,6 +421,7 @@ def cmd_data_vintages(args) -> None:
 
 
 def _common(p: argparse.ArgumentParser) -> None:
+    """Arguments every sub-command needs to label its summary rows."""
     p.add_argument("--scenario-id", required=True)
     p.add_argument("--scenario", required=True)
     p.add_argument("--environment", required=True)

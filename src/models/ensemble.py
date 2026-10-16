@@ -53,6 +53,7 @@ TRIMMED_MEAN_ENSEMBLE_COMPARISON_OUTPUT_PATH = (
 
 
 def _validate_weights(weights: tuple[float, float]) -> tuple[float, float]:
+    """Check a (sarima_weight, elastic_net_weight) pair sums to 1 and return it as floats."""
     if len(weights) != 2:
         raise ValueError("weights must contain exactly two values: SARIMA and Elastic Net.")
     sarima_weight, elastic_net_weight = (float(weights[0]), float(weights[1]))
@@ -93,10 +94,10 @@ def horizon_rmse_weights(
         & table["model"].isin(["sarima", "elastic_net"])
     ].copy()
 
-    weights: dict[int, tuple[float, float]] = {}
+    weights = {}
     for horizon in horizons:
         horizon_key = int(horizon)
-        per_horizon: dict[str, float] = {}
+        per_horizon = {}
         for model in ("sarima", "elastic_net"):
             rows = filtered.loc[
                 filtered["model"].eq(model)
@@ -130,18 +131,14 @@ def horizon_rmse_weights(
 
 
 def dynamic_weights_source_path(target_column: str) -> Path:
-    """Return the walk-forward RMSE report to derive inverse-RMSE weights from.
-
-    Headline and trimmed-mean each have their own SARIMA vs Elastic Net
-    accuracy comparison, so the weight source must match the target being
-    forecast rather than always defaulting to the headline report.
-    """
+    """Return the RMSE report for this target (headline and trimmed mean each have their own)."""
     if target_column == TRIMMED_MEAN_TARGET_COLUMN:
         return TRIMMED_MEAN_DYNAMIC_WEIGHTS_SOURCE_PATH
     return DYNAMIC_WEIGHTS_SOURCE_PATH
 
 
 def _position_horizons(length: int, horizons) -> tuple[int, ...]:
+    """Horizon of each forecast position; 1, 2, ... when ``horizons`` is None."""
     if horizons is None:
         return tuple(range(1, length + 1))
     horizon_values = np.asarray(horizons)
@@ -157,6 +154,7 @@ def _weights_by_position(
     length: int,
     horizons,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Look up the per-horizon weight pair for every forecast position."""
     sarima_weights = []
     elastic_net_weights = []
     for horizon in _position_horizons(length, horizons):
@@ -174,9 +172,10 @@ def combine_point_forecasts(
     weights: tuple[float, float] | dict[int, tuple[float, float]] = DEFAULT_WEIGHTS,
     horizons=None,
 ) -> np.ndarray:
-    """Return the weighted average of equal-length one-dimensional forecasts."""
-    if not isinstance(weights, dict):
-        sarima_weight, elastic_net_weight = _validate_weights(weights)
+    """Return the weighted average of equal-length one-dimensional forecasts.
+
+    ``weights`` is either one (sarima, elastic_net) pair for every horizon or a {horizon: pair} dict.
+    """
     sarima_values = np.asarray(sarima_forecast, dtype=float)
     elastic_net_values = np.asarray(elastic_net_forecast, dtype=float)
     if sarima_values.ndim != 1 or elastic_net_values.ndim != 1:
@@ -184,11 +183,9 @@ def combine_point_forecasts(
     if sarima_values.shape != elastic_net_values.shape:
         raise ValueError("both forecasts must have the same length.")
     if isinstance(weights, dict):
-        sarima_weight, elastic_net_weight = _weights_by_position(
-            weights,
-            len(sarima_values),
-            horizons,
-        )
+        sarima_weight, elastic_net_weight = _weights_by_position(weights, len(sarima_values), horizons)
+    else:
+        sarima_weight, elastic_net_weight = _validate_weights(weights)
     return sarima_weight * sarima_values + elastic_net_weight * elastic_net_values
 
 
@@ -198,9 +195,7 @@ def combine_paths(
     weights: tuple[float, float] | dict[int, tuple[float, float]] = DEFAULT_WEIGHTS,
     horizons=None,
 ) -> np.ndarray:
-    """Combine paired Monte Carlo draws from independent component models."""
-    if not isinstance(weights, dict):
-        sarima_weight, elastic_net_weight = _validate_weights(weights)
+    """Weighted average of paired (n_sims, steps) draws from the two component models."""
     sarima_values = np.asarray(sarima_paths, dtype=float)
     elastic_net_values = np.asarray(elastic_net_paths, dtype=float)
     if sarima_values.ndim != 2 or elastic_net_values.ndim != 2:
@@ -208,25 +203,14 @@ def combine_paths(
     if sarima_values.shape != elastic_net_values.shape:
         raise ValueError("both path arrays must have the same shape.")
     if isinstance(weights, dict):
-        sarima_weight, elastic_net_weight = _weights_by_position(
-            weights,
-            sarima_values.shape[1],
-            horizons,
-        )
+        sarima_weight, elastic_net_weight = _weights_by_position(weights, sarima_values.shape[1], horizons)
+    else:
+        sarima_weight, elastic_net_weight = _validate_weights(weights)
     return sarima_weight * sarima_values + elastic_net_weight * elastic_net_values
 
 
 def recenter_paths_to_median(paths: np.ndarray, target_median) -> np.ndarray:
-    """Shift simulated paths per-horizon so their empirical median equals ``target_median``.
-
-    ``combine_paths`` weighted-averages two independently-simulated Monte Carlo
-    components draw-by-draw; the median of that weighted sum is not the same as
-    the weighted sum of the two components' own medians (or of
-    ``combine_point_forecasts``'s deterministic point). This recenters the
-    already-combined draws onto the deterministic ensemble point forecast
-    without changing their spread or shape, so the reported forecast and the
-    simulated interval's center agree exactly.
-    """
+    """Shift each horizon's draws so their median equals ``target_median``; the spread is unchanged."""
     values = np.asarray(paths, dtype=float)
     if values.ndim != 2:
         raise ValueError("paths must be two-dimensional with shape (n_sims, steps).")
@@ -321,13 +305,9 @@ def simulate_ensemble_paths(
         weights=weights,
         horizons=requested_horizons,
     )
-    # combine_paths's median is not the same as combine_point_forecasts's point
-    # (median of a weighted sum of two independent Monte Carlo components != the
-    # weighted sum of their own medians) -- recenter onto the deterministic
-    # ensemble forecast so the two agree exactly. Refits both components a
-    # second time (point-forecast only, no extra simulation) to get that target;
-    # reuses sarima_train so this respects the same sarima_series override used
-    # for the simulated paths above.
+    # WHY recenter: the median of a weighted sum of two simulations is not the weighted sum of their
+    # point forecasts, so shift the draws onto the ensemble point forecast to make the reported
+    # forecast and the interval centre agree exactly.
     sarima_point = forecast_sarima(
         sarima_train,
         steps=steps,
@@ -369,6 +349,7 @@ def _ensemble_prediction_frame(
     elastic_net_predictions: pd.DataFrame,
     weights: tuple[float, float] | dict[int, tuple[float, float]],
 ) -> pd.DataFrame:
+    """Build ensemble backtest rows from the SARIMA and Elastic Net rows that share an origin and horizon."""
     key_columns = ["forecast_origin", "target_quarter", "horizon"]
     merged = sarima_predictions.merge(
         elastic_net_predictions,
@@ -436,16 +417,23 @@ def run_ensemble_comparison(
         feature_columns=elastic_net_feature_columns,
     )
 
+    def forecast_sarima_component(train, steps):
+        return forecast_sarima(train, steps=steps, order=sarima_order, seasonal_order=sarima_seasonal_order)
+
+    def forecast_elastic_net_component(train_frame, steps):
+        return forecast_elastic_net_direct(
+            train_frame,
+            steps=steps,
+            seed=seed,
+            feature_columns=elastic_net_feature_columns,
+            target_column=target_column,
+        )
+
     if verbose:
         print("Running SARIMA walk-forward backtest...", flush=True)
     sarima_predictions = walk_forward_backtest(
         series=series,
-        forecast_func=lambda train, steps: forecast_sarima(
-            train,
-            steps=steps,
-            order=sarima_order,
-            seasonal_order=sarima_seasonal_order,
-        ),
+        forecast_func=forecast_sarima_component,
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
         model_name="sarima",
@@ -456,13 +444,7 @@ def run_ensemble_comparison(
     elastic_net_predictions = walk_forward_backtest_direct_multihorizon(
         series=series,
         exog=exog,
-        forecast_func=lambda train_frame, steps: forecast_elastic_net_direct(
-            train_frame,
-            steps=steps,
-            seed=seed,
-            feature_columns=elastic_net_feature_columns,
-            target_column=target_column,
-        ),
+        forecast_func=forecast_elastic_net_component,
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
         model_name="elastic_net",

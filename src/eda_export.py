@@ -83,21 +83,17 @@ def restrict_to_eda_window(
 
 
 def load_curated_data(path: Path = CURATED_DATA_PATH) -> pd.DataFrame:
+    """Read the curated CSV and keep only the EDA window."""
     return restrict_to_eda_window(pd.read_csv(path))
 
 
-def _available_columns(df: pd.DataFrame, columns: list[str]) -> list[str]:
-    return [column for column in columns if column in df.columns]
-
-
-def _clean_series(series: pd.Series) -> pd.Series:
-    return series.replace([np.inf, -np.inf], np.nan).dropna()
-
-
 def build_stationarity_summary(df: pd.DataFrame) -> pd.DataFrame:
-    rows: list[dict[str, object]] = []
-    for variable in _available_columns(df, STATIONARITY_COLUMNS):
-        values = _clean_series(df[variable])
+    """Run ADF and KPSS tests on each available column; one row per variable and test."""
+    rows = []
+    for variable in STATIONARITY_COLUMNS:
+        if variable not in df.columns:
+            continue
+        values = df[variable].replace([np.inf, -np.inf], np.nan).dropna()
         if len(values) < 12 or values.nunique() < 2:
             rows.append(
                 {
@@ -113,73 +109,43 @@ def build_stationarity_summary(df: pd.DataFrame) -> pd.DataFrame:
             )
             continue
 
-        try:
-            adf_stat, adf_p, adf_lags, *_ = adfuller(values, autolag="AIC")
-            rows.append(
-                {
-                    "variable": variable,
-                    "test": "ADF",
-                    "observations": len(values),
-                    "statistic": adf_stat,
-                    "p_value": adf_p,
-                    "lags": adf_lags,
-                    "stationary_at_5pct": adf_p < 0.05,
-                    "notes": "rejects unit root when p < 0.05",
-                }
-            )
-        except Exception as exc:  # pragma: no cover - defensive export guard
-            rows.append(
-                {
-                    "variable": variable,
-                    "test": "ADF",
-                    "observations": len(values),
-                    "statistic": np.nan,
-                    "p_value": np.nan,
-                    "lags": np.nan,
-                    "stationary_at_5pct": np.nan,
-                    "notes": f"failed: {exc}",
-                }
-            )
+        adf_stat, adf_p, adf_lags, *_ = adfuller(values, autolag="AIC")
+        rows.append(
+            {
+                "variable": variable,
+                "test": "ADF",
+                "observations": len(values),
+                "statistic": adf_stat,
+                "p_value": adf_p,
+                "lags": adf_lags,
+                "stationary_at_5pct": adf_p < 0.05,
+                "notes": "rejects unit root when p < 0.05",
+            }
+        )
 
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", InterpolationWarning)
-                kpss_stat, kpss_p, kpss_lags, *_ = kpss(
-                    values,
-                    regression="c",
-                    nlags="auto",
-                )
-            rows.append(
-                {
-                    "variable": variable,
-                    "test": "KPSS",
-                    "observations": len(values),
-                    "statistic": kpss_stat,
-                    "p_value": kpss_p,
-                    "lags": kpss_lags,
-                    "stationary_at_5pct": kpss_p >= 0.05,
-                    "notes": "fails to reject stationarity when p >= 0.05",
-                }
-            )
-        except Exception as exc:  # pragma: no cover - defensive export guard
-            rows.append(
-                {
-                    "variable": variable,
-                    "test": "KPSS",
-                    "observations": len(values),
-                    "statistic": np.nan,
-                    "p_value": np.nan,
-                    "lags": np.nan,
-                    "stationary_at_5pct": np.nan,
-                    "notes": f"failed: {exc}",
-                }
-            )
+        # KPSS warns when its p-value is outside the lookup table; the p-value is still usable.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", InterpolationWarning)
+            kpss_stat, kpss_p, kpss_lags, *_ = kpss(values, regression="c", nlags="auto")
+        rows.append(
+            {
+                "variable": variable,
+                "test": "KPSS",
+                "observations": len(values),
+                "statistic": kpss_stat,
+                "p_value": kpss_p,
+                "lags": kpss_lags,
+                "stationary_at_5pct": kpss_p >= 0.05,
+                "notes": "fails to reject stationarity when p >= 0.05",
+            }
+        )
 
     return pd.DataFrame(rows)
 
 
 def build_correlation_summary(df: pd.DataFrame) -> pd.DataFrame:
-    rows: list[dict[str, object]] = []
+    """Correlate cpi_yoy with each driver lagged one quarter; strongest first."""
+    rows = []
     target = "cpi_yoy"
 
     if target not in df.columns:
@@ -229,9 +195,10 @@ def build_correlation_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_vif_summary(df: pd.DataFrame) -> pd.DataFrame:
-    columns = _available_columns(df, VIF_COLUMNS)
+    """Variance inflation factor of each lagged predictor on standardised data; highest first."""
+    columns = [column for column in VIF_COLUMNS if column in df.columns]
     matrix = df[columns].replace([np.inf, -np.inf], np.nan).dropna()
-    rows: list[dict[str, object]] = []
+    rows = []
 
     if len(matrix) < 3 or len(columns) < 2:
         return pd.DataFrame(
@@ -250,13 +217,9 @@ def build_vif_summary(df: pd.DataFrame) -> pd.DataFrame:
     standardized = standardized.loc[:, standardized.nunique(dropna=True) > 1]
     vif_matrix = add_constant(standardized, has_constant="add")
     for index, variable in enumerate(standardized.columns):
-        try:
-            vif = variance_inflation_factor(vif_matrix.to_numpy(), index + 1)
-            note = "above 10 threshold" if vif > 10 else "within 10 threshold"
-        except Exception as exc:  # pragma: no cover - defensive export guard
-            vif = np.nan
-            note = f"failed: {exc}"
-
+        # index + 1 skips the constant column added above.
+        vif = variance_inflation_factor(vif_matrix.to_numpy(), index + 1)
+        note = "above 10 threshold" if vif > 10 else "within 10 threshold"
         rows.append(
             {
                 "variable": variable,

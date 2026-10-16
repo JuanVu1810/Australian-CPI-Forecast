@@ -88,57 +88,33 @@ def forecast_sarima(
     return pd.Series(forecast, name="forecast")
 
 
-def _simulation_result_to_paths(simulated, n_sims: int, steps: int) -> np.ndarray:
-    paths = np.asarray(simulated, dtype=float)
-    if paths.shape != (steps, n_sims):
-        raise ValueError(
-            "unexpected simulation result shape: "
-            f"got {paths.shape}, expected {(steps, n_sims)} from statsmodels."
-        )
-    paths = paths.T
-    if paths.shape != (n_sims, steps):
-        raise ValueError(f"simulation paths have shape {paths.shape}, expected {(n_sims, steps)}.")
-    return paths
-
-
-def _simulation_seed_kwargs(fitted, seed: int) -> dict[str, object]:
-    if "rng" in inspect.signature(fitted.simulate).parameters:
-        return {"rng": np.random.default_rng(seed)}
-    return {"random_state": seed}
-
-
 def simulate_paths_from_fit(
     fitted,
     steps: int = 8,
     n_sims: int = 1000,
     seed: int = 42,
 ) -> np.ndarray:
-    """Simulate future ``cpi_yoy`` paths from an already-fitted SARIMA model.
-
-    A residual bootstrap (the fit's own standardized innovations, resampled
-    with replacement) was tried here to address badly non-Gaussian residuals
-    (see reports/model_residual_diagnostics.csv), but walk-forward testing on
-    the current curated dataset showed it made raw interval coverage *worse*
-    on average (75.3% -> 70.6% overall, most horizons down), not better:
-    resampling a leptokurtic empirical distribution concentrates more mass
-    near the center than a Gaussian with the same variance, which narrows
-    the 10th-90th percentile interval even though the true tails are fatter.
-    Kept on Gaussian innovations because that is what the walk-forward
-    evidence supports, despite the residual normality violation. This is
-    innovation uncertainty only; it does not include parameter uncertainty.
-    """
+    """Simulate future paths from a fitted SARIMA model; returns an (n_sims, steps) array."""
     if steps < 1:
         raise ValueError("steps must be at least 1.")
     if n_sims < 1:
         raise ValueError("n_sims must be at least 1.")
 
-    simulated = fitted.simulate(
-        nsimulations=steps,
-        anchor="end",
-        repetitions=n_sims,
-        **_simulation_seed_kwargs(fitted, seed),
-    )
-    return _simulation_result_to_paths(simulated, n_sims=n_sims, steps=steps)
+    # WHY Gaussian innovations: resampling the fit's own (fat-tailed) residuals was tried and made
+    # walk-forward interval coverage worse (75.3% -> 70.6%), so the normal shocks stay. This is
+    # innovation uncertainty only, not parameter uncertainty.
+    # Newer statsmodels versions take ``rng`` instead of ``random_state``; use whichever exists.
+    if "rng" in inspect.signature(fitted.simulate).parameters:
+        seed_argument = {"rng": np.random.default_rng(seed)}
+    else:
+        seed_argument = {"random_state": seed}
+    simulated = fitted.simulate(nsimulations=steps, anchor="end", repetitions=n_sims, **seed_argument)
+
+    # statsmodels returns one column per simulation, so transpose to one row per simulation.
+    paths = np.asarray(simulated, dtype=float)
+    if paths.shape != (steps, n_sims):
+        raise ValueError(f"unexpected simulation result shape {paths.shape}, expected {(steps, n_sims)}.")
+    return paths.T
 
 
 def simulate_sarima_paths(
@@ -152,11 +128,6 @@ def simulate_sarima_paths(
     seed: int = 42,
 ) -> np.ndarray:
     """Fit SARIMA and simulate future ``cpi_yoy`` paths with statsmodels innovations."""
-    if steps < 1:
-        raise ValueError("steps must be at least 1.")
-    if n_sims < 1:
-        raise ValueError("n_sims must be at least 1.")
-
     fitted = fit_sarima(
         series=series,
         order=order,

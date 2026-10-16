@@ -9,7 +9,7 @@ model selection.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from pathlib import Path
 
 import pandas as pd
@@ -26,22 +26,19 @@ def iter_candidate_orders(
     d_values: Iterable[int] = (0,),
     seasonal_d_values: Iterable[int] = (0,),
     seasonal_period: int = 4,
-) -> Iterator[tuple[tuple[int, int, int], tuple[int, int, int, int]]]:
-    """Yield SARIMA candidate orders for a compact Box-Jenkins grid."""
+) -> list[tuple[tuple[int, int, int], tuple[int, int, int, int]]]:
+    """List every (order, seasonal_order) pair in a small Box-Jenkins grid."""
+    candidates = []
     for p in range(max_p + 1):
         for d in d_values:
             for q in range(max_q + 1):
-                order = (p, int(d), q)
                 for seasonal_p in range(max_p_seasonal + 1):
                     for seasonal_d in seasonal_d_values:
                         for seasonal_q in range(max_q_seasonal + 1):
-                            seasonal_order = (
-                                seasonal_p,
-                                int(seasonal_d),
-                                seasonal_q,
-                                seasonal_period,
-                            )
-                            yield order, seasonal_order
+                            order = (p, int(d), q)
+                            seasonal_order = (seasonal_p, int(seasonal_d), seasonal_q, seasonal_period)
+                            candidates.append((order, seasonal_order))
+    return candidates
 
 
 def run_order_search(
@@ -57,7 +54,7 @@ def run_order_search(
     maxiter: int = 100,
 ) -> pd.DataFrame:
     """Fit candidate SARIMA orders and return AIC/BIC-ranked results."""
-    rows: list[dict[str, object]] = []
+    rows = []
     for order, seasonal_order in iter_candidate_orders(
         max_p=max_p,
         max_q=max_q,
@@ -67,7 +64,7 @@ def run_order_search(
         seasonal_d_values=seasonal_d_values,
         seasonal_period=seasonal_period,
     ):
-        row: dict[str, object] = {
+        row = {
             "order": order,
             "seasonal_order": seasonal_order,
             "trend": trend,
@@ -95,15 +92,17 @@ def run_order_search(
                 }
             )
             row.update(root_stability_summary(fitted))
-        except Exception as exc:  # pragma: no cover - defensive CLI path
+        except Exception as exc:
+            # A candidate that fails to fit stays in the table with infinite AIC/BIC and its error.
             row["error"] = str(exc)
         rows.append(row)
 
     return pd.DataFrame(rows).sort_values(["aic", "bic"], ignore_index=True)
 
 
-def _parse_int_values(raw: str) -> tuple[int, ...]:
-    return tuple(int(value.strip()) for value in raw.split(",") if value.strip())
+def _parse_int_values(raw: str) -> list[int]:
+    """Turn "0,1" into [0, 1]."""
+    return [int(value) for value in raw.split(",") if value.strip()]
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -135,7 +135,17 @@ def load_report(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def _quarter_end_date(quarter: str) -> pd.Timestamp:
+    """Last day of a quarter label such as "2025Q4", the date the charts plot it on."""
+    return pd.Period(quarter, freq="Q").to_timestamp(how="end").normalize()
+
+
+def _readable_name(column_name: str) -> str:
+    return column_name.replace("_", " ")
+
+
 def _current_theme() -> str:
+    """The viewer's light or dark theme (light if Streamlit cannot tell)."""
     try:
         return st.context.theme.type or "light"
     except Exception:
@@ -158,6 +168,7 @@ def _request_error_detail(exc: requests.RequestException) -> str | None:
 
 
 def _get_json(method: str, base_url: str, path: str, timeout: int, **kwargs) -> dict:
+    """Call the API and return its JSON; raises on any HTTP or connection error."""
     response = requests.request(method, f"{base_url}{path}", timeout=timeout, **kwargs)
     response.raise_for_status()
     return response.json()
@@ -219,6 +230,7 @@ def api_request(method: str, base_url: str, path: str, **kwargs) -> tuple[dict |
 def _anchor_value(
     curated: pd.DataFrame, target_column: str, forecast_origin: str, fallback: float | None = None
 ) -> float:
+    """Observed value at the forecast origin, so the forecast line joins the history line."""
     target = curated.set_index("quarter")[target_column].dropna()
     if forecast_origin in target.index:
         return float(target.loc[forecast_origin])
@@ -331,21 +343,26 @@ def build_threshold_probability_bar(probabilities: pd.DataFrame) -> alt.Chart:
     )
 
 
+def _rba_target_band(start, end, colors: dict, y_axis_title: str):
+    """The RBA's 2-3% target band from ``start`` to ``end`` with a dashed 2.5% midpoint line."""
+    rba_band = pd.DataFrame({"start": [start], "end": [end], "lower": [2.0], "upper": [3.0]})
+    midpoint = pd.DataFrame({"midpoint": [2.5]})
+    target_band = (
+        alt.Chart(rba_band)
+        .mark_rect(opacity=0.08, color=colors["target"])
+        .encode(x=alt.X("start:T", title="Quarter"), x2="end:T", y=alt.Y("lower:Q", title=y_axis_title), y2="upper:Q")
+    )
+    midpoint_rule = alt.Chart(midpoint).mark_rule(color=colors["midpoint"], strokeDash=[6, 3], strokeWidth=1.4).encode(y="midpoint:Q")
+    return target_band, midpoint_rule
+
+
 def build_forecast_chart(history: pd.DataFrame, forecast: pd.DataFrame, theme_type: str) -> alt.LayerChart:
     colors = PALETTE[theme_type]
     color_scale = alt.Scale(domain=["Headline", "Trimmed mean"], range=[colors["headline"], colors["trimmed"]])
     dash_scale = alt.Scale(domain=["Actual", "Forecast"], range=[[1, 0], [6, 3]])
     start = min(history["quarter_date"].min(), forecast["quarter_date"].min())
     end = max(history["quarter_date"].max(), forecast["quarter_date"].max())
-    rba_band = pd.DataFrame({"start": [start], "end": [end], "lower": [2.0], "upper": [3.0]})
-    midpoint = pd.DataFrame({"midpoint": [2.5]})
-
-    target_band = (
-        alt.Chart(rba_band)
-        .mark_rect(opacity=0.08, color=colors["target"])
-        .encode(x=alt.X("start:T", title="Quarter"), x2="end:T", y=alt.Y("lower:Q", title="CPI YoY (%)"), y2="upper:Q")
-    )
-    midpoint_rule = alt.Chart(midpoint).mark_rule(color=colors["midpoint"], strokeDash=[6, 3], strokeWidth=1.4).encode(y="midpoint:Q")
+    target_band, midpoint_rule = _rba_target_band(start, end, colors, "CPI YoY (%)")
     band = (
         alt.Chart(forecast)
         .mark_area(opacity=0.16)
@@ -400,16 +417,9 @@ def build_scenario_chart(forecast: pd.DataFrame, theme_type: str, y_axis_title: 
     colors = PALETTE[theme_type]
     color_scale = alt.Scale(domain=["Ensemble baseline", "SVAR shock scenario"], range=[colors["baseline"], colors["scenario"]])
     dash_scale = alt.Scale(domain=["Ensemble baseline", "SVAR shock scenario"], range=[[5, 3], [1, 0]])
-    start = forecast["quarter_date"].min()
-    end = forecast["quarter_date"].max()
-    rba_band = pd.DataFrame({"start": [start], "end": [end], "lower": [2.0], "upper": [3.0]})
-    midpoint = pd.DataFrame({"midpoint": [2.5]})
-    target_band = (
-        alt.Chart(rba_band)
-        .mark_rect(opacity=0.08, color=colors["target"])
-        .encode(x=alt.X("start:T", title="Quarter"), x2="end:T", y=alt.Y("lower:Q", title=y_axis_title), y2="upper:Q")
+    target_band, midpoint_rule = _rba_target_band(
+        forecast["quarter_date"].min(), forecast["quarter_date"].max(), colors, y_axis_title
     )
-    midpoint_rule = alt.Chart(midpoint).mark_rule(color=colors["midpoint"], strokeDash=[6, 3], strokeWidth=1.4).encode(y="midpoint:Q")
     band = (
         alt.Chart(forecast)
         .mark_area(opacity=0.14)
@@ -446,10 +456,12 @@ def build_scenario_chart(forecast: pd.DataFrame, theme_type: str, y_axis_title: 
 
 
 def _family_map(payload: dict) -> dict[str, dict]:
+    """{model_family: forecast} from one /forecast response."""
     return {model["model_family"]: model for model in payload.get("models", [])}
 
 
 def _ordered_families(families: set[str]) -> list[str]:
+    """Families in MODEL_ORDER, then any others alphabetically."""
     ordered = [family for family in MODEL_ORDER if family in families]
     return ordered + sorted(families.difference(ordered))
 
@@ -459,6 +471,7 @@ def _model_label(model_family: str) -> str:
 
 
 def _history_frame(curated: pd.DataFrame) -> pd.DataFrame:
+    """Recent actual headline and trimmed-mean CPI in long format for the forecast chart."""
     frames = []
     recent = curated.tail(HISTORY_QUARTERS_SHOWN)
     for target_label, config in FORECAST_TARGET_CONFIG.items():
@@ -467,31 +480,6 @@ def _history_frame(curated: pd.DataFrame) -> pd.DataFrame:
         frame["series"] = "Actual"
         frames.append(frame)
     return pd.concat(frames, ignore_index=True)
-
-
-def _forecast_frame(family_forecast: dict, target_label: str, anchor_quarter_date, anchor_value: float) -> pd.DataFrame:
-    quarters = pd.PeriodIndex(family_forecast["quarters"], freq="Q").to_timestamp(how="end").normalize()
-    rows = pd.DataFrame(
-        {
-            "quarter_date": quarters,
-            "series": "Forecast",
-            "target": target_label,
-            "forecast": family_forecast["forecast"],
-            "lower_ci": family_forecast["interval_lower"],
-            "upper_ci": family_forecast["interval_upper"],
-        }
-    )
-    bridge = pd.DataFrame(
-        {
-            "quarter_date": [anchor_quarter_date],
-            "series": ["Forecast"],
-            "target": [target_label],
-            "forecast": [anchor_value],
-            "lower_ci": [anchor_value],
-            "upper_ci": [anchor_value],
-        }
-    )
-    return pd.concat([bridge, rows], ignore_index=True)
 
 
 def _combined_forecast_frame(
@@ -503,24 +491,18 @@ def _combined_forecast_frame(
     frames = []
     for target_label, payload in payloads_by_target.items():
         family_forecast = family_maps_by_target[target_label][selected_family]
-        anchor_quarter_date = (
-            pd.PeriodIndex([family_forecast["forecast_origin"]], freq="Q").to_timestamp(how="end").normalize()[0]
-        )
         target_column = FORECAST_TARGET_CONFIG[target_label]["history_column"]
         fallback = float(curated[target_column].dropna().iloc[-1])
         anchor_value = _anchor_value(curated, target_column, family_forecast["forecast_origin"], fallback)
-        frames.append(_forecast_frame(family_forecast, target_label, anchor_quarter_date, anchor_value))
+        frame = _scenario_frame(family_forecast, anchor_value, "Forecast")
+        frame["target"] = target_label
+        frames.append(frame)
     return pd.concat(frames, ignore_index=True)
 
 
-def _baseline_ensemble(payload: dict) -> dict | None:
-    for model in payload.get("models", []):
-        if model.get("model_family") == "ensemble":
-            return model
-    return None
-
-
-def _scenario_frame(payload: dict, anchor_quarter_date, anchor_value: float, series: str) -> pd.DataFrame:
+def _scenario_frame(payload: dict, anchor_value: float, series: str) -> pd.DataFrame:
+    """Forecast rows for one line, starting with a bridge row at the forecast origin's observed value."""
+    anchor_quarter_date = _quarter_end_date(payload["forecast_origin"])
     quarters = pd.PeriodIndex(payload["quarters"], freq="Q").to_timestamp(how="end").normalize()
     rows = pd.DataFrame(
         {
@@ -752,7 +734,7 @@ with scenario_tab:
         "Target", options=list(SCENARIO_TARGET_CONFIG), key="scenario_target"
     )
     scenario_shock_variable = scenario_control_cols[1].selectbox(
-        "Shock variable", options=SCENARIO_SHOCK_VARIABLES, format_func=lambda v: v.replace("_", " "), key="scenario_shock_variable"
+        "Shock variable", options=SCENARIO_SHOCK_VARIABLES, format_func=_readable_name, key="scenario_shock_variable"
     )
     scenario_shock_value = scenario_control_cols[2].number_input(
         "Shock value", value=0.0, min_value=-1000.0, max_value=1000.0, step=0.25, key="scenario_shock_value"
@@ -812,18 +794,12 @@ with scenario_tab:
         scenario_metric_cols[2].metric("Shock value", f"{scenario_payload['shock_value']:.3f}")
         scenario_metric_cols[3].metric("Shock size", f"{scenario_payload['shock_size']:.3f}")
 
-        anchor_quarter_date = (
-            pd.PeriodIndex([scenario_payload["forecast_origin"]], freq="Q").to_timestamp(how="end").normalize()[0]
-        )
         anchor_value = _anchor_value(curated, scenario_target["history_column"], scenario_payload["forecast_origin"])
-        scenario_frame = _scenario_frame(scenario_payload, anchor_quarter_date, anchor_value, "SVAR shock scenario")
-        baseline_ensemble = _baseline_ensemble(baseline_payload) if baseline_payload else None
+        scenario_frame = _scenario_frame(scenario_payload, anchor_value, "SVAR shock scenario")
+        baseline_ensemble = _family_map(baseline_payload).get("ensemble") if baseline_payload else None
         if baseline_ensemble is not None:
-            baseline_anchor_quarter_date = (
-                pd.PeriodIndex([baseline_ensemble["forecast_origin"]], freq="Q").to_timestamp(how="end").normalize()[0]
-            )
             baseline_anchor_value = _anchor_value(curated, scenario_target["history_column"], baseline_ensemble["forecast_origin"])
-            baseline_frame = _scenario_frame(baseline_ensemble, baseline_anchor_quarter_date, baseline_anchor_value, "Ensemble baseline")
+            baseline_frame = _scenario_frame(baseline_ensemble, baseline_anchor_value, "Ensemble baseline")
             scenario_chart_frame = pd.concat([baseline_frame, scenario_frame], ignore_index=True)
         else:
             scenario_chart_frame = scenario_frame
@@ -893,9 +869,11 @@ with rba_tab:
                     probability_cols[index].metric(row["label"], f"{row['probability']:.1%}")
 
                 comparison = rba_models.loc[rba_models["model"].ne(reportable_model)].copy()
-                comparison["model_order"] = comparison["model"].apply(
-                    lambda value: SECONDARY_MODELS.index(value) if value in SECONDARY_MODELS else len(SECONDARY_MODELS)
-                )
+                # Secondary models in their usual order; anything unexpected goes last.
+                model_order = []
+                for model in comparison["model"]:
+                    model_order.append(SECONDARY_MODELS.index(model) if model in SECONDARY_MODELS else len(SECONDARY_MODELS))
+                comparison["model_order"] = model_order
                 comparison = comparison.sort_values(["model_order", "model"])
                 secondary_table = comparison[
                     ["model", "predicted_action", "confidence", "p_cut", "p_hold", "p_hike", "reportable", "majority_vote_tie_break"]

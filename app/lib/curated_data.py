@@ -1,10 +1,4 @@
-"""Shared curated-dataset loader for Streamlit report sections.
-
-Several report sections independently read
-``data/curated/quarterly_macro_features.csv`` and derive the same
-``quarter_date`` column for charting. This module gives them one shared
-cached loader instead of each redefining it.
-"""
+"""Load the curated quarterly dataset for the Streamlit app."""
 
 from __future__ import annotations
 

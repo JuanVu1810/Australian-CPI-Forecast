@@ -141,54 +141,29 @@ SVAR_SYSTEMS = {
 }
 
 
-def _fetch_forecast_payload(api_base_url: str, endpoint: str, horizon: int) -> dict:
-    response = requests.post(f"{api_base_url}{endpoint}", json={"horizon": horizon}, timeout=60)
-    response.raise_for_status()
-    return response.json()
-
-
-def _fetch_rba_action_payload(api_base_url: str) -> dict:
-    response = requests.get(f"{api_base_url}/rba-action", timeout=60)
-    response.raise_for_status()
-    return response.json()
-
-
-def _fetch_credit_risk_stress_test_payload(api_base_url: str) -> dict:
-    response = requests.get(f"{api_base_url}/credit-risk/stress-test", timeout=60)
-    response.raise_for_status()
-    return response.json()
-
-
 def build_forecast_frame(payloads_by_target: dict[str, dict]) -> pd.DataFrame:
+    """One row per target, model and forecast quarter from the /forecast responses."""
     rows = []
     for target_label, payload in payloads_by_target.items():
         for model in payload.get("models", []):
-            for horizon, (quarter, forecast, lower, upper) in enumerate(
-                zip(
-                    model["quarters"],
-                    model["forecast"],
-                    model["interval_lower"],
-                    model["interval_upper"],
-                    strict=True,
-                ),
-                start=1,
-            ):
+            for index in range(len(model["quarters"])):
                 rows.append(
                     {
                         "target": target_label,
                         "model_family": model["model_family"],
                         "forecast_origin": model["forecast_origin"],
-                        "quarter": quarter,
-                        "horizon": horizon,
-                        "forecast": forecast,
-                        "interval_lower": lower,
-                        "interval_upper": upper,
+                        "quarter": model["quarters"][index],
+                        "horizon": index + 1,
+                        "forecast": model["forecast"][index],
+                        "interval_lower": model["interval_lower"][index],
+                        "interval_upper": model["interval_upper"][index],
                     }
                 )
     return pd.DataFrame(rows)
 
 
 def build_rba_action_frame(payload: dict) -> pd.DataFrame:
+    """One row per classifier model, with the shared forecast context repeated on each row."""
     frame = pd.DataFrame(payload.get("models", []))
     if frame.empty:
         return frame
@@ -202,26 +177,16 @@ def build_rba_action_frame(payload: dict) -> pd.DataFrame:
 
 
 def build_credit_stress_frame(payload: dict) -> pd.DataFrame:
-    """Flatten the segment x scenario ECL payload into one row per pair.
-
-    ``payload["segments"]`` carries per-scenario values as dicts
-    (``pd_stressed_by_scenario``, ``ecl_aud_m_by_scenario``); this expands
-    them into a tidy long frame -- one row per segment per scenario -- using
-    ``payload["scenarios"]`` for each scenario's probability weight and
-    unemployment delta.
-    """
+    """Flatten the credit stress payload into one row per segment and scenario."""
     segments = payload.get("segments", [])
     if not segments:
         return pd.DataFrame()
 
-    scenario_weights = {
-        scenario["name"]: scenario["probability_weight"]
-        for scenario in payload.get("scenarios", [])
-    }
-    scenario_deltas = {
-        scenario["name"]: scenario["delta_unemployment_cumulative"]
-        for scenario in payload.get("scenarios", [])
-    }
+    scenario_weights = {}
+    scenario_deltas = {}
+    for scenario in payload.get("scenarios", []):
+        scenario_weights[scenario["name"]] = scenario["probability_weight"]
+        scenario_deltas[scenario["name"]] = scenario["delta_unemployment_cumulative"]
 
     rows = []
     for segment in segments:
@@ -251,6 +216,7 @@ def build_credit_stress_frame(payload: dict) -> pd.DataFrame:
 
 
 def build_model_comparison_frame() -> pd.DataFrame:
+    """Overall RMSE/MAE per model for both targets, without the RBA row."""
     frames = []
     for target_label, config in FORECAST_TARGETS.items():
         path = config["comparison_report"]
@@ -269,6 +235,7 @@ def build_model_comparison_frame() -> pd.DataFrame:
 
 
 def build_coverage_frame() -> pd.DataFrame:
+    """Overall interval coverage per model for both targets."""
     frames = []
     for target_label, config in FORECAST_TARGETS.items():
         path = config["coverage_report"]
@@ -289,6 +256,7 @@ def build_coverage_frame() -> pd.DataFrame:
 
 
 def build_dataset_overview_frame() -> pd.DataFrame:
+    """One-row summary of the curated dataset's date range and sources."""
     indicator_columns = list(HISTORICAL_INDICATOR_COLUMNS)
     curated = pd.read_csv(CURATED_DATA_PATH, usecols=["quarter", *indicator_columns])
     observed = curated.loc[curated[indicator_columns].notna().any(axis=1)]
@@ -311,6 +279,7 @@ def build_dataset_overview_frame() -> pd.DataFrame:
 
 
 def build_historical_indicators_frame() -> pd.DataFrame:
+    """Long table of every indicator's full history, raw and z-scored."""
     columns = list(HISTORICAL_INDICATOR_COLUMNS)
     curated = pd.read_csv(CURATED_DATA_PATH, usecols=["quarter", *columns])
     long_frame = curated.melt(id_vars="quarter", value_vars=columns, var_name="variable", value_name="value")
@@ -326,6 +295,7 @@ def build_historical_indicators_frame() -> pd.DataFrame:
 
 
 def build_feature_importance_frame() -> pd.DataFrame:
+    """Elastic Net coefficients per target, horizon and feature, with readable labels."""
     frames = []
     for target_label, path in ELASTIC_NET_COEFFICIENT_REPORTS.items():
         if not path.exists():
@@ -345,13 +315,19 @@ def build_feature_importance_frame() -> pd.DataFrame:
     return combined[["target", "horizon", "feature", "feature_label", "is_exogenous", "coef", "abs_coef"]]
 
 
+def _fit_pinned_svar(config: dict):
+    """Fit one SVAR system on data up to the export forecast origin."""
+    frame = svar.load_svar_level_frame(columns=config["columns"])
+    frame = frame.loc[frame.index <= SVAR_EXPORT_FORECAST_ORIGIN]
+    return svar.fit_svar(frame, ordering=config["ordering"])
+
+
 def build_svar_irf_frame() -> pd.DataFrame:
+    """Each target's response to the four macro shocks, with bootstrap bands."""
     frames = []
     for system, config in SVAR_SYSTEMS.items():
         target = str(config["target"])
-        frame = svar.load_svar_level_frame(columns=config["columns"])
-        frame = frame.loc[frame.index <= SVAR_EXPORT_FORECAST_ORIGIN]
-        fitted = svar.fit_svar(frame, ordering=config["ordering"])
+        fitted = _fit_pinned_svar(config)
         point = svar.recursive_cholesky_irfs(
             fitted,
             horizons=SVAR_EXPORT_HORIZONS,
@@ -374,8 +350,6 @@ def build_svar_irf_frame() -> pd.DataFrame:
         filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
         frames.append(filtered)
 
-    if not frames:
-        return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)[
         [
             "system",
@@ -395,12 +369,11 @@ def build_svar_irf_frame() -> pd.DataFrame:
 
 
 def build_svar_shock_events_frame() -> pd.DataFrame:
+    """Each target's own structural shock per quarter, z-scored and flagged when |z| > 2."""
     frames = []
     for system, config in SVAR_SYSTEMS.items():
         target = str(config["target"])
-        frame = svar.load_svar_level_frame(columns=config["columns"])
-        frame = frame.loc[frame.index <= SVAR_EXPORT_FORECAST_ORIGIN]
-        fitted = svar.fit_svar(frame, ordering=config["ordering"])
+        fitted = _fit_pinned_svar(config)
         shocks = svar.structural_shocks(fitted)
         # Locate quarters where the system target itself has an unusual
         # structural shock; macro-driver contributions are shown separately
@@ -416,8 +389,6 @@ def build_svar_shock_events_frame() -> pd.DataFrame:
         filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
         frames.append(filtered)
 
-    if not frames:
-        return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)[
         [
             "system",
@@ -432,12 +403,11 @@ def build_svar_shock_events_frame() -> pd.DataFrame:
 
 
 def build_svar_historical_decomposition_frame() -> pd.DataFrame:
+    """Each target's fitted history split into baseline and per-shock contributions."""
     frames = []
     for system, config in SVAR_SYSTEMS.items():
         target = str(config["target"])
-        frame = svar.load_svar_level_frame(columns=config["columns"])
-        frame = frame.loc[frame.index <= SVAR_EXPORT_FORECAST_ORIGIN]
-        fitted = svar.fit_svar(frame, ordering=config["ordering"])
+        fitted = _fit_pinned_svar(config)
         decomposition = svar.historical_decomposition(fitted)
         filtered = decomposition.loc[decomposition["response"].eq(target)].copy()
         filtered["system"] = system
@@ -445,8 +415,6 @@ def build_svar_historical_decomposition_frame() -> pd.DataFrame:
         filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
         frames.append(filtered)
 
-    if not frames:
-        return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)[
         [
             "system",
@@ -469,12 +437,19 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        forecast_payloads = {
-            target_label: _fetch_forecast_payload(args.api_base_url, config["endpoint"], args.horizon)
-            for target_label, config in FORECAST_TARGETS.items()
-        }
-        rba_action_payload = _fetch_rba_action_payload(args.api_base_url)
-        credit_stress_payload = _fetch_credit_risk_stress_test_payload(args.api_base_url)
+        forecast_payloads = {}
+        for target_label, config in FORECAST_TARGETS.items():
+            response = requests.post(
+                args.api_base_url + config["endpoint"], json={"horizon": args.horizon}, timeout=60
+            )
+            response.raise_for_status()
+            forecast_payloads[target_label] = response.json()
+        response = requests.get(args.api_base_url + "/rba-action", timeout=60)
+        response.raise_for_status()
+        rba_action_payload = response.json()
+        response = requests.get(args.api_base_url + "/credit-risk/stress-test", timeout=60)
+        response.raise_for_status()
+        credit_stress_payload = response.json()
     except requests.RequestException as exc:
         raise SystemExit(
             f"Could not reach the FastAPI service at {args.api_base_url}: {exc}\n"

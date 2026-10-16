@@ -5,9 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-import time
 
-import numpy as np
 import pandas as pd
 
 from src.models.elastic_net import (
@@ -88,14 +86,17 @@ MODEL_ORDER = {
 
 
 def _horizon_label(horizon: object) -> str:
+    """"overall" stays as is; 1 or "1" becomes "1"."""
     return "overall" if str(horizon) == "overall" else str(int(horizon))
 
 
 def _horizon_order(horizon: object) -> int:
+    """Sort key that puts "overall" before horizon 1."""
     return 0 if str(horizon) == "overall" else int(horizon)
 
 
 def _horizon_range_label(horizons: Iterable[int]) -> str:
+    """Describe a set of horizons as "1-8", "3" or "1,3,5"."""
     values = sorted({int(horizon) for horizon in horizons})
     if not values:
         return "none"
@@ -105,6 +106,7 @@ def _horizon_range_label(horizons: Iterable[int]) -> str:
 
 
 def _origin_count(predictions: pd.DataFrame, model: str, horizon: object) -> int:
+    """Number of forecast origins one model has, overall or at one horizon."""
     rows = predictions.loc[predictions["model"].eq(model)]
     if str(horizon) != "overall":
         rows = rows.loc[rows["horizon"].astype(int).eq(int(horizon))]
@@ -118,6 +120,7 @@ def _with_grid_metadata(
     evaluation_status: str,
     group_id: str = "",
 ) -> pd.DataFrame:
+    """Add grid, status, origin-count and evaluated-horizon columns to a metric table."""
     result = metrics.copy()
     result["comparison_grid"] = comparison_grid
     result["evaluation_status"] = evaluation_status
@@ -136,6 +139,7 @@ def _with_grid_metadata(
 
 
 def _assign_best_model(metrics: pd.DataFrame, full_horizon_label: str) -> pd.DataFrame:
+    """Mark the lowest-RMSE model at each horizon; ties go to the model listed first in MODEL_ORDER."""
     result = metrics.copy()
     result["best_model"] = pd.NA
     for horizon, rows in result.groupby(result["horizon"].map(_horizon_label), sort=False):
@@ -144,10 +148,9 @@ def _assign_best_model(metrics: pd.DataFrame, full_horizon_label: str) -> pd.Dat
             real_rows = real_rows.loc[real_rows["evaluated_horizons"].eq(full_horizon_label)]
         if real_rows.empty:
             continue
-        best_index = real_rows.sort_values(
-            ["rmse", "model"],
-            key=lambda column: column.map(MODEL_ORDER).fillna(99) if column.name == "model" else column,
-        ).index[0]
+        real_rows = real_rows.copy()
+        real_rows["_model_order"] = real_rows["model"].map(MODEL_ORDER).fillna(99)
+        best_index = real_rows.sort_values(["rmse", "_model_order"]).index[0]
         result.loc[rows.index, "best_model"] = result.loc[best_index, "model"]
     return result
 
@@ -186,15 +189,10 @@ def build_joined_metric_table(
 def build_backtest_predictions_table(
     prediction_frames: Sequence[pd.DataFrame],
 ) -> pd.DataFrame:
-    """Stack row-level walk-forward predictions from every model into one table.
+    """Stack every model's row-level walk-forward predictions into one table.
 
-    Each source frame (SARIMA, Elastic Net, Ensemble, seasonal-naive, RBA)
-    carries the same forecast/actual/error core, plus a few
-    model-specific extras (``rba_actual``, ``rba_reported_error``,
-    ``horizon_cap``). This is a plain outer-union stack of those origin-level
-    rows -- unlike ``build_joined_metric_table``, it is not restricted to a
-    common forecast grid, so every model's full evaluated history is kept
-    for BI/downstream consumption (e.g. an actual-vs-forecast-over-time chart).
+    Unlike ``build_joined_metric_table`` this is not cut to a common grid, so each model keeps its
+    full history for charts. Columns a model does not have (for example ``rba_actual``) are left empty.
     """
     if not prediction_frames:
         raise ValueError("prediction_frames must contain at least one prediction frame.")
@@ -229,7 +227,6 @@ def run_model_comparison_all(
     verbose: bool = False,
 ) -> pd.DataFrame:
     """Compute and save the joined all-model comparison report."""
-    started = time.perf_counter()
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     if weights is None:
         weights = horizon_rmse_weights(
@@ -247,16 +244,23 @@ def run_model_comparison_all(
         max_quarter=svar.FORECAST_ORIGIN_PIN,
     )
 
+    def forecast_sarima_component(train, steps):
+        return forecast_sarima(train, steps=steps, order=sarima_order, seasonal_order=sarima_seasonal_order)
+
+    def forecast_elastic_net_component(train_frame, steps):
+        return forecast_elastic_net_direct(
+            train_frame,
+            steps=steps,
+            seed=seed,
+            feature_columns=elastic_net_feature_columns,
+            target_column=target_column,
+        )
+
     if verbose:
         print("Running SARIMA row-level backtest...", flush=True)
     sarima_predictions = walk_forward_backtest(
         series=series,
-        forecast_func=lambda train, steps: forecast_sarima(
-            train,
-            steps=steps,
-            order=sarima_order,
-            seasonal_order=sarima_seasonal_order,
-        ),
+        forecast_func=forecast_sarima_component,
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
         model_name="sarima",
@@ -267,13 +271,7 @@ def run_model_comparison_all(
     elastic_net_predictions = walk_forward_backtest_direct_multihorizon(
         series=series,
         exog=exog,
-        forecast_func=lambda train_frame, steps: forecast_elastic_net_direct(
-            train_frame,
-            steps=steps,
-            seed=seed,
-            feature_columns=elastic_net_feature_columns,
-            target_column=target_column,
-        ),
+        forecast_func=forecast_elastic_net_component,
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
         model_name="elastic_net",
@@ -322,10 +320,10 @@ def run_model_comparison_all(
             predictions_output_path, index=False
         )
         if verbose:
-            print(f"Wrote {predictions_output_path} in {time.perf_counter() - started:.1f}s", flush=True)
+            print(f"Wrote {predictions_output_path}", flush=True)
 
     if verbose:
-        print(f"Wrote {output_path} in {time.perf_counter() - started:.1f}s", flush=True)
+        print(f"Wrote {output_path}", flush=True)
     return comparison
 
 

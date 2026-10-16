@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import time
 
 import numpy as np
 import pandas as pd
@@ -58,6 +57,7 @@ DEFAULT_INITIAL_TRAIN_SIZE = ELASTIC_NET_INITIAL_TRAIN_SIZE
 
 
 def _normalise_families(families: tuple[str, ...] | None) -> tuple[str, ...]:
+    """Return the requested families (all three when None); reject unknown names."""
     available = ("sarima", "elastic_net", "ensemble")
     if families is None:
         return available
@@ -180,21 +180,51 @@ def run_family_interval_backtests(
             path=dynamic_weights_source_path(target_column),
         )
 
-    frames: list[pd.DataFrame] = []
+    # Each simulate function fits one family on the data available at a forecast origin
+    # and returns simulated future paths; the walk-forward harness calls it once per origin.
+    def simulate_sarima(train_series, steps, n_sims, seed):
+        return simulate_sarima_paths(
+            train_series,
+            steps=steps,
+            n_sims=n_sims,
+            order=sarima_order,
+            seasonal_order=sarima_seasonal_order,
+            seed=seed,
+        )
+
+    def simulate_elastic_net(train_frame, steps, n_sims, seed):
+        return simulate_elastic_net_paths(
+            train_frame,
+            steps=steps,
+            n_sims=n_sims,
+            seed=seed,
+            feature_columns=elastic_net_feature_columns,
+            target_column=target_column,
+        )
+
+    def simulate_ensemble(train_series, train_exog, steps, n_sims, seed):
+        train_frame = pd.concat([train_series.rename(target_column), train_exog], axis=1).dropna()
+        return simulate_ensemble_paths(
+            train_frame,
+            steps=steps,
+            n_sims=n_sims,
+            weights=weights,
+            seed=seed,
+            target_column=target_column,
+            sarima_order=sarima_order,
+            sarima_seasonal_order=sarima_seasonal_order,
+            elastic_net_feature_columns=elastic_net_feature_columns,
+            sarima_series=train_series,
+        )
+
+    frames = []
     if "sarima" in requested_families:
         if verbose:
             print("Running SARIMA interval coverage backtest...", flush=True)
         frames.append(
             walk_forward_interval_coverage_backtest(
                 series=series,
-                simulate_func=lambda train_series, steps, n_sims, seed: simulate_sarima_paths(
-                    train_series,
-                    steps=steps,
-                    n_sims=n_sims,
-                    order=sarima_order,
-                    seasonal_order=sarima_seasonal_order,
-                    seed=seed,
-                ),
+                simulate_func=simulate_sarima,
                 initial_train_size=initial_train_size,
                 horizons=requested_horizons,
                 model_name="sarima",
@@ -223,14 +253,7 @@ def run_family_interval_backtests(
                 seed=seed + 10_000,
                 training_data="frame",
                 target_column=target_column,
-                simulate_func=lambda train_frame, steps, n_sims, seed: simulate_elastic_net_paths(
-                    train_frame,
-                    steps=steps,
-                    n_sims=n_sims,
-                    seed=seed,
-                    feature_columns=elastic_net_feature_columns,
-                    target_column=target_column,
-                ),
+                simulate_func=simulate_elastic_net,
                 max_origins=max_origins,
                 skip_origins=skip_origins,
             )
@@ -243,21 +266,7 @@ def run_family_interval_backtests(
             walk_forward_interval_coverage_backtest(
                 series=series,
                 exog=elastic_net_exog,
-                simulate_func=lambda train_series, train_exog, steps, n_sims, seed: simulate_ensemble_paths(
-                    pd.concat(
-                        [train_series.rename(target_column), train_exog],
-                        axis=1,
-                    ).dropna(),
-                    steps=steps,
-                    n_sims=n_sims,
-                    weights=weights,
-                    seed=seed,
-                    target_column=target_column,
-                    sarima_order=sarima_order,
-                    sarima_seasonal_order=sarima_seasonal_order,
-                    elastic_net_feature_columns=elastic_net_feature_columns,
-                    sarima_series=train_series,
-                ),
+                simulate_func=simulate_ensemble,
                 initial_train_size=initial_train_size,
                 horizons=requested_horizons,
                 model_name="ensemble",
@@ -295,17 +304,12 @@ def run_interval_coverage(
     weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
     verbose: bool = False,
 ) -> pd.DataFrame:
-    """Run interval coverage backtests for served model families and save a report.
+    """Run the interval backtests, optionally calibrate them, and save the coverage table.
 
-    This report intentionally keeps each family's achievable origin grid instead
-    of intersecting all families onto a common grid. It judges each model's own
-    interval calibration; cross-model sample sizes can therefore differ.
-
-    With ``apply_calibration`` each origin's interval is widened by a rolling,
-    ex-ante factor (see ``compute_rolling_conformal_scale_factors``); origins
-    without enough realised history stay raw.
+    Each family keeps its own origin grid (no common grid), so sample sizes can differ between models.
+    With ``apply_calibration`` each origin's interval is widened by a rolling factor built only from
+    earlier realised scores; origins without enough history stay raw.
     """
-    started = time.perf_counter()
     predictions = run_family_interval_backtests(
         curated_path=curated_path,
         initial_train_size=initial_train_size,
@@ -353,9 +357,7 @@ def run_interval_coverage(
     ).to_csv(output_path, index=False)
 
     if verbose:
-        elapsed = time.perf_counter() - started
         print(f"Saved interval coverage report to {output_path}", flush=True)
-        print(f"Runtime seconds: {elapsed:.1f}", flush=True)
     return coverage
 
 

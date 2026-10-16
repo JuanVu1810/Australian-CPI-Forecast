@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import time
 
 import pandas as pd
 
@@ -15,6 +14,7 @@ from src.models.evaluation import (
     compute_current_conformal_scale_factors,
     compute_interval_coverage_table,
     compute_rolling_conformal_scale_factors,
+    sort_by_model_and_horizon,
 )
 from src.models.interval_coverage import (
     DEFAULT_INITIAL_TRAIN_SIZE,
@@ -28,10 +28,16 @@ from src.models.interval_coverage import (
     run_family_interval_backtests,
 )
 from src.models.elastic_net import (
+    ELASTIC_NET_FEATURE_COLUMNS,
     TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
     TRIMMED_MEAN_TARGET_COLUMN,
 )
-from src.models.sarima import TRIMMED_MEAN_DEFAULT_ORDER, TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER
+from src.models.sarima import (
+    DEFAULT_ORDER,
+    DEFAULT_SEASONAL_ORDER,
+    TRIMMED_MEAN_DEFAULT_ORDER,
+    TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
+)
 
 
 INTERVAL_CALIBRATION_VALIDATION_OUTPUT_PATH = (
@@ -48,21 +54,12 @@ DEFAULT_FAMILIES = ("sarima", "elastic_net", "ensemble")
 
 
 def _calibration_origin_count(total_origins: int, calibration_fraction: float) -> int:
+    """Number of early origins used only for calibration; at least one origin is always held out."""
     if total_origins < 2:
         raise ValueError("at least two origins are required for calibration and validation.")
     if not 0 < calibration_fraction < 1:
         raise ValueError("calibration_fraction must satisfy 0 < fraction < 1.")
     return max(1, min(total_origins - 1, int(total_origins * calibration_fraction)))
-
-
-def _calibrated_validation_predictions(
-    validation_predictions: pd.DataFrame,
-    factors: pd.DataFrame,
-) -> pd.DataFrame:
-    calibrated = apply_interval_calibration(validation_predictions, factors)
-    if "interval_calibrated" not in calibrated:
-        calibrated["interval_calibrated"] = False
-    return calibrated
 
 
 def _held_out_comparison(
@@ -72,6 +69,7 @@ def _held_out_comparison(
     lower_quantile: float,
     upper_quantile: float,
 ) -> pd.DataFrame:
+    """Coverage before and after calibration on the held-out origins, side by side per model and horizon."""
     raw = compute_interval_coverage_table(
         raw_validation,
         lower_quantile=lower_quantile,
@@ -165,23 +163,19 @@ def run_interval_calibration(
     calibration_fraction: float = DEFAULT_CALIBRATION_FRACTION,
     families: tuple[str, ...] = DEFAULT_FAMILIES,
     target_column: str = TARGET_COLUMN,
-    sarima_order: tuple[int, int, int] | None = None,
-    sarima_seasonal_order: tuple[int, int, int, int] | None = None,
-    elastic_net_feature_columns: tuple[str, ...] | None = None,
+    sarima_order: tuple[int, int, int] = DEFAULT_ORDER,
+    sarima_seasonal_order: tuple[int, int, int, int] = DEFAULT_SEASONAL_ORDER,
+    elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
     weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
     verbose: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Write serving scale factors and an ex-ante held-out before/after comparison.
+    """Write the serving scale factors and a held-out before/after coverage comparison; return both tables.
 
-    One raw walk-forward interval backtest supplies everything. The serving
-    factors are the pooled rolling factors as of the latest observed target
-    quarter. The held-out comparison covers the last ``1 - calibration_fraction``
-    of each family's origins; every origin there is calibrated only with scores
-    already observed at that origin, so it is a true out-of-sample check that
-    includes the post-2020 volatility shift.
+    The serving factors are the rolling factors as of the latest observed quarter. The held-out
+    check covers the last ``1 - calibration_fraction`` of each family's origins, and each of those
+    origins is calibrated only with scores already observed at that origin (a true out-of-sample check).
     """
     target_coverage = float(upper_quantile - lower_quantile)
-    started = time.perf_counter()
     predictions = run_family_interval_backtests(
         curated_path=curated_path,
         initial_train_size=initial_train_size,
@@ -192,17 +186,9 @@ def run_interval_calibration(
         seed=seed,
         families=families,
         target_column=target_column,
-        **({"sarima_order": sarima_order} if sarima_order is not None else {}),
-        **(
-            {"sarima_seasonal_order": sarima_seasonal_order}
-            if sarima_seasonal_order is not None
-            else {}
-        ),
-        **(
-            {"elastic_net_feature_columns": elastic_net_feature_columns}
-            if elastic_net_feature_columns is not None
-            else {}
-        ),
+        sarima_order=sarima_order,
+        sarima_seasonal_order=sarima_seasonal_order,
+        elastic_net_feature_columns=elastic_net_feature_columns,
         weights=weights,
         verbose=verbose,
     )
@@ -216,7 +202,7 @@ def run_interval_calibration(
         predictions, target_coverage=target_coverage
     )
 
-    comparison_frames: list[pd.DataFrame] = []
+    comparison_frames = []
     for family in families:
         family_rows = predictions.loc[predictions["model"].eq(family)]
         origins = sorted(family_rows["forecast_origin"].unique())
@@ -233,9 +219,11 @@ def run_interval_calibration(
                 "and calibrated ex-ante from prior realised scores only.",
                 flush=True,
             )
-        calibrated_validation = _calibrated_validation_predictions(
+        calibrated_validation = apply_interval_calibration(
             raw_validation, rolling_factors.loc[rolling_factors["model"].eq(family)]
         )
+        if "interval_calibrated" not in calibrated_validation:
+            calibrated_validation["interval_calibrated"] = False
         factor_summary = (
             family_factors.groupby(["model", "horizon"], as_index=False)
             .agg(n=("n", "median"), scale_factor=("scale_factor", "mean"))
@@ -255,12 +243,7 @@ def run_interval_calibration(
     ].sort_values(["model", "horizon"])
 
     validation_comparison = pd.concat(comparison_frames, ignore_index=True, sort=False)
-    validation_comparison["_horizon_order"] = validation_comparison["horizon"].map(
-        lambda horizon: 0 if horizon == "overall" else int(horizon)
-    )
-    validation_comparison = validation_comparison.sort_values(
-        ["model", "_horizon_order"]
-    ).drop(columns="_horizon_order")
+    validation_comparison = sort_by_model_and_horizon(validation_comparison)
 
     factors_output_path.parent.mkdir(parents=True, exist_ok=True)
     validation_output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -282,10 +265,8 @@ def run_interval_calibration(
     ).to_csv(validation_output_path, index=False)
 
     if verbose:
-        elapsed = time.perf_counter() - started
         print(f"Saved calibration factors to {factors_output_path}", flush=True)
         print(f"Saved held-out validation comparison to {validation_output_path}", flush=True)
-        print(f"Runtime seconds: {elapsed:.1f}", flush=True)
     return all_factors, validation_comparison
 
 

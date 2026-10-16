@@ -73,22 +73,12 @@ def add_lag_features(
 
 
 def add_nonlinear_elastic_net_terms(df: pd.DataFrame) -> pd.DataFrame:
-    """Add the small approved nonlinear Elastic Net terms.
-
-    These columns are deterministic transforms of lagged, origin-available
-    inputs. They keep Elastic Net linear in parameters while allowing a few
-    screened squared/interaction effects.
-    """
+    """Add a few squared and interaction terms built from lagged inputs (Elastic Net stays linear in its parameters)."""
     result = df.copy()
 
-    if "ppi_growth_lag2" in result:
-        result["ppi_growth_lag2_sq"] = result["ppi_growth_lag2"] ** 2
-    if "commodity_growth_lag1" in result:
-        result["commodity_growth_lag1_sq"] = result["commodity_growth_lag1"] ** 2
-    if "wti_growth_lag1" in result:
-        result["wti_growth_lag1_sq"] = result["wti_growth_lag1"] ** 2
-    if "brent_growth_lag1" in result:
-        result["brent_growth_lag1_sq"] = result["brent_growth_lag1"] ** 2
+    for column in ["ppi_growth_lag2", "commodity_growth_lag1", "wti_growth_lag1", "brent_growth_lag1"]:
+        if column in result:
+            result[f"{column}_sq"] = result[column] ** 2
     if {"cash_rate_change_lag1", "unemployment_rate_change_lag1"}.issubset(result.columns):
         result["cash_rate_change_lag1_x_unemployment_rate_change_lag1"] = (
             result["cash_rate_change_lag1"] * result["unemployment_rate_change_lag1"]
@@ -101,22 +91,7 @@ def add_intervention_dummies(
     df: pd.DataFrame,
     table_path: Path = DEFAULT_INTERVENTION_TABLE_PATH,
 ) -> pd.DataFrame:
-    """Add 0/1 pulse dummies for hand-curated, externally documented shock quarters.
-
-    Column names carry a ``_lag{N}`` suffix where ``N`` is the table's
-    ``lead_quarters`` value: how many quarters *before* the shock quarter the
-    underlying real-world event (a policy announcement, not the CPI print
-    itself) was genuinely public knowledge. The shared walk-forward harness's
-    ``infer_min_lag_from_columns`` (``src/models/evaluation.py``) then caps
-    each dummy's usable forecast horizon at ``N``, so a forecast origin that
-    predates the event's real announcement never sees it encoded in its
-    future exogenous inputs. This matters because the shock quarters
-    themselves were selected by inspecting the historical CPI series for its
-    largest swings -- that selection is legitimate for *explaining* those
-    quarters in-sample, but only genuinely forecast-safe for origins on or
-    after the real announcement date, which ``lead_quarters`` records
-    per-dummy in ``table_path``.
-    """
+    """Add a 0/1 dummy column for each hand-picked shock in the intervention table."""
     result = df.copy()
     if "quarter" not in result:
         raise ValueError("add_intervention_dummies requires a 'quarter' column.")
@@ -136,6 +111,9 @@ def add_intervention_dummies(
                 f"{dummy_name!r} rows in {table_path} must share one consistent "
                 "lead_quarters value."
             )
+        # WHY: the shock quarters were picked by looking at CPI itself, so a dummy is only safe to use from
+        # the date the event was public. The "_lag{N}" suffix (N = lead_quarters) makes
+        # evaluation.infer_min_lag_from_columns cap the dummy's forecast horizon at N.
         lag = int(lead_values[0])
         result[f"{dummy_name}_lag{lag}"] = quarter_strings.isin(shock_quarters).astype(int)
 
@@ -176,6 +154,9 @@ def order_feature_columns(df: pd.DataFrame) -> pd.DataFrame:
         "cash_rate_change_lag1_x_unemployment_rate_change_lag1",
     ]
     lagged = [column for column in df.columns if "_lag" in column]
-    ordered = list(dict.fromkeys(column for column in preferred + lagged if column in df.columns))
+    ordered = []
+    for column in preferred + lagged:
+        if column in df.columns and column not in ordered:
+            ordered.append(column)
     remaining = [column for column in df.columns if column not in ordered]
     return df[ordered + remaining]

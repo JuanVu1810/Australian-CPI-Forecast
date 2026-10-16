@@ -15,11 +15,7 @@ from sklearn.metrics import accuracy_score, f1_score
 import statsmodels.api as sm
 from statsmodels.miscmodels.ordinal_model import OrderedModel
 from statsmodels.tools.sm_exceptions import ConvergenceWarning
-
-try:  # Optional at import time so lightweight classifier tests can still run.
-    from xgboost import XGBClassifier
-except ImportError:  # pragma: no cover - exercised only in environments without xgboost.
-    XGBClassifier = None
+from xgboost import XGBClassifier
 
 from src.models.elastic_net import (
     ELASTIC_NET_FEATURE_COLUMNS,
@@ -95,18 +91,10 @@ TAYLOR_INFLATION_COEFFICIENT = 0.5
 TAYLOR_UNEMPLOYMENT_CHANGE_COEFFICIENT = 0.5
 TAYLOR_ESTIMATED_HOLD_BAND = 0.125
 TAYLOR_ESTIMATED_COEFFICIENT_MAGNITUDE_WARNING = 10.0
-# Ordered logit/probit betas and alphas are on the train-standardized feature
-# scale, same order of magnitude as the Taylor-rule coefficients above, so the
-# same threshold applies. A fold whose fitted parameters exceed this is a sign
-# of (quasi-)complete separation, not a well-identified estimate: with very
-# few training rows (the earliest walk-forward folds have as few as one or two
-# examples of some classes), the fitted score can perfectly separate the
-# outcomes, so the true MLE is unbounded and BFGS just runs to `maxiter`
-# without tripping statsmodels' own ConvergenceWarning. The resulting
-# parameter values are numerically arbitrary (sensitive to the optimizer's
-# exact floating-point path) even though the walk-forward loop itself is
-# deterministic given fixed inputs, so this flag, not the raw parameter
-# value, is the reproducible signal for those folds.
+# WHY: in the thin early folds the classes can be perfectly separated, so the ordered-model
+# MLE runs off to very large values without statsmodels raising a ConvergenceWarning.
+# A parameter (on the standardised scale) above this size flags such a fold; the flag,
+# not the arbitrary parameter value, is the reproducible signal.
 ORDERED_MODEL_COEFFICIENT_MAGNITUDE_WARNING = 10.0
 XGBOOST_PARAMS = {
     "n_estimators": 50,
@@ -152,6 +140,7 @@ def class_counts(labels: pd.Series) -> pd.Series:
 
 
 def _load_ensemble_horizon_one(path: Path, feature_name: str) -> pd.DataFrame:
+    """Read the Ensemble's one-quarter-ahead backtest forecasts, one row per target quarter."""
     required = {"model", "target_quarter", "horizon", "forecast"}
     frame = pd.read_csv(path, usecols=sorted(required))
     missing = required.difference(frame.columns)
@@ -206,9 +195,7 @@ def assemble_policy_sample(
             "policy_action",
         ]
     ).copy()
-    sample["_quarter_order"] = sample["target_quarter"].map(
-        lambda value: pd.Period(value, freq="Q")
-    )
+    sample["_quarter_order"] = pd.PeriodIndex(sample["target_quarter"], freq="Q")
     sample = sample.sort_values("_quarter_order").drop(columns="_quarter_order")
     return sample.reset_index(drop=True)
 
@@ -256,8 +243,8 @@ def split_class_count_audit(
             continue
 
         fold_counts = []
-        degenerate_classes: set[str] = set()
-        degenerate_binary_subproblems: set[str] = set()
+        degenerate_classes = set()
+        degenerate_binary_subproblems = set()
         binary_fold_count = 0
         for train_index, _ in expanding_walk_forward_splits(sample, initial_train_size):
             train_codes = labels.iloc[train_index].cat.codes
@@ -490,6 +477,7 @@ def discretize_taylor_estimated_change(changes: pd.Series | np.ndarray) -> pd.Se
 
 
 def _probability_frame(probabilities: np.ndarray, index: pd.Index) -> pd.DataFrame:
+    """Wrap cut/hold/hike probabilities in a frame and check each row sums to 1."""
     values = np.asarray(probabilities, dtype=float)
     if values.ndim == 1:
         values = values.reshape(1, -1)
@@ -521,6 +509,7 @@ def _threshold_probability_frame(draws: np.ndarray, index: pd.Index) -> pd.DataF
 def _load_threshold_simulation_frame(
     curated_path: Path = CURATED_DATA_PATH,
 ) -> pd.DataFrame:
+    """Headline target plus Elastic Net features, the training data for the threshold simulation."""
     target = load_target_series(curated_path, target_column=TARGET_COLUMN)
     exog = load_elastic_net_feature_frame(
         curated_path,
@@ -541,6 +530,7 @@ def _predict_threshold_confidence(
     seed: int,
     weights: dict[int, tuple[float, float]],
 ) -> tuple[pd.DataFrame, dict[str, float | str]]:
+    """Simulate next-quarter CPI from the origin before the test quarter and turn the draws into threshold probabilities."""
     target_quarter = pd.Period(str(test.iloc[0]["target_quarter"]), freq="Q")
     forecast_origin = target_quarter - 1
     train_frame = simulation_frame.loc[:forecast_origin].dropna()
@@ -570,7 +560,7 @@ def _predict_threshold_confidence(
     probabilities = _threshold_probability_frame(horizon_one_draws, index=test.index)
     simulated_median = float(np.median(horizon_one_draws))
     simulated_action = str(threshold_baseline_predict(pd.Series([simulated_median])).iloc[0])
-    diagnostics: dict[str, float | str] = {
+    diagnostics = {
         "threshold_forecast_origin": str(forecast_origin),
         "threshold_simulated_median": simulated_median,
         "threshold_simulated_action": simulated_action,
@@ -600,6 +590,7 @@ def _estimated_taylor_probability_frame(
 
 
 def _estimated_taylor_exog(frame: pd.DataFrame) -> pd.DataFrame:
+    """Regressors for the estimated Taylor rule: inflation gap and lagged unemployment change."""
     return pd.DataFrame(
         {
             "inflation_gap": (
@@ -615,6 +606,7 @@ def _predict_estimated_taylor_rule(
     train: pd.DataFrame,
     test: pd.DataFrame,
 ) -> tuple[pd.Series, pd.DataFrame, dict[str, float | str]]:
+    """Fit the Taylor rule by OLS on the training rows; return the action, probabilities and coefficients."""
     y_train = train["cash_rate_change"].astype(float)
     x_train = sm.add_constant(_estimated_taylor_exog(train), has_constant="add")
     x_test = sm.add_constant(_estimated_taylor_exog(test), has_constant="add")
@@ -638,7 +630,7 @@ def _predict_estimated_taylor_rule(
         if name != "intercept"
         and abs(value) > TAYLOR_ESTIMATED_COEFFICIENT_MAGNITUDE_WARNING
     ]
-    diagnostics: dict[str, float | str] = {
+    diagnostics = {
         **coefficients,
         "predicted_change": float(predicted_change.iloc[0]),
         "residual_se": residual_se,
@@ -651,12 +643,14 @@ def _standardize_by_train(
     train: pd.DataFrame,
     test: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Scale train and test with the training mean and standard deviation only."""
     mean = train.mean(axis=0)
     scale = train.std(axis=0, ddof=0).replace(0.0, 1.0)
     return (train - mean) / scale, (test - mean) / scale
 
 
 def _fit_ordered_model(train: pd.DataFrame, link: str):
+    """Fit an ordered logit or probit; return the fit and any ConvergenceWarning messages."""
     endog = train["policy_action"].astype(ACTION_DTYPE).cat.codes
     exog = train.loc[:, ORDINAL_FEATURE_COLUMNS].astype(float)
     model = OrderedModel(endog=endog, exog=exog, distr=link)
@@ -678,6 +672,7 @@ def _ordered_model_parameter_diagnostics(
     target_quarter: str,
     train_rows: int,
 ) -> dict[str, float | str | int]:
+    """Cutoffs, betas and a flag for any parameter that is suspiciously large."""
     params = fitted.params
     thresholds = fitted.model.transform_threshold_params(params)[1:-1]
     alpha_cut_hold = float(thresholds[0])
@@ -692,7 +687,7 @@ def _ordered_model_parameter_diagnostics(
         }.items()
         if abs(value) > ORDERED_MODEL_COEFFICIENT_MAGNITUDE_WARNING
     ]
-    diagnostics: dict[str, float | str | int] = {
+    diagnostics = {
         "model": f"ordered_{link}",
         "target_quarter": target_quarter,
         "train_rows": int(train_rows),
@@ -710,6 +705,7 @@ def _predict_ordered_model(
     test: pd.DataFrame,
     link: str,
 ) -> tuple[pd.Series, pd.DataFrame, list[str], dict[str, float | str | int]]:
+    """Fit an ordered model on standardised features and predict the most likely action for the test row."""
     x_train = train.loc[:, ORDINAL_FEATURE_COLUMNS].astype(float)
     x_test = test.loc[:, ORDINAL_FEATURE_COLUMNS].astype(float)
     x_train_scaled, x_test_scaled = _standardize_by_train(x_train, x_test)
@@ -740,20 +736,12 @@ def _predict_ordered_model(
     )
 
 
-def _require_xgboost() -> type:
-    if XGBClassifier is None:
-        raise ImportError(
-            "Frank-Hall XGBoost requires the optional xgboost dependency. "
-            "Install project requirements before running the full RBA classifier evaluation."
-        )
-    return XGBClassifier
-
-
 def _frank_hall_probabilities_to_actions(
     p_y_gt_cut: np.ndarray,
     p_y_gt_hold: np.ndarray,
     index: pd.Index,
 ) -> pd.Series:
+    """Frank-Hall: P(cut) = 1 - P(Y>cut), P(hold) = P(Y>cut) - P(Y>hold), P(hike) = P(Y>hold); pick the largest."""
     p_gt_cut = np.clip(np.asarray(p_y_gt_cut, dtype=float), 0.0, 1.0)
     p_gt_hold = np.minimum(np.clip(np.asarray(p_y_gt_hold, dtype=float), 0.0, 1.0), p_gt_cut)
     probabilities = np.column_stack(
@@ -771,7 +759,7 @@ def _frank_hall_probabilities_to_actions(
 
 
 def _predict_frank_hall_xgboost(train: pd.DataFrame, test: pd.DataFrame) -> pd.Series:
-    classifier_cls = _require_xgboost()
+    """Fit two binary XGBoost models (Y>cut, Y>hold) and combine them into one action."""
     train_codes = train["policy_action"].astype(ACTION_DTYPE).cat.codes
     x_train = train.loc[:, XGBOOST_FEATURE_COLUMNS].astype(float)
     x_test = test.loc[:, XGBOOST_FEATURE_COLUMNS].astype(float)
@@ -783,7 +771,7 @@ def _predict_frank_hall_xgboost(train: pd.DataFrame, test: pd.DataFrame) -> pd.S
             raise ValueError(
                 f"Frank-Hall XGBoost fold has only one outcome for Y>{ACTION_ORDER[threshold_code]}."
             )
-        model = classifier_cls(**XGBOOST_PARAMS)
+        model = XGBClassifier(**XGBOOST_PARAMS)
         model.fit(x_train, binary_target)
         probabilities.append(model.predict_proba(x_test)[:, 1])
     return _frank_hall_probabilities_to_actions(
@@ -900,16 +888,56 @@ def predict_single_quarter(
         "ordered_probit": probit_probabilities.reset_index(drop=True),
     }
 
+    test_row = test.iloc[0]
     rows = []
     for model, prediction in model_predictions.items():
-        ordered_diagnostics = ordered_diagnostics_by_model.get(model, {})
-        probabilities = probabilities_by_model.get(model)
-        probability_values = (
-            probabilities.iloc[0].to_dict()
-            if probabilities is not None
-            else {column: np.nan for column in PROBABILITY_COLUMNS}
-        )
         predicted_action = str(prediction.iloc[0])
+        if model in probabilities_by_model:
+            probability_values = probabilities_by_model[model].iloc[0].to_dict()
+        else:
+            probability_values = {column: np.nan for column in PROBABILITY_COLUMNS}
+        if model in CONFIDENCE_MODELS:
+            confidence = float(probability_values[f"p_{predicted_action}"])
+        else:
+            confidence = np.nan
+
+        # Model-specific diagnostic columns stay empty on every other model's row.
+        taylor_columns = {
+            "estimated_taylor_intercept": np.nan,
+            "estimated_taylor_coef_inflation_gap": np.nan,
+            "estimated_taylor_coef_unemployment_change": np.nan,
+            "estimated_taylor_predicted_change": np.nan,
+            "estimated_taylor_unstable_coefficients": "",
+        }
+        if model == "taylor_rule_estimated":
+            taylor_columns = {
+                "estimated_taylor_intercept": estimated_taylor_diagnostics["intercept"],
+                "estimated_taylor_coef_inflation_gap": estimated_taylor_diagnostics["coef_inflation_gap"],
+                "estimated_taylor_coef_unemployment_change": estimated_taylor_diagnostics[
+                    "coef_unemployment_rate_change_lag1"
+                ],
+                "estimated_taylor_predicted_change": estimated_taylor_diagnostics["predicted_change"],
+                "estimated_taylor_unstable_coefficients": estimated_taylor_diagnostics["unstable_coefficients"],
+            }
+        threshold_columns = {
+            "threshold_forecast_origin": "",
+            "threshold_simulated_median": np.nan,
+            "threshold_simulated_action": "",
+        }
+        if model == "threshold":
+            threshold_columns = dict(threshold_diagnostics)
+        ordered_diagnostics = ordered_diagnostics_by_model.get(model, {})
+        ordered_columns = {}
+        for feature in ORDINAL_FEATURE_COLUMNS:
+            column = f"ordered_beta_{feature}"
+            ordered_columns[column] = ordered_diagnostics.get(column, np.nan)
+        ordered_columns["ordered_alpha_cut_hold"] = ordered_diagnostics.get("ordered_alpha_cut_hold", np.nan)
+        ordered_columns["ordered_alpha_hold_hike"] = ordered_diagnostics.get("ordered_alpha_hold_hike", np.nan)
+        ordered_columns["ordered_unstable_coefficients"] = ordered_diagnostics.get(
+            "ordered_unstable_coefficients", ""
+        )
+        ordered_columns["ordered_train_rows"] = ordered_diagnostics.get("train_rows", np.nan)
+
         rows.append(
             {
                 "model": model,
@@ -917,85 +945,18 @@ def predict_single_quarter(
                 "actual_action": actual_action,
                 "predicted_action": predicted_action,
                 **probability_values,
-                "confidence": (
-                    float(probability_values[f"p_{predicted_action}"])
-                    if model in CONFIDENCE_MODELS
-                    else np.nan
-                ),
+                "confidence": confidence,
                 "majority_vote_tie_break": (
-                    bool(ensemble_tie_break.iloc[0])
-                    if model == "majority_vote_ensemble"
-                    else False
+                    bool(ensemble_tie_break.iloc[0]) if model == "majority_vote_ensemble" else False
                 ),
-                "headline_forecast": float(test.iloc[0]["headline_forecast"]),
-                "trimmed_mean_forecast": float(test.iloc[0]["trimmed_mean_forecast"]),
-                "unemployment_rate_change_lag1": float(
-                    test.iloc[0]["unemployment_rate_change_lag1"]
-                ),
-                TAYLOR_IMPLIED_CHANGE_COLUMN: float(
-                    test.iloc[0][TAYLOR_IMPLIED_CHANGE_COLUMN]
-                ),
+                "headline_forecast": float(test_row["headline_forecast"]),
+                "trimmed_mean_forecast": float(test_row["trimmed_mean_forecast"]),
+                "unemployment_rate_change_lag1": float(test_row["unemployment_rate_change_lag1"]),
+                TAYLOR_IMPLIED_CHANGE_COLUMN: float(test_row[TAYLOR_IMPLIED_CHANGE_COLUMN]),
                 "fit_warnings": warning_by_model.get(model, ""),
-                "estimated_taylor_intercept": (
-                    estimated_taylor_diagnostics["intercept"]
-                    if model == "taylor_rule_estimated"
-                    else np.nan
-                ),
-                "estimated_taylor_coef_inflation_gap": (
-                    estimated_taylor_diagnostics["coef_inflation_gap"]
-                    if model == "taylor_rule_estimated"
-                    else np.nan
-                ),
-                "estimated_taylor_coef_unemployment_change": (
-                    estimated_taylor_diagnostics["coef_unemployment_rate_change_lag1"]
-                    if model == "taylor_rule_estimated"
-                    else np.nan
-                ),
-                "estimated_taylor_predicted_change": (
-                    estimated_taylor_diagnostics["predicted_change"]
-                    if model == "taylor_rule_estimated"
-                    else np.nan
-                ),
-                "estimated_taylor_unstable_coefficients": (
-                    estimated_taylor_diagnostics["unstable_coefficients"]
-                    if model == "taylor_rule_estimated"
-                    else ""
-                ),
-                "threshold_forecast_origin": (
-                    threshold_diagnostics["threshold_forecast_origin"]
-                    if model == "threshold"
-                    else ""
-                ),
-                "threshold_simulated_median": (
-                    threshold_diagnostics["threshold_simulated_median"]
-                    if model == "threshold"
-                    else np.nan
-                ),
-                "threshold_simulated_action": (
-                    threshold_diagnostics["threshold_simulated_action"]
-                    if model == "threshold"
-                    else ""
-                ),
-                **{
-                    f"ordered_beta_{feature}": ordered_diagnostics.get(
-                        f"ordered_beta_{feature}",
-                        np.nan,
-                    )
-                    for feature in ORDINAL_FEATURE_COLUMNS
-                },
-                "ordered_alpha_cut_hold": ordered_diagnostics.get(
-                    "ordered_alpha_cut_hold",
-                    np.nan,
-                ),
-                "ordered_alpha_hold_hike": ordered_diagnostics.get(
-                    "ordered_alpha_hold_hike",
-                    np.nan,
-                ),
-                "ordered_unstable_coefficients": ordered_diagnostics.get(
-                    "ordered_unstable_coefficients",
-                    "",
-                ),
-                "ordered_train_rows": ordered_diagnostics.get("train_rows", np.nan),
+                **taylor_columns,
+                **threshold_columns,
+                **ordered_columns,
             }
         )
     return pd.DataFrame(rows)
@@ -1063,36 +1024,29 @@ def compute_policy_metrics(predictions: pd.DataFrame) -> pd.DataFrame:
                 "n": len(group),
             }
         )
-    order_lookup = {model: position for position, model in enumerate(MODEL_ORDER)}
-    return (
-        pd.DataFrame(rows)
-        .assign(_model_order=lambda frame: frame["model"].map(order_lookup))
-        .sort_values(["macro_f1", "_model_order"], ascending=[False, True])
-        .drop(columns="_model_order")
-        .reset_index(drop=True)
-    )
+    # Best macro-F1 first; ties keep the MODEL_ORDER position.
+    metrics = pd.DataFrame(rows)
+    metrics["_model_order"] = metrics["model"].map(MODEL_ORDER.index)
+    metrics = metrics.sort_values(["macro_f1", "_model_order"], ascending=[False, True])
+    return metrics.drop(columns="_model_order").reset_index(drop=True)
 
 
 def _markdown_table(frame: pd.DataFrame, float_format: str = ".3f") -> str:
+    """Render a table as Markdown with three decimals."""
     return frame.to_markdown(index=False, floatfmt=float_format)
 
 
 def _markdown_confusion_matrices(predictions: pd.DataFrame) -> str:
+    """One Markdown confusion matrix per model."""
     sections = []
     for model in MODEL_ORDER:
-        rows = predictions.loc[predictions["model"].eq(model)]
-        matrix = confusion_matrix_frame(rows["actual_action"], rows["predicted_action"])
+        matrix = _model_confusion_matrix(predictions, model)
         sections.append(f"### {model}\n\n{matrix.reset_index().to_markdown(index=False)}")
     return "\n\n".join(sections)
 
 
 def _condensed_split_audit(display_audit: pd.DataFrame, degenerate: pd.DataFrame, chosen_size: int) -> pd.DataFrame:
-    """Keep only the degenerate/clean transition, the chosen row, and the endpoints.
-
-    The full audit repeats the same "none/no degenerate" verdict for every
-    larger candidate once the gate clears; those extra rows add margin, not
-    new information, so the report only needs the transition and the choice.
-    """
+    """Keep the degenerate rows, the first clean row, the chosen row and the last row of the split audit."""
     columns = [
         "initial_train_size",
         "test_rows",
@@ -1123,12 +1077,7 @@ def _representative_confidence_sample(
     n_quarters: int = 4,
     models: tuple[str, ...] = ("threshold", "ordered_logit"),
 ) -> pd.DataFrame:
-    """A small, deterministic slice of the confidence table for the markdown report.
-
-    The full table is every model's class probabilities for every test
-    quarter, useful for debugging but too long for a report meant to be read.
-    `run_rba_classifier_evaluation` still returns the full frame in memory.
-    """
+    """A few evenly spaced quarters of the confidence table, short enough for the report."""
     quarters = confidence_display["target_quarter"].drop_duplicates().tolist()
     if len(quarters) <= n_quarters:
         picks = quarters
@@ -1180,10 +1129,9 @@ def prediction_confidence_table(predictions: pd.DataFrame) -> pd.DataFrame:
     if not np.allclose(rows["confidence"].to_numpy(dtype=float), expected_confidence):
         raise ValueError("Prediction confidence does not match the predicted action probability.")
 
-    model_order = {model: position for position, model in enumerate(CONFIDENCE_MODELS)}
+    rows["_model_order"] = rows["model"].map(CONFIDENCE_MODELS.index)
     return (
-        rows.assign(_model_order=lambda frame: frame["model"].map(model_order))
-        .sort_values(["target_quarter", "_model_order"])
+        rows.sort_values(["target_quarter", "_model_order"])
         .drop(columns="_model_order")
         .rename(
             columns={
@@ -1269,6 +1217,7 @@ def threshold_confidence_consistency_table(predictions: pd.DataFrame) -> pd.Data
 
 
 def _format_model_list(models: list[str]) -> str:
+    """Join names as "a", "a and b" or "a, b, and c"."""
     if not models:
         return ""
     if len(models) == 1:
@@ -1276,6 +1225,17 @@ def _format_model_list(models: list[str]) -> str:
     if len(models) == 2:
         return f"{models[0]} and {models[1]}"
     return f"{', '.join(models[:-1])}, and {models[-1]}"
+
+
+def _model_confusion_matrix(predictions: pd.DataFrame, model: str) -> pd.DataFrame:
+    """Confusion matrix for one model's walk-forward predictions."""
+    rows = predictions.loc[predictions["model"].eq(model)]
+    return confusion_matrix_frame(rows["actual_action"], rows["predicted_action"])
+
+
+def _macro_f1(y_true: pd.Series, y_pred: pd.Series) -> float:
+    """Macro-F1 over cut/hold/hike, scoring an absent class as 0."""
+    return float(f1_score(y_true, y_pred, labels=list(ACTION_ORDER), average="macro", zero_division=0))
 
 
 def build_evaluation_report(
@@ -1507,17 +1467,7 @@ def build_evaluation_report(
         subset=[*MODEL_ORDER, "actual_action"]
     )
 
-    def _macro_f1(y_true: pd.Series, y_pred: pd.Series) -> float:
-        return float(
-            f1_score(
-                y_true,
-                y_pred,
-                labels=list(ACTION_ORDER),
-                average="macro",
-                zero_division=0,
-            )
-        )
-
+    # Paired bootstrap of the threshold-minus-candidate macro-F1 gap (2,000 resamples of quarters).
     rng = np.random.default_rng(42)
     bootstrap_rows = []
     unsettled_comparators = []
@@ -1555,22 +1505,10 @@ def build_evaluation_report(
             candidate_positive_comparators.append(comparator)
     bootstrap_frame = pd.DataFrame(bootstrap_rows)
 
-    threshold_matrix = confusion_matrix_frame(
-        predictions.loc[predictions["model"].eq("threshold"), "actual_action"],
-        predictions.loc[predictions["model"].eq("threshold"), "predicted_action"],
-    )
-    estimated_taylor_matrix = confusion_matrix_frame(
-        predictions.loc[predictions["model"].eq("taylor_rule_estimated"), "actual_action"],
-        predictions.loc[predictions["model"].eq("taylor_rule_estimated"), "predicted_action"],
-    )
-    logit_matrix = confusion_matrix_frame(
-        predictions.loc[predictions["model"].eq("ordered_logit"), "actual_action"],
-        predictions.loc[predictions["model"].eq("ordered_logit"), "predicted_action"],
-    )
-    probit_matrix = confusion_matrix_frame(
-        predictions.loc[predictions["model"].eq("ordered_probit"), "actual_action"],
-        predictions.loc[predictions["model"].eq("ordered_probit"), "predicted_action"],
-    )
+    threshold_matrix = _model_confusion_matrix(predictions, "threshold")
+    estimated_taylor_matrix = _model_confusion_matrix(predictions, "taylor_rule_estimated")
+    logit_matrix = _model_confusion_matrix(predictions, "ordered_logit")
+    probit_matrix = _model_confusion_matrix(predictions, "ordered_probit")
     hike_total = int(threshold_matrix.loc["hike"].sum())
     threshold_hike_recall = int(threshold_matrix.loc["hike", "hike"])
     estimated_taylor_hike_recall = int(estimated_taylor_matrix.loc["hike", "hike"])
@@ -1936,6 +1874,7 @@ def run_rba_classifier_evaluation(
 
 
 def _parse_initial_sizes(value: str) -> tuple[int, ...]:
+    """Turn "1,2,3" into (1, 2, 3)."""
     return tuple(int(item.strip()) for item in value.split(",") if item.strip())
 
 
@@ -1968,10 +1907,9 @@ def main(argv: list[str] | None = None) -> None:
     print(split_choice.rationale)
     print(metrics.round({"macro_f1": 3, "accuracy": 3}).to_string(index=False))
     for model in MODEL_ORDER:
-        rows = predictions.loc[predictions["model"].eq(model)]
         print()
         print(model)
-        print(confusion_matrix_frame(rows["actual_action"], rows["predicted_action"]).to_string())
+        print(_model_confusion_matrix(predictions, model).to_string())
 
 
 if __name__ == "__main__":

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping
 
 import pandas as pd
 
@@ -24,19 +23,11 @@ DISCOUNT_RATE_ASSUMPTIONS_PATH = (
 )
 SEGMENT_ORDER = ("personal_loans", "mortgages")
 
-# Scenario quantiles taken from the cumulative-unemployment-change draws
-# returned by svar.forecast_cumulative_unemployment_change_quantiles. "downside"
-# (weaker economy) maps to the 90th percentile of the unemployment-change
-# distribution -- the largest simulated rise in unemployment, worse for
-# credit -- and "upside" (stronger economy) to the 10th percentile -- the
-# smallest rise or a fall in unemployment, better for credit. This is the
-# standard direction convention for credit-risk/ECL scenario naming (a
-# "downside" scenario means a weaker economy), and is why it's the reverse
-# of how the same 10th/90th split is used for this project's existing 80%
-# SVAR bootstrap IRF bands (src/models/svar.py's DEFAULT_LOWER_QUANTILE /
-# DEFAULT_UPPER_QUANTILE), kept as an independent constant here so changing
-# the IRF band width elsewhere does not silently change this scenario
-# definition.
+# Quantiles of the simulated cumulative unemployment change (from
+# svar.forecast_cumulative_unemployment_change_quantiles). "downside" means a weaker
+# economy, so it takes the 90th percentile (the biggest rise in unemployment) and
+# "upside" the 10th. Kept separate from svar's IRF band quantiles so changing those
+# does not quietly change the credit scenarios.
 SCENARIO_QUANTILES = {"downside": 0.9, "base": 0.5, "upside": 0.1}
 # NAB's own disclosed FY2025 Annual Report macroeconomic scenario
 # probability weightings (base case 55%, downside 42.5%, upside 2.5%),
@@ -172,63 +163,43 @@ def mortgage_stressed_pd(
     )
 
 
-def load_pd_base_assumptions(
-    path: Path = PD_BASE_ASSUMPTIONS_PATH,
-) -> pd.DataFrame:
-    """Load illustrative segment-level annual PD assumptions."""
+def _read_assumption_csv(path: Path, numeric_columns: list[str]) -> pd.DataFrame:
+    """Read one segment-level assumption CSV and check its numeric columns really are numbers."""
     frame = pd.read_csv(path)
-    required = {"segment", "pd_base", "note"}
+    required = {"segment", "note", *numeric_columns}
     missing = sorted(required.difference(frame.columns))
     if missing:
         raise ValueError(f"{path} missing required columns: {missing}")
-    frame = frame.copy()
-    frame["pd_base"] = pd.to_numeric(frame["pd_base"], errors="raise")
+    for column in numeric_columns:
+        frame[column] = pd.to_numeric(frame[column], errors="raise")
     return frame
 
 
-def load_lgd_ead_assumptions(
-    path: Path = LGD_EAD_ASSUMPTIONS_PATH,
-) -> pd.DataFrame:
-    """Load illustrative segment-level LGD and EAD (post-CCF/post-CRM) assumptions."""
-    frame = pd.read_csv(path)
-    required = {"segment", "lgd", "ead_aud_m", "note"}
-    missing = sorted(required.difference(frame.columns))
-    if missing:
-        raise ValueError(f"{path} missing required columns: {missing}")
-    frame = frame.copy()
-    frame["lgd"] = pd.to_numeric(frame["lgd"], errors="raise")
-    frame["ead_aud_m"] = pd.to_numeric(frame["ead_aud_m"], errors="raise")
-    return frame
+def load_pd_base_assumptions(path: Path = PD_BASE_ASSUMPTIONS_PATH) -> pd.DataFrame:
+    """Load segment-level annual PD assumptions."""
+    return _read_assumption_csv(path, ["pd_base"])
 
 
-def load_discount_rate_assumptions(
-    path: Path = DISCOUNT_RATE_ASSUMPTIONS_PATH,
-) -> pd.DataFrame:
-    """Load illustrative segment-level EIR proxy assumptions."""
-    frame = pd.read_csv(path)
-    required = {"segment", "discount_rate", "note"}
-    missing = sorted(required.difference(frame.columns))
-    if missing:
-        raise ValueError(f"{path} missing required columns: {missing}")
-    frame = frame.copy()
-    frame["discount_rate"] = pd.to_numeric(frame["discount_rate"], errors="raise")
-    return frame
+def load_lgd_ead_assumptions(path: Path = LGD_EAD_ASSUMPTIONS_PATH) -> pd.DataFrame:
+    """Load segment-level LGD and EAD (post-CCF/post-CRM) assumptions."""
+    return _read_assumption_csv(path, ["lgd", "ead_aud_m"])
+
+
+def load_discount_rate_assumptions(path: Path = DISCOUNT_RATE_ASSUMPTIONS_PATH) -> pd.DataFrame:
+    """Load segment-level EIR proxy discount rates."""
+    return _read_assumption_csv(path, ["discount_rate"])
 
 
 def run_credit_stress_test(
-    scenario_deltas: Mapping[str, float],
+    scenario_deltas: dict[str, float],
     pd_base_path: Path = PD_BASE_ASSUMPTIONS_PATH,
     lgd_ead_path: Path = LGD_EAD_ASSUMPTIONS_PATH,
     discount_rate_path: Path = DISCOUNT_RATE_ASSUMPTIONS_PATH,
-    scenario_weights: Mapping[str, float] = SCENARIO_PROBABILITY_WEIGHTS,
+    scenario_weights: dict[str, float] = SCENARIO_PROBABILITY_WEIGHTS,
 ) -> pd.DataFrame:
-    """Apply the illustrative PD/LGD/EAD 12-month ECL formula per segment and scenario.
+    """Map {scenario: cumulative unemployment change} to one row per segment and scenario with stressed PD and ECL.
 
-    ``scenario_deltas`` maps a scenario name (e.g. "downside"/"base"/"upside")
-    to that scenario's cumulative unemployment-rate change. Returns one row
-    per segment per scenario with the stressed PD and present-value ECL:
-    ``ecl = pd_stressed * lgd * ead / (1 + discount_rate)`` (in $AUD
-    millions, since ``ead`` is).
+    ECL ($AUD millions) = pd_stressed * lgd * ead / (1 + discount_rate).
     """
     missing_weights = sorted(set(scenario_deltas) - set(scenario_weights))
     if missing_weights:
@@ -276,10 +247,7 @@ def run_credit_stress_test(
                     "ead_aud_m": ead,
                     "discount_rate": discount_rate,
                     "pd_stressed": stressed_pd,
-                    "ecl_aud_m": stressed_pd
-                    * lgd
-                    * ead
-                    / (1 + discount_rate),
+                    "ecl_aud_m": stressed_pd * lgd * ead / (1 + discount_rate),
                 }
             )
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Iterable
 
 import pandas as pd
@@ -23,17 +23,7 @@ class QualityRecord:
     notes: str
 
     def as_dict(self) -> dict[str, object]:
-        return {
-            "dataset": self.dataset,
-            "status": self.status,
-            "rows": self.rows,
-            "columns": self.columns,
-            "start_date": self.start_date,
-            "end_date": self.end_date,
-            "missing_values": self.missing_values,
-            "duplicate_dates": self.duplicate_dates,
-            "notes": self.notes,
-        }
+        return asdict(self)
 
 
 def find_date_column(df: pd.DataFrame) -> str:
@@ -63,13 +53,8 @@ def validate_time_series(
     value_cols: Iterable[str],
     min_rows: int = 1,
 ) -> QualityRecord:
-    """Validate one source or processed time-series dataset.
-
-    The checks are intentionally lightweight and transparent for a portfolio
-    project: date parsing, duplicates, ordering, numeric values, missingness,
-    and unexpected empty inputs.
-    """
-    notes: list[str] = []
+    """Check one source or processed series for bad or duplicate dates, ordering, non-numeric and missing values."""
+    notes = []
     status = "PASS"
 
     value_cols = list(value_cols)
@@ -200,10 +185,10 @@ def validate_curated_dataset(
     target_col: str = "cpi_yoy",
 ) -> list[QualityRecord]:
     """Validate the final quarterly modelling table."""
-    records: list[QualityRecord] = []
+    records = []
 
     required_cols = ["quarter", "cpi_qoq", "cpi_yoy"]
-    notes: list[str] = []
+    notes = []
     status = "PASS"
 
     missing_required = [column for column in required_cols if column not in df.columns]

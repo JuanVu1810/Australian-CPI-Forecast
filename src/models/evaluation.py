@@ -14,7 +14,7 @@ four-quarter change, this benchmark is close to persistence, but keeping it on
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -42,17 +42,6 @@ QUARTER_COLUMN = "quarter"
 DEFAULT_HORIZONS = tuple(range(1, 9))
 DEFAULT_INITIAL_TRAIN_SIZE = 32
 
-ForecastFunction = Callable[[pd.Series, int], Sequence[float] | pd.Series | np.ndarray]
-ExogForecastFunction = Callable[
-    [pd.Series, pd.DataFrame, pd.DataFrame, int],
-    Sequence[float] | pd.Series | np.ndarray,
-]
-DirectMultihorizonForecastFunction = Callable[
-    [pd.DataFrame, int],
-    Sequence[float] | pd.Series | np.ndarray,
-]
-IntervalSimulationFunction = Callable[..., np.ndarray]
-
 LAG_COLUMN_PATTERN = re.compile(r"_lag(\d+)$")
 INTERVAL_COVERAGE_COLUMNS = [
     "model",
@@ -71,13 +60,7 @@ INTERVAL_COVERAGE_COLUMNS = [
 
 @dataclass(frozen=True)
 class TrainWindowScaler:
-    """Small train-window standard scaler shared by models that need one.
-
-    Fitting must always happen on exactly the caller's training window (never
-    the full series) so that per-origin walk-forward scaling stays leakage
-    safe; see the direct-multihorizon Elastic Net fit for the intended usage
-    pattern.
-    """
+    """Standard scaler fitted on one training window only (never the full series), so walk-forward scaling cannot leak."""
 
     columns: tuple[str, ...]
     mean_: pd.Series
@@ -115,6 +98,7 @@ def assert_consecutive_quarters(index: pd.Index, context: str) -> None:
 
 
 def _as_quarter_period(value: object) -> pd.Period:
+    """Turn a Period, Timestamp, "2020Q1" or date string into a quarterly Period."""
     if isinstance(value, pd.Period):
         return value.asfreq("Q")
     if isinstance(value, pd.Timestamp):
@@ -126,6 +110,7 @@ def _as_quarter_period(value: object) -> pd.Period:
 
 
 def _normalise_quarter_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Make forecast_origin/target_quarter quarterly Periods and horizon an int."""
     result = df.copy()
     for column in ("forecast_origin", "target_quarter"):
         if column in result:
@@ -136,6 +121,7 @@ def _normalise_quarter_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _validate_horizons(horizons: Iterable[int]) -> tuple[int, ...]:
+    """Return the horizons as a tuple of ints; all must be 1 or more."""
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     if not requested_horizons or min(requested_horizons) < 1:
         raise ValueError("horizons must contain positive integers.")
@@ -147,6 +133,7 @@ def _prepare_walk_forward_series(
     initial_train_size: int,
     max_horizon: int,
 ) -> pd.Series:
+    """Clean and sort the target series and check it is long enough for the backtest."""
     y = pd.Series(series).dropna().astype(float).sort_index()
     if initial_train_size < 1:
         raise ValueError("initial_train_size must be at least 1.")
@@ -155,15 +142,6 @@ def _prepare_walk_forward_series(
     if y.index.has_duplicates:
         raise ValueError("series index must not contain duplicate quarters.")
     return y
-
-
-def _iter_expanding_origin_positions(
-    series: pd.Series,
-    initial_train_size: int,
-    max_horizon: int,
-):
-    for origin_pos in range(initial_train_size - 1, len(series) - max_horizon):
-        yield origin_pos
 
 
 def infer_min_lag_from_columns(columns: Iterable[str]) -> int:
@@ -192,20 +170,36 @@ def _coerce_quarter_index(df: pd.DataFrame, quarter_column: str = QUARTER_COLUMN
     return result.sort_index()
 
 
+def _prepare_exog(exog: pd.DataFrame) -> pd.DataFrame:
+    """Index the exogenous features by quarter and check they are usable."""
+    x = _coerce_quarter_index(pd.DataFrame(exog))
+    if x.empty:
+        raise ValueError("exog must contain at least one column.")
+    if x.index.has_duplicates:
+        raise ValueError("exog index must not contain duplicate quarters.")
+    return x
+
+
+def sort_by_model_and_horizon(table: pd.DataFrame) -> pd.DataFrame:
+    """Sort rows by model, then horizon 1, 2, ... with the "overall" row first."""
+    horizon_order = []
+    for horizon in table["horizon"]:
+        horizon_order.append(0 if horizon == "overall" else int(horizon))
+    table = table.copy()
+    table["_horizon_order"] = horizon_order
+    return table.sort_values(["model", "_horizon_order"]).drop(columns="_horizon_order")
+
+
 def load_target_series(
     path: Path = CURATED_DATA_PATH,
     target_column: str = TARGET_COLUMN,
     quarter_column: str = QUARTER_COLUMN,
     max_quarter: pd.Period | None = None,
 ) -> pd.Series:
-    """Load the modelling target as a quarterly ``PeriodIndex`` series.
+    """Load the modelling target as a quarterly ``PeriodIndex`` series, optionally cut at ``max_quarter``.
 
-    ``max_quarter``, when given, drops any rows after that quarter -- used by
-    walk-forward evaluation callers to pin their origin set to a fixed cutoff
-    (e.g. ``svar.FORECAST_ORIGIN_PIN``) instead of silently growing as the
-    curated CSV is refreshed with newer data. Left as ``None`` by default so
-    every other caller (live serving, ...) keeps seeing the full series. EDA has its
-    own window: ``eda_export.restrict_to_eda_window``.
+    Backtests pass ``max_quarter=svar.FORECAST_ORIGIN_PIN`` so their origins do not grow when the
+    curated CSV gets newer data; serving leaves it as None and sees the full series.
     """
     df = pd.read_csv(path, usecols=[quarter_column, target_column])
     if quarter_column not in df or target_column not in df:
@@ -245,7 +239,7 @@ def seasonal_naive_forecast(
 
 def walk_forward_backtest(
     series: pd.Series,
-    forecast_func: ForecastFunction,
+    forecast_func: Callable,
     initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
     horizons: Iterable[int] = DEFAULT_HORIZONS,
     model_name: str = "model",
@@ -255,8 +249,9 @@ def walk_forward_backtest(
     max_horizon = max(horizons)
     y = _prepare_walk_forward_series(series, initial_train_size, max_horizon)
 
-    rows: list[dict[str, object]] = []
-    for origin_pos in _iter_expanding_origin_positions(y, initial_train_size, max_horizon):
+    rows = []
+    # Expanding window: each origin trains on everything up to and including origin_pos.
+    for origin_pos in range(initial_train_size - 1, len(y) - max_horizon):
         train = y.iloc[: origin_pos + 1]
         raw_forecast = forecast_func(train, max_horizon)
         forecast_values = np.asarray(pd.Series(raw_forecast), dtype=float)
@@ -287,27 +282,21 @@ def walk_forward_backtest(
 def walk_forward_backtest_with_exog(
     series: pd.Series,
     exog: pd.DataFrame,
-    forecast_func: ExogForecastFunction,
+    forecast_func: Callable,
     initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
     horizons: Iterable[int] = DEFAULT_HORIZONS,
     model_name: str = "model",
     horizon_cap: int | None = None,
 ) -> pd.DataFrame:
-    """Run an expanding-window backtest with lag-safe exogenous predictors.
+    """Run an expanding-window backtest with lagged exogenous predictors.
 
-    Lagged macro features are only forecast-origin available through horizons
-    less than or equal to their lag. For example, ``cash_rate_lag2`` at
-    ``origin + 2`` is the cash rate observed at the origin, but the same column
-    at ``origin + 3`` would require a future cash-rate value. This harness
-    therefore evaluates only horizons up to the minimum lag in the feature set.
+    A lagged feature is only known at the origin up to its lag: ``cash_rate_lag2`` at origin + 2 is
+    the cash rate seen at the origin, but at origin + 3 it would need a future value. So only horizons
+    up to the smallest lag in the feature set are evaluated.
     """
     requested_horizons = _validate_horizons(horizons)
 
-    x = _coerce_quarter_index(pd.DataFrame(exog))
-    if x.empty:
-        raise ValueError("exog must contain at least one column.")
-    if x.index.has_duplicates:
-        raise ValueError("exog index must not contain duplicate quarters.")
+    x = _prepare_exog(exog)
 
     inferred_cap = infer_min_lag_from_columns(x.columns)
     cap = inferred_cap if horizon_cap is None else min(int(horizon_cap), inferred_cap)
@@ -329,8 +318,9 @@ def walk_forward_backtest_with_exog(
     max_horizon = max(capped_horizons)
     y = _prepare_walk_forward_series(series, initial_train_size, max_horizon)
 
-    rows: list[dict[str, object]] = []
-    for origin_pos in _iter_expanding_origin_positions(y, initial_train_size, max_horizon):
+    rows = []
+    # Expanding window: each origin trains on everything up to and including origin_pos.
+    for origin_pos in range(initial_train_size - 1, len(y) - max_horizon):
         train_y_raw = y.iloc[: origin_pos + 1]
         train_exog_raw = x.reindex(train_y_raw.index)
         train_frame = pd.concat(
@@ -377,7 +367,7 @@ def walk_forward_backtest_with_exog(
 def walk_forward_backtest_direct_multihorizon(
     series: pd.Series,
     exog: pd.DataFrame,
-    forecast_func: DirectMultihorizonForecastFunction,
+    forecast_func: Callable,
     initial_train_size: int = 40,
     horizons: Iterable[int] = DEFAULT_HORIZONS,
     model_name: str = "model",
@@ -385,19 +375,10 @@ def walk_forward_backtest_direct_multihorizon(
     max_origins: int | None = None,
     skip_origins: int = 0,
 ) -> pd.DataFrame:
-    """Run an expanding-window backtest for direct multi-horizon sequence models.
+    """Run an expanding-window backtest for direct multi-horizon models; no post-origin features are passed.
 
-    The forecaster receives only the target and feature history available at
-    each forecast origin. Unlike ``walk_forward_backtest_with_exog``, this
-    harness never constructs or passes a post-origin exogenous frame.
-
-    ``skip_origins`` skips that many valid origins (without calling
-    ``forecast_func`` on them) before evaluation starts. Combined with
-    ``max_origins``, this lets a caller carve out chronologically disjoint
-    origin sets -- e.g. ``skip_origins=0, max_origins=20`` for a screening
-    subset and ``skip_origins=20`` for a held-out final-validation subset --
-    so hyperparameters are never selected using the same origins they are
-    ultimately reported against.
+    ``skip_origins`` and ``max_origins`` split the origins into separate time blocks, for example
+    the first 20 for tuning and the rest for the final check, so tuning never sees the reported origins.
     """
     requested_horizons = _validate_horizons(horizons)
     if initial_train_size < 1:
@@ -407,19 +388,16 @@ def walk_forward_backtest_direct_multihorizon(
     if skip_origins < 0:
         raise ValueError("skip_origins must be at least 0.")
 
-    x = _coerce_quarter_index(pd.DataFrame(exog))
-    if x.empty:
-        raise ValueError("exog must contain at least one column.")
-    if x.index.has_duplicates:
-        raise ValueError("exog index must not contain duplicate quarters.")
+    x = _prepare_exog(exog)
 
     max_horizon = max(requested_horizons)
     y = _prepare_walk_forward_series(series, initial_train_size, max_horizon)
 
-    rows: list[dict[str, object]] = []
+    rows = []
     completed_origins = 0
     skipped_origins = 0
-    for origin_pos in _iter_expanding_origin_positions(y, initial_train_size, max_horizon):
+    # Expanding window: each origin trains on everything up to and including origin_pos.
+    for origin_pos in range(initial_train_size - 1, len(y) - max_horizon):
         train_y_raw = y.iloc[: origin_pos + 1]
         train_exog_raw = x.reindex(train_y_raw.index)
         train_frame = pd.concat(
@@ -466,7 +444,7 @@ def walk_forward_backtest_direct_multihorizon(
 
 def walk_forward_interval_coverage_backtest(
     series: pd.Series,
-    simulate_func: IntervalSimulationFunction,
+    simulate_func: Callable,
     initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
     horizons: Iterable[int] = DEFAULT_HORIZONS,
     model_name: str = "model",
@@ -483,11 +461,8 @@ def walk_forward_interval_coverage_backtest(
 ) -> pd.DataFrame:
     """Backtest forecast interval coverage over expanding walk-forward origins.
 
-    ``training_data`` controls the adapter shape for model-specific simulators:
-    ``"series"`` calls ``simulate_func(train_series, steps=..., n_sims=..., seed=...)``;
-    ``"frame"`` calls ``simulate_func(train_frame, steps=..., n_sims=..., seed=...)``;
-    and ``"series_exog"`` calls
-    ``simulate_func(train_series, train_exog, steps=..., n_sims=..., seed=...)``.
+    ``training_data`` says what ``simulate_func`` receives first: ``"series"`` the target series,
+    ``"frame"`` the target plus features in one frame, ``"series_exog"`` the series and features separately.
     """
     requested_horizons = _validate_horizons(horizons)
     if not 0 <= lower_quantile < upper_quantile <= 1:
@@ -508,26 +483,23 @@ def walk_forward_interval_coverage_backtest(
 
     max_horizon = max(capped_horizons)
     y = _prepare_walk_forward_series(series, initial_train_size, max_horizon)
-    x: pd.DataFrame | None = None
+    x = None
     if training_data in {"frame", "series_exog"}:
         if exog is None:
             raise ValueError(f"exog is required when training_data={training_data!r}.")
-        x = _coerce_quarter_index(pd.DataFrame(exog))
-        if x.empty:
-            raise ValueError("exog must contain at least one column.")
-        if x.index.has_duplicates:
-            raise ValueError("exog index must not contain duplicate quarters.")
+        x = _prepare_exog(exog)
 
     from src.models.ensemble import ensemble_interval_from_paths
 
-    rows: list[dict[str, object]] = []
+    rows = []
     completed_origins = 0
     skipped_origins = 0
-    for origin_pos in _iter_expanding_origin_positions(y, initial_train_size, max_horizon):
+    # Expanding window: each origin trains on everything up to and including origin_pos.
+    for origin_pos in range(initial_train_size - 1, len(y) - max_horizon):
         train_y_raw = y.iloc[: origin_pos + 1]
         train_y = train_y_raw
-        train_exog: pd.DataFrame | None = None
-        train_frame: pd.DataFrame | None = None
+        train_exog = None
+        train_frame = None
         if x is not None:
             train_exog_raw = x.reindex(train_y_raw.index)
             train_frame = pd.concat(
@@ -547,12 +519,8 @@ def walk_forward_interval_coverage_backtest(
         if training_data == "series":
             paths = simulate_func(train_y, steps=max_horizon, n_sims=n_sims, seed=origin_seed)
         elif training_data == "frame":
-            if train_frame is None:
-                raise RuntimeError("internal error: train_frame was not built.")
             paths = simulate_func(train_frame, steps=max_horizon, n_sims=n_sims, seed=origin_seed)
         else:
-            if train_exog is None:
-                raise RuntimeError("internal error: train_exog was not built.")
             paths = simulate_func(
                 train_y,
                 train_exog,
@@ -630,9 +598,13 @@ def seasonal_naive_backtest(
     model_name: str = "seasonal_naive",
 ) -> pd.DataFrame:
     """Run the shared walk-forward harness for the seasonal-naive benchmark."""
+
+    def forecast_func(train, steps):
+        return seasonal_naive_forecast(train, steps, seasonal_period)
+
     return walk_forward_backtest(
         series=series,
-        forecast_func=lambda train, steps: seasonal_naive_forecast(train, steps, seasonal_period),
+        forecast_func=forecast_func,
         initial_train_size=initial_train_size,
         horizons=horizons,
         model_name=model_name,
@@ -725,9 +697,8 @@ def restrict_to_common_grid(frames: Iterable[pd.DataFrame]) -> pd.DataFrame:
     complete = combined.dropna(subset=["actual", "forecast", "error"]).copy()
     model_count = complete["model"].nunique()
     key_columns = ["forecast_origin", "target_quarter", "horizon"]
-    complete_keys = complete.groupby(key_columns)["model"].nunique().loc[
-        lambda counts: counts == model_count
-    ].index
+    models_per_key = complete.groupby(key_columns)["model"].nunique()
+    complete_keys = models_per_key.loc[models_per_key == model_count].index
     return complete.set_index(key_columns).loc[complete_keys].reset_index()
 
 
@@ -744,17 +715,13 @@ def compute_metric_table(predictions: pd.DataFrame) -> pd.DataFrame:
             "mae": float(np.mean(np.abs(errors))),
         }
 
-    rows: list[dict[str, object]] = []
+    rows = []
     for model, model_rows in predictions.dropna(subset=["error"]).groupby("model", sort=True):
         rows.append(summarise(model_rows, "overall"))
         for horizon, horizon_rows in model_rows.groupby("horizon", sort=True):
             rows.append(summarise(horizon_rows, int(horizon)))
 
-    metrics = pd.DataFrame(rows)
-    metrics["_horizon_order"] = metrics["horizon"].map(
-        lambda horizon: 0 if horizon == "overall" else int(horizon)
-    )
-    return metrics.sort_values(["model", "_horizon_order"]).drop(columns="_horizon_order")
+    return sort_by_model_and_horizon(pd.DataFrame(rows))
 
 
 def compute_interval_coverage_table(
@@ -798,7 +765,7 @@ def compute_interval_coverage_table(
             "mean_interval_width": float(widths.mean()),
         }
 
-    rows: list[dict[str, object]] = []
+    rows = []
     clean = predictions.dropna(subset=["hit", "interval_width"]).copy()
     for model, model_rows in clean.groupby("model", sort=True):
         rows.append(summarise(model_rows, "overall"))
@@ -821,21 +788,14 @@ def compute_interval_coverage_table(
                 "mean_interval_width",
             ]
         )
-    coverage["_horizon_order"] = coverage["horizon"].map(
-        lambda horizon: 0 if horizon == "overall" else int(horizon)
-    )
-    return coverage.sort_values(["model", "_horizon_order"]).drop(columns="_horizon_order")
+    return sort_by_model_and_horizon(coverage)
 
 
 def root_stability_summary(fitted, stability_margin: float = 0.02) -> dict[str, object]:
-    """Summarize AR/MA root distance from the unit circle for a fitted SARIMA model.
+    """Smallest AR and MA root moduli of a fitted SARIMA model, and whether both clear 1 + stability_margin.
 
-    ``sarima.py`` fits with ``enforce_stationarity=False`` and
-    ``enforce_invertibility=False``, so nothing stops an AIC/BIC order search
-    from landing on a near-unit-root or near-noninvertible solution that
-    still converges and reports a finite AIC. A root modulus within
-    ``stability_margin`` of 1.0 flags that fragility even though the ordinary
-    convergence/bounded-forecast screen would not catch it.
+    WHY: sarima.py fits without enforcing stationarity or invertibility, so an order search can land
+    on a near-unit-root fit that still converges with a finite AIC; this flags it.
     """
     ar_roots = np.asarray(getattr(fitted, "arroots", np.array([])), dtype=complex)
     ma_roots = np.asarray(getattr(fitted, "maroots", np.array([])), dtype=complex)
@@ -861,7 +821,7 @@ def compute_conformal_scale_factors(
     if not 0 < target_coverage < 1:
         raise ValueError("target_coverage must satisfy 0 < target_coverage < 1.")
 
-    rows: list[dict[str, object]] = []
+    rows = []
     clean = predictions.dropna(subset=["nonconformity_score"]).copy()
     for (model, horizon), group in clean.groupby(["model", "horizon"], sort=True):
         scores = group["nonconformity_score"].astype(float).to_numpy()
@@ -920,13 +880,11 @@ def compute_rolling_conformal_scale_factors(
     window_quarters: int | None = DEFAULT_CALIBRATION_WINDOW_QUARTERS,
     min_scores: int = DEFAULT_MIN_CALIBRATION_SCORES,
 ) -> pd.DataFrame:
-    """Ex-ante interval scale factor per model, forecast origin and horizon.
+    """Interval scale factor per model, forecast origin and horizon, using only scores known at that origin.
 
-    Each origin's factor uses only scores whose target quarter was already
-    observed at that origin (no look-ahead), pooled across horizons and limited
-    to the most recent ``window_quarters`` target quarters so the interval width
-    can follow a change in error volatility. Origins with fewer than
-    ``min_scores`` realised scores get no factor row and stay uncalibrated.
+    Scores are pooled across horizons and limited to the last ``window_quarters`` target quarters,
+    so the width can follow a change in volatility. Origins with fewer than ``min_scores`` scores
+    get no row and stay uncalibrated.
     """
     required = {"model", "forecast_origin", "target_quarter", "horizon", "nonconformity_score"}
     missing = required.difference(predictions.columns)
@@ -935,7 +893,7 @@ def compute_rolling_conformal_scale_factors(
     if not 0 < target_coverage < 1:
         raise ValueError("target_coverage must satisfy 0 < target_coverage < 1.")
 
-    rows: list[dict[str, object]] = []
+    rows = []
     for model, model_rows in predictions.groupby("model", sort=True):
         origins = pd.Series(model_rows["forecast_origin"].unique())
         for origin, period in zip(origins, _quarter_periods(origins)):
@@ -968,12 +926,7 @@ def compute_current_conformal_scale_factors(
     window_quarters: int | None = DEFAULT_CALIBRATION_WINDOW_QUARTERS,
     min_scores: int = DEFAULT_MIN_CALIBRATION_SCORES,
 ) -> pd.DataFrame:
-    """Scale factors as of the latest observed target quarter, for serving.
-
-    Same pooled rolling window as ``compute_rolling_conformal_scale_factors``,
-    evaluated once at the last quarter with a realised forecast error and
-    reported per model and horizon (the factor is shared across horizons).
-    """
+    """Serving scale factors: the rolling factor evaluated once at the latest observed target quarter."""
     required = {"model", "target_quarter", "horizon", "nonconformity_score"}
     missing = required.difference(predictions.columns)
     if missing:
@@ -982,7 +935,7 @@ def compute_current_conformal_scale_factors(
         raise ValueError("target_coverage must satisfy 0 < target_coverage < 1.")
 
     as_of = _quarter_periods(predictions["target_quarter"]).max()
-    rows: list[dict[str, object]] = []
+    rows = []
     for model, model_rows in predictions.groupby("model", sort=True):
         scores = _realised_score_window(model_rows, as_of, window_quarters)
         n_finite = int(np.isfinite(scores).sum())
@@ -1029,14 +982,13 @@ def run_sarima_comparison(
     order = DEFAULT_ORDER if order is None else order
     seasonal_order = DEFAULT_SEASONAL_ORDER if seasonal_order is None else seasonal_order
     target = load_target_series(curated_path, target_column=target_column, max_quarter=max_quarter)
+
+    def forecast_func(train, steps):
+        return forecast_sarima(train, steps=steps, order=order, seasonal_order=seasonal_order)
+
     sarima = walk_forward_backtest(
         target,
-        lambda train, steps: forecast_sarima(
-            train,
-            steps=steps,
-            order=order,
-            seasonal_order=seasonal_order,
-        ),
+        forecast_func,
         initial_train_size=initial_train_size,
         horizons=horizons,
         model_name="sarima",

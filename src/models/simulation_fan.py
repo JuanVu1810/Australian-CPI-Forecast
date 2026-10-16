@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -86,6 +86,7 @@ FAN_OUTPUT_COLUMNS = (
 
 
 def _future_quarter(forecast_origin: str, horizon: int) -> str:
+    """Quarter label ``horizon`` quarters after the origin, e.g. ("2025Q4", 2) -> "2026Q2"."""
     return str(pd.Period(str(forecast_origin), freq="Q") + int(horizon))
 
 
@@ -132,18 +133,11 @@ def fan_frame_from_paths(
 
 
 def _write_fan(frame: pd.DataFrame, output_path: Path, *, verbose: bool) -> pd.DataFrame:
+    """Save the table as CSV and return it unchanged."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(output_path, index=False)
     if verbose:
-        family = (
-            str(frame["model_family"].iloc[0])
-            if not frame.empty
-            else "simulation fan"
-        )
-        print(
-            f"Saved {family} simulation fan to {output_path} ({len(frame)} rows).",
-            flush=True,
-        )
+        print(f"Saved {output_path} ({len(frame)} rows).", flush=True)
     return frame
 
 
@@ -153,6 +147,7 @@ def _elastic_net_training_frame(
     target_column: str,
     feature_columns: tuple[str, ...],
 ) -> pd.DataFrame:
+    """Target plus Elastic Net features up to the pinned forecast origin, complete rows only."""
     target = load_target_series(
         curated_path,
         target_column=target_column,
@@ -170,6 +165,7 @@ def _elastic_net_training_frame(
 
 
 def _load_svar_frame(curated_path: Path, columns: Sequence[str]) -> pd.DataFrame:
+    """SVAR level columns up to the pinned forecast origin, complete rows only."""
     required_columns = ["quarter", *columns]
     data = pd.read_csv(curated_path, usecols=required_columns)
     data.index = pd.PeriodIndex(data.pop("quarter").astype(str), freq="Q")
@@ -178,6 +174,54 @@ def _load_svar_frame(curated_path: Path, columns: Sequence[str]) -> pd.DataFrame
     if frame.empty:
         raise ValueError(f"No complete SVAR rows for columns {tuple(columns)}.")
     return frame.sort_index()
+
+
+def _simulate_pinned_ensemble_paths(
+    curated_path: Path,
+    *,
+    target_column: str,
+    sarima_order: tuple[int, int, int],
+    sarima_seasonal_order: tuple[int, int, int, int],
+    elastic_net_feature_columns: tuple[str, ...],
+    weights: tuple[float, float] | dict[int, tuple[float, float]] | None,
+    horizons: Sequence[int],
+    n_sims: int,
+    seed: int,
+) -> tuple[np.ndarray, str]:
+    """Simulate ensemble paths from the pinned origin; return the paths and the origin quarter."""
+    series = load_target_series(
+        curated_path,
+        target_column=target_column,
+        max_quarter=svar.FORECAST_ORIGIN_PIN,
+    )
+    frame = _elastic_net_training_frame(
+        curated_path,
+        target_column=target_column,
+        feature_columns=elastic_net_feature_columns,
+    )
+    if series.index[-1] != frame.index[-1]:
+        raise ValueError(
+            f"Ensemble {target_column!r} components end on different quarters: "
+            f"SARIMA={series.index[-1]}, Elastic Net={frame.index[-1]}."
+        )
+    if weights is None:
+        weights = ensemble.horizon_rmse_weights(
+            horizons=tuple(int(h) for h in horizons),
+            path=ensemble.dynamic_weights_source_path(target_column),
+        )
+    paths = ensemble.simulate_ensemble_paths(
+        frame,
+        steps=max(horizons),
+        n_sims=n_sims,
+        weights=weights,
+        seed=seed,
+        target_column=target_column,
+        sarima_order=sarima_order,
+        sarima_seasonal_order=sarima_seasonal_order,
+        elastic_net_feature_columns=elastic_net_feature_columns,
+        sarima_series=series,
+    )
+    return paths, str(frame.index[-1])
 
 
 def run_sarima_fan(
@@ -193,6 +237,7 @@ def run_sarima_fan(
     seed: int = DEFAULT_SEED,
     verbose: bool = True,
 ) -> pd.DataFrame:
+    """Save the SARIMA percentile fan from the pinned forecast origin."""
     series = load_target_series(
         curated_path,
         target_column=target_column,
@@ -228,6 +273,7 @@ def run_elastic_net_fan(
     seed: int = DEFAULT_SEED,
     verbose: bool = True,
 ) -> pd.DataFrame:
+    """Save the Elastic Net percentile fan from the pinned forecast origin."""
     frame = _elastic_net_training_frame(
         curated_path,
         target_column=target_column,
@@ -266,43 +312,23 @@ def run_ensemble_fan(
     seed: int = DEFAULT_SEED,
     verbose: bool = True,
 ) -> pd.DataFrame:
-    series = load_target_series(
+    """Save the ensemble percentile fan from the pinned forecast origin."""
+    paths, forecast_origin = _simulate_pinned_ensemble_paths(
         curated_path,
-        target_column=target_column,
-        max_quarter=svar.FORECAST_ORIGIN_PIN,
-    )
-    frame = _elastic_net_training_frame(
-        curated_path,
-        target_column=target_column,
-        feature_columns=elastic_net_feature_columns,
-    )
-    if series.index[-1] != frame.index[-1]:
-        raise ValueError(
-            f"Ensemble {target_column!r} components end on different quarters: "
-            f"SARIMA={series.index[-1]}, Elastic Net={frame.index[-1]}."
-        )
-    if weights is None:
-        weights = ensemble.horizon_rmse_weights(
-            horizons=tuple(int(h) for h in horizons),
-            path=ensemble.dynamic_weights_source_path(target_column),
-        )
-    paths = ensemble.simulate_ensemble_paths(
-        frame,
-        steps=max(horizons),
-        n_sims=n_sims,
-        weights=weights,
-        seed=seed,
         target_column=target_column,
         sarima_order=sarima_order,
         sarima_seasonal_order=sarima_seasonal_order,
         elastic_net_feature_columns=elastic_net_feature_columns,
-        sarima_series=series,
+        weights=weights,
+        horizons=horizons,
+        n_sims=n_sims,
+        seed=seed,
     )
     fan = fan_frame_from_paths(
         paths,
         model_family=model_family,
         target_column=target_column,
-        forecast_origin=str(frame.index[-1]),
+        forecast_origin=forecast_origin,
         horizons=horizons,
     )
     return _write_fan(fan, output_path, verbose=verbose)
@@ -318,13 +344,7 @@ def sample_paths_frame(
     n_draws: int = 120,
     sample_seed: int = 7,
 ) -> pd.DataFrame:
-    """Sample a subset of simulated draws in long format for interactive display.
-
-    Unlike ``fan_frame_from_paths`` (percentile summary, one row per horizon),
-    this keeps individual draws -- one row per draw x horizon -- so a UI can
-    reveal them progressively (e.g. a Streamlit "paths revealed" slider)
-    without shipping all ``n_sims`` draws.
-    """
+    """Pick ``n_draws`` random simulated paths and return them in long format, one row per draw and horizon."""
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     values = np.asarray(paths, dtype=float)
     if values.ndim != 2:
@@ -384,49 +404,23 @@ def run_ensemble_path_sample(
     sample_seed: int = 7,
     verbose: bool = True,
 ) -> pd.DataFrame:
-    """Export a sample of raw Ensemble Monte Carlo draws for interactive display.
-
-    Reuses the same pinned, recentered ``ensemble.simulate_ensemble_paths`` call
-    as ``run_ensemble_fan`` -- no new modelling, just a different summary of the
-    same draws (individual paths instead of percentiles).
-    """
-    series = load_target_series(
+    """Save a sample of the same ensemble draws ``run_ensemble_fan`` summarises, as individual paths."""
+    paths, forecast_origin = _simulate_pinned_ensemble_paths(
         curated_path,
-        target_column=target_column,
-        max_quarter=svar.FORECAST_ORIGIN_PIN,
-    )
-    frame = _elastic_net_training_frame(
-        curated_path,
-        target_column=target_column,
-        feature_columns=elastic_net_feature_columns,
-    )
-    if series.index[-1] != frame.index[-1]:
-        raise ValueError(
-            f"Ensemble {target_column!r} components end on different quarters: "
-            f"SARIMA={series.index[-1]}, Elastic Net={frame.index[-1]}."
-        )
-    if weights is None:
-        weights = ensemble.horizon_rmse_weights(
-            horizons=tuple(int(h) for h in horizons),
-            path=ensemble.dynamic_weights_source_path(target_column),
-        )
-    paths = ensemble.simulate_ensemble_paths(
-        frame,
-        steps=max(horizons),
-        n_sims=n_sims,
-        weights=weights,
-        seed=seed,
         target_column=target_column,
         sarima_order=sarima_order,
         sarima_seasonal_order=sarima_seasonal_order,
         elastic_net_feature_columns=elastic_net_feature_columns,
-        sarima_series=series,
+        weights=weights,
+        horizons=horizons,
+        n_sims=n_sims,
+        seed=seed,
     )
     sample = sample_paths_frame(
         paths,
         model_family=model_family,
         target_column=target_column,
-        forecast_origin=str(frame.index[-1]),
+        forecast_origin=forecast_origin,
         horizons=horizons,
         n_draws=n_draws,
         sample_seed=sample_seed,
@@ -447,6 +441,7 @@ def run_svar_fan(
     seed: int = DEFAULT_SEED,
     verbose: bool = True,
 ) -> pd.DataFrame:
+    """Save the SVAR percentile fan for the system's own target from the pinned forecast origin."""
     frame = _load_svar_frame(curated_path, columns)
     ordered_names = tuple(str(name) for name in ordering)
     paths = svar.simulate_svar_paths(
@@ -457,11 +452,8 @@ def run_svar_fan(
         ordering=ordering,
         seed=seed,
     )
-    target_paths = np.asarray(paths, dtype=float)[
-        :,
-        :,
-        ordered_names.index(target_column),
-    ]
+    # paths has shape (n_sims, steps, variables); keep only the target variable.
+    target_paths = np.asarray(paths, dtype=float)[:, :, ordered_names.index(target_column)]
     fan = fan_frame_from_paths(
         target_paths,
         model_family=model_family,

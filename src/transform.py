@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from typing import Literal
 
 import pandas as pd
 
 from src.validation import find_date_column
 
-
-Aggregation = Literal["mean", "last", "sum"]
 
 _YEAR_RANGE_STEM = re.compile(r"^(?P<series>.+)_(?P<start>\d{4})_(?P<end>\d{4})$")
 
@@ -32,6 +29,7 @@ def latest_dataset_path(path: Path) -> Path:
     for sibling in path.parent.glob(f"{match['series']}_*{path.suffix}"):
         sibling_match = _YEAR_RANGE_STEM.match(sibling.stem)
         if sibling_match and sibling_match["series"] == match["series"]:
+            # Sorting key: latest end year first, then the earliest start year (widest range).
             candidates.append((int(sibling_match["end"]), -int(sibling_match["start"]), sibling))
     return max(candidates)[2] if candidates else path
 
@@ -46,10 +44,10 @@ def to_quarterly(
     df: pd.DataFrame,
     value_col: str,
     output_col: str,
-    agg: Aggregation = "mean",
+    agg: str = "mean",
     date_col: str | None = None,
 ) -> pd.DataFrame:
-    """Convert a source time series to one row per quarter."""
+    """Convert a source time series to one row per quarter using agg = "mean", "last" or "sum"."""
     date_col = date_col or find_date_column(df)
     if value_col not in df.columns:
         raise ValueError(f"Missing value column {value_col}")

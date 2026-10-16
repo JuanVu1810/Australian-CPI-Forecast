@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -497,7 +497,7 @@ def historical_decomposition(fitted) -> pd.DataFrame:
         for horizon in range(offset + 1):
             contributions[offset] += irfs[horizon] * shocks[offset - horizon][None, :]
 
-    rows: list[dict[str, object]] = []
+    rows = []
     for offset, quarter in enumerate(output_labels):
         for response_index, response in enumerate(names):
             rows.append(
@@ -656,7 +656,7 @@ def svar_diagnostics(
     normality = fitted.test_normality(signif=significance_level)
     multivariate_rows.append(_hypothesis_test_row("multivariate_normality", normality))
 
-    equation_rows: list[dict[str, object]] = []
+    equation_rows = []
     residuals = pd.DataFrame(fitted.resid, columns=list(fitted.names)).astype(float)
     for variable in residuals.columns:
         jb_stat, jb_pvalue, skew, kurtosis = jarque_bera(residuals[variable])
@@ -709,16 +709,15 @@ def walk_forward_svar_backtest(
     if target_column not in frame.columns:
         raise ValueError(f"target_column {target_column!r} is not present in data.")
     exog_columns = tuple(column for column in frame.columns if column != target_column)
+
+    def forecast_target(train_frame, steps):
+        forecast = forecast_svar(train_frame, steps=steps, lag_order=lag_order, ordering=ordering, trend=trend)
+        return forecast[target_column]
+
     predictions = walk_forward_backtest_direct_multihorizon(
         series=frame[target_column],
         exog=frame.loc[:, list(exog_columns)],
-        forecast_func=lambda train_frame, steps: forecast_svar(
-            train_frame,
-            steps=steps,
-            lag_order=lag_order,
-            ordering=ordering,
-            trend=trend,
-        )[target_column],
+        forecast_func=forecast_target,
         initial_train_size=initial_train_size,
         horizons=horizons,
         model_name=model_name,
@@ -731,6 +730,7 @@ def walk_forward_svar_backtest(
 
 
 def _validate_var_frame(data: pd.DataFrame) -> pd.DataFrame:
+    """Numeric complete rows only; needs at least one row and two variables."""
     frame = data.apply(pd.to_numeric, errors="coerce").dropna()
     if frame.empty:
         raise ValueError("SVAR gate checks require at least one complete observation.")
@@ -743,6 +743,7 @@ def _prepare_ordered_var_frame(
     data: pd.DataFrame,
     ordering: Sequence[str] | None = None,
 ) -> pd.DataFrame:
+    """Clean the VAR frame and put its columns in the Cholesky ordering (the order is the identification choice)."""
     frame = _validate_var_frame(pd.DataFrame(data))
     if ordering is None:
         return frame
@@ -755,6 +756,7 @@ def _prepare_ordered_var_frame(
 
 
 def _validate_positive_horizons(horizons: Sequence[int]) -> tuple[int, ...]:
+    """Return the horizons as a tuple of ints; all must be 1 or more."""
     requested_horizons = tuple(int(horizon) for horizon in horizons)
     if not requested_horizons or min(requested_horizons) < 1:
         raise ValueError("horizons must contain positive integers.")
@@ -762,6 +764,7 @@ def _validate_positive_horizons(horizons: Sequence[int]) -> tuple[int, ...]:
 
 
 def _future_index(fitted, steps: int) -> pd.Index:
+    """Index for ``steps`` quarters after the fitted sample (a plain range if it has no dates)."""
     labels = getattr(fitted.model.data, "row_labels", None)
     if labels is None or len(labels) == 0:
         return pd.RangeIndex(start=0, stop=steps)
@@ -775,6 +778,7 @@ def _future_index(fitted, steps: int) -> pd.Index:
 
 
 def _fitted_index(fitted) -> pd.Index:
+    """Row labels of the fitted sample."""
     labels = getattr(fitted.model.data, "row_labels", None)
     if labels is None or len(labels) == 0:
         return pd.RangeIndex(start=0, stop=len(fitted.endog))
@@ -782,6 +786,7 @@ def _fitted_index(fitted) -> pd.Index:
 
 
 def _residual_index(fitted) -> pd.Index:
+    """Row labels of the residuals (the sample minus its first k_ar rows)."""
     residual_index = getattr(fitted.resid, "index", None)
     if residual_index is not None:
         return pd.Index(residual_index)
@@ -789,6 +794,7 @@ def _residual_index(fitted) -> pd.Index:
 
 
 def _zero_shock_baseline(fitted) -> np.ndarray:
+    """Run the fitted VAR forward from its first k_ar rows with every shock set to zero."""
     endog = np.asarray(fitted.endog, dtype=float)
     lag_order = int(fitted.k_ar)
     values = np.zeros_like(endog, dtype=float)
@@ -812,8 +818,9 @@ def _irf_array_to_frame(
     horizons: Sequence[int],
     value_column: str,
 ) -> pd.DataFrame:
+    """Turn an IRF array indexed [horizon, response, shock] into one row per response, shock and horizon."""
     values = np.asarray(irfs, dtype=float)
-    rows: list[dict[str, object]] = []
+    rows = []
     for horizon in horizons:
         if horizon >= values.shape[0]:
             raise ValueError(
@@ -839,11 +846,15 @@ def _bootstrap_orth_irf_array(
     n_bootstrap: int,
     seed: int,
 ) -> np.ndarray:
+    """Block-bootstrap the residuals, rebuild a history, refit the VAR and keep its orthogonalised IRFs.
+
+    A refit that fails numerically is skipped and redrawn, up to a fixed number of attempts.
+    """
     rng = np.random.default_rng(seed)
     residuals = np.asarray(fitted.resid, dtype=float)
     endog = np.asarray(fitted.endog, dtype=float)
     residual_draw_length = len(endog) - fitted.k_ar
-    draws: list[np.ndarray] = []
+    draws = []
     max_attempts = max(n_bootstrap * 3, n_bootstrap + 10)
     attempts = 0
     while len(draws) < n_bootstrap and attempts < max_attempts:
@@ -906,6 +917,7 @@ def _simulate_var_history_with_residuals(
     initial_values: np.ndarray,
     residual_draws: np.ndarray,
 ) -> np.ndarray:
+    """Build a pseudo history: y_t = intercept + sum of A_lag @ y_(t-lag) + drawn residual."""
     initial = np.asarray(initial_values, dtype=float)
     residuals = np.asarray(residual_draws, dtype=float)
     n_obs = initial.shape[0] + residuals.shape[0]
@@ -927,6 +939,7 @@ def _select_irf_band_rows(
     horizons: Sequence[int],
     system_label: str,
 ) -> pd.DataFrame:
+    """Pick one system's band rows for the given response, shocks and horizons."""
     required = {"response", "shock", "horizon", "lower", "upper"}
     missing = required.difference(bands.columns)
     if missing:
@@ -948,15 +961,16 @@ def _select_irf_band_rows(
 
 
 def _hypothesis_test_row(test_name: str, result) -> dict[str, object]:
-    p_value = float(getattr(result, "pvalue"))
+    """One report row from a statsmodels test result."""
+    p_value = float(result.pvalue)
     return {
         "test": test_name,
-        "statistic": float(getattr(result, "test_statistic")),
-        "critical_value": float(getattr(result, "crit_value")),
+        "statistic": float(result.test_statistic),
+        "critical_value": float(result.crit_value),
         "p_value": p_value,
-        "df": int(getattr(result, "df")),
+        "df": int(result.df),
         "reject_5pct": bool(p_value < 0.05),
-        "conclusion": str(getattr(result, "conclusion")),
+        "conclusion": str(result.conclusion),
     }
 
 
@@ -966,6 +980,7 @@ def _bic_values_by_positive_lag(
     max_lag: int,
     trend: str,
 ) -> dict[int, float]:
+    """BIC for each lag 1..max_lag; refit each lag directly if select_order gave no finite values."""
     raw_bic = selection.ics.get("bic", []) if hasattr(selection, "ics") else []
     bic_by_lag = {
         lag: float(value)
@@ -985,6 +1000,7 @@ def _sequential_trace_rank(
     trace_statistics: Sequence[float],
     critical_values: Sequence[float],
 ) -> int:
+    """Johansen rank: count trace statistics above their critical value, stopping at the first that is not."""
     rank = 0
     for statistic, critical_value in zip(trace_statistics, critical_values):
         if statistic > critical_value:
@@ -995,6 +1011,7 @@ def _sequential_trace_rank(
 
 
 def _phase_1b_model_from_rank(rank: int, n_vars: int) -> str:
+    """A rank strictly between 0 and n_vars points to a VECM; otherwise a VAR in levels."""
     if rank < 0 or rank > n_vars:
         raise ValueError(f"rank must be between 0 and n_vars; got rank={rank}, n_vars={n_vars}.")
     if 0 < rank < n_vars:

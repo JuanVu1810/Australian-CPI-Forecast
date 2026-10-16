@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -33,7 +33,6 @@ from src.models.sarima import (
 )
 
 
-ScenarioTarget = Literal["headline", "trimmed_mean"]
 DEFAULT_N_SIMS = 1000
 DEFAULT_SEED = 42
 DEFAULT_LOWER_QUANTILE = 0.1
@@ -48,20 +47,8 @@ SCENARIO_CAVEAT = (
 
 
 @dataclass(frozen=True)
-class ScenarioTargetConfig:
-    target: ScenarioTarget
-    target_column: str
-    svar_columns: tuple[str, ...]
-    svar_ordering: tuple[str, ...]
-    sarima_order: tuple[int, int, int]
-    sarima_seasonal_order: tuple[int, int, int, int]
-    elastic_net_feature_columns: tuple[str, ...]
-    dynamic_weights: bool
-
-
-@dataclass(frozen=True)
 class ScenarioResult:
-    target: ScenarioTarget
+    target: str
     target_column: str
     shock_variable: str
     shock_value: float
@@ -78,27 +65,24 @@ class ScenarioResult:
     combined_paths: np.ndarray
 
 
-TARGET_CONFIGS: dict[str, ScenarioTargetConfig] = {
-    "headline": ScenarioTargetConfig(
-        target="headline",
-        target_column=TARGET_COLUMN,
-        svar_columns=svar.SYSTEM_A_COLUMNS,
-        svar_ordering=svar.SYSTEM_A_CHOLESKY_ORDER,
-        sarima_order=SARIMA_DEFAULT_ORDER,
-        sarima_seasonal_order=SARIMA_DEFAULT_SEASONAL_ORDER,
-        elastic_net_feature_columns=ELASTIC_NET_FEATURE_COLUMNS,
-        dynamic_weights=True,
-    ),
-    "trimmed_mean": ScenarioTargetConfig(
-        target="trimmed_mean",
-        target_column=TRIMMED_MEAN_TARGET_COLUMN,
-        svar_columns=svar.SYSTEM_B_COLUMNS,
-        svar_ordering=svar.SYSTEM_B_CHOLESKY_ORDER,
-        sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
-        sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
-        elastic_net_feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
-        dynamic_weights=True,
-    ),
+# The SVAR system and ensemble settings used for each scenario target.
+TARGET_CONFIGS = {
+    "headline": {
+        "target_column": TARGET_COLUMN,
+        "svar_columns": svar.SYSTEM_A_COLUMNS,
+        "svar_ordering": svar.SYSTEM_A_CHOLESKY_ORDER,
+        "sarima_order": SARIMA_DEFAULT_ORDER,
+        "sarima_seasonal_order": SARIMA_DEFAULT_SEASONAL_ORDER,
+        "elastic_net_feature_columns": ELASTIC_NET_FEATURE_COLUMNS,
+    },
+    "trimmed_mean": {
+        "target_column": TRIMMED_MEAN_TARGET_COLUMN,
+        "svar_columns": svar.SYSTEM_B_COLUMNS,
+        "svar_ordering": svar.SYSTEM_B_CHOLESKY_ORDER,
+        "sarima_order": TRIMMED_MEAN_DEFAULT_ORDER,
+        "sarima_seasonal_order": TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
+        "elastic_net_feature_columns": TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    },
 }
 
 
@@ -135,12 +119,10 @@ def combine_scenario_paths(
     shock_index: int,
     horizons: Sequence[int] = DEFAULT_HORIZONS,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Pair ensemble draw ``i`` with SVAR IRF draw ``i`` and add the shock term.
+    """Pair ensemble draw ``i`` with SVAR IRF draw ``i`` and add shock_size * IRF; return (combined, contribution).
 
-    The scenario shock is realized at ``t+1`` because ``compute_shock_size``
-    measures the user's value against the SVAR's horizon-1 macro forecast. CPI
-    horizon 1 is also ``t+1``, so it receives the contemporaneous impact
-    stored at IRF index 0; CPI horizon ``h`` receives IRF index ``h - 1``.
+    The shock happens at t+1 (it is measured against the SVAR's horizon-1 forecast), so CPI horizon h
+    takes the IRF at index h - 1, and horizon 1 gets the same-quarter impact at index 0.
     """
     requested_horizons = _validate_horizons(horizons)
     baseline = np.asarray(tier1_paths, dtype=float)
@@ -174,7 +156,7 @@ def combine_scenario_paths(
 
 
 def run_scenario(
-    target: ScenarioTarget,
+    target: str,
     shock_variable: str,
     shock_value: float,
     horizons: Sequence[int] = DEFAULT_HORIZONS,
@@ -185,7 +167,10 @@ def run_scenario(
     curated_path: Path = CURATED_DATA_PATH,
 ) -> ScenarioResult:
     """Run one headline or trimmed-mean SVAR-adjusted ensemble scenario."""
-    config = _target_config(target)
+    if target not in TARGET_CONFIGS:
+        raise ValueError("target must be 'headline' or 'trimmed_mean'.")
+    config = TARGET_CONFIGS[target]
+    target_column = config["target_column"]
     requested_horizons = _validate_horizons(horizons)
     _validate_quantiles(lower_quantile, upper_quantile)
     if n_sims < 1:
@@ -202,11 +187,11 @@ def run_scenario(
     # (svar.FORECAST_ORIGIN_PIN) so no component here fits on data later than
     # 2025Q4, regardless of how far the curated CSV itself has been refreshed.
     frame = frame.loc[frame.index <= svar.FORECAST_ORIGIN_PIN]
-    svar_frame = _svar_frame(frame, config.svar_columns)
+    svar_frame = _numeric_complete_rows(frame, config["svar_columns"])
     fitted_svar = svar.fit_svar(
         svar_frame,
         lag_order=svar.DEFAULT_SVAR_LAG_ORDER,
-        ordering=config.svar_ordering,
+        ordering=config["svar_ordering"],
     )
     svar_forecast = svar.forecast_from_fit(fitted_svar, steps=steps)
     shock_size = compute_shock_size(
@@ -215,18 +200,21 @@ def run_scenario(
         shock_value=shock_value,
     )
 
-    weights = _ensemble_weights(config, steps)
+    weights = ensemble.horizon_rmse_weights(
+        horizons=tuple(range(1, steps + 1)),
+        path=ensemble.dynamic_weights_source_path(target_column),
+    )
     tier1_paths = ensemble.simulate_ensemble_paths(
         frame,
         steps=steps,
         n_sims=n_sims,
         weights=weights,
         seed=seed,
-        target_column=config.target_column,
-        sarima_order=config.sarima_order,
-        sarima_seasonal_order=config.sarima_seasonal_order,
-        elastic_net_feature_columns=config.elastic_net_feature_columns,
-        sarima_series=frame[config.target_column],
+        target_column=target_column,
+        sarima_order=config["sarima_order"],
+        sarima_seasonal_order=config["sarima_seasonal_order"],
+        elastic_net_feature_columns=config["elastic_net_feature_columns"],
+        sarima_series=frame[target_column],
     )
     irf_draws = svar.bootstrap_orth_irf_draws(
         fitted_svar,
@@ -239,7 +227,7 @@ def run_scenario(
         tier1_paths=tier1_paths,
         irf_draws=irf_draws,
         shock_size=shock_size,
-        response_index=names.index(config.target_column),
+        response_index=names.index(target_column),
         shock_index=names.index(shock_variable),
         horizons=requested_horizons,
     )
@@ -248,12 +236,16 @@ def run_scenario(
         lower=lower_quantile,
         upper=upper_quantile,
     )
-    clean_frame = _complete_ensemble_frame(frame, config).sort_index()
+    ensemble_columns = (target_column, *config["elastic_net_feature_columns"])
+    clean_frame = _numeric_complete_rows(frame, ensemble_columns).sort_index()
     forecast_origin = str(clean_frame.index[-1])
+    future_quarters = []
+    for horizon in requested_horizons:
+        future_quarters.append(str(clean_frame.index[-1] + horizon))
 
     return ScenarioResult(
-        target=config.target,
-        target_column=config.target_column,
+        target=target,
+        target_column=target_column,
         shock_variable=str(shock_variable),
         shock_value=float(shock_value),
         shock_size=float(shock_size),
@@ -261,7 +253,7 @@ def run_scenario(
         forecast=np.mean(combined_paths, axis=0).astype(float).tolist(),
         interval_lower=lower.astype(float).tolist(),
         interval_upper=upper.astype(float).tolist(),
-        quarters=_future_quarters(forecast_origin, requested_horizons),
+        quarters=future_quarters,
         forecast_origin=forecast_origin,
         caveat=SCENARIO_CAVEAT,
         baseline_paths=tier1_paths[:, [horizon - 1 for horizon in requested_horizons]],
@@ -285,14 +277,8 @@ def scenario_interval_from_paths(
     return lower_values, upper_values
 
 
-def _target_config(target: str) -> ScenarioTargetConfig:
-    try:
-        return TARGET_CONFIGS[str(target)]
-    except KeyError as exc:
-        raise ValueError("target must be 'headline' or 'trimmed_mean'.") from exc
-
-
 def _validate_horizons(horizons: Sequence[int]) -> tuple[int, ...]:
+    """Return the horizons as ints; they must be unique and within 1-8."""
     requested = tuple(int(horizon) for horizon in horizons)
     if not requested:
         raise ValueError("horizons must contain at least one horizon.")
@@ -311,45 +297,17 @@ def _validate_quantiles(lower: float, upper: float) -> None:
 
 
 def _load_curated_frame(path: Path) -> pd.DataFrame:
+    """Read the curated CSV indexed by quarter."""
     data = pd.read_csv(path)
     if "quarter" not in data.columns:
         raise ValueError(f"{path} must contain a 'quarter' column.")
-    data = data.copy()
     data.index = pd.PeriodIndex(data.pop("quarter").astype(str), freq="Q")
     return data.sort_index()
 
 
-def _svar_frame(frame: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
+def _numeric_complete_rows(frame: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
+    """Keep ``columns`` as numbers and drop rows with any missing value."""
     missing = sorted(set(columns).difference(frame.columns))
     if missing:
-        raise ValueError(f"curated frame missing required SVAR columns: {missing}")
+        raise ValueError(f"curated frame missing required columns: {missing}")
     return frame.loc[:, list(columns)].apply(pd.to_numeric, errors="coerce").dropna()
-
-
-def _complete_ensemble_frame(
-    frame: pd.DataFrame,
-    config: ScenarioTargetConfig,
-) -> pd.DataFrame:
-    columns = (config.target_column, *config.elastic_net_feature_columns)
-    missing = sorted(set(columns).difference(frame.columns))
-    if missing:
-        raise ValueError(f"curated frame missing required ensemble columns: {missing}")
-    return frame.loc[:, list(columns)].apply(pd.to_numeric, errors="coerce").dropna()
-
-
-def _ensemble_weights(
-    config: ScenarioTargetConfig,
-    steps: int,
-) -> dict[int, tuple[float, float]]:
-    horizons = tuple(range(1, steps + 1))
-    if config.dynamic_weights:
-        return ensemble.horizon_rmse_weights(
-            horizons=horizons,
-            path=ensemble.dynamic_weights_source_path(config.target_column),
-        )
-    return {horizon: ensemble.DEFAULT_WEIGHTS for horizon in horizons}
-
-
-def _future_quarters(forecast_origin: str, horizons: Sequence[int]) -> list[str]:
-    origin = pd.Period(forecast_origin, freq="Q")
-    return [str(origin + int(horizon)) for horizon in horizons]
