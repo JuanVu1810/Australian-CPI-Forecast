@@ -38,7 +38,7 @@ call. This README only covers status and how to run the project.
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
 | Reproducibility | pinned versions (`constraints.txt`), saved models, and tests on the saved reports, SQL queries and models; see [Reproduce the results](#reproduce-the-results) |
 | GitHub Actions (tests, book deployment) | implemented; no Cloud Run deploy step |
-| Supabase PostgreSQL | optional example, see [the appendix](#optional-supabase-postgresql-example): one table and one saved query. Not read by the API or the Streamlit app |
+| Supabase PostgreSQL | optional example, see [the optional Supabase example](#optional-supabase-postgresql-example): one table and one saved query. Not read by the API or the Streamlit app |
 
 ## Choose how to run it
 
@@ -48,6 +48,7 @@ call. This README only covers status and how to run the project.
 | Run everything: ETL, tests, training, API, Streamlit, book | [Python](#run-with-python) | Python 3.11; about 45 minutes of model training |
 | Check that I get the same results as the checked-in files | [Reproduce the results](#reproduce-the-results) | Python 3.11; about 10 minutes with the saved models, over an hour if you retrain |
 | Serve just the API in a container | [Docker](#run-with-docker-api-only) | Docker only: the models are in the repository |
+| Host my own copy online | [Optional extras](#optional-extras) | your own Google Cloud, Streamlit or Supabase account |
 
 ```mermaid
 flowchart LR
@@ -65,15 +66,15 @@ flowchart LR
 
 ### Prerequisites
 
-- **Python 3.11** (what CI and the Dockerfile use). Older versions such as 3.8 cannot import `src/models`.
-- **git**, and network access for `pip install` (and for the optional data download).
-- **Windows:** use WSL2. The commands below are bash.
+- Python 3.11 (what CI and the Dockerfile use). Older versions such as 3.8 cannot import `src/models`.
+- git, and network access for `pip install` (and for the optional data download).
+- On Windows, use WSL2. The commands below are bash.
 
 ### 1. Get the code and install
 
 ```bash
 git clone https://github.com/JuanVu1810/Australian-CPI-Forecast.git
-cd CPI-Forecast
+cd Australian-CPI-Forecast
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -156,7 +157,7 @@ appendix and `python -m src.eda_export`, which writes
 ### 3. Run the tests
 
 ```bash
-python -m pytest tests                            # 207 tests, about 3 minutes
+python -m pytest tests                            # 221 tests, about 2 minutes
 ```
 
 ### 4. Train the models
@@ -297,12 +298,12 @@ different numbers.
 
 ```bash
 python -m src.build_curated_dataset      # about 1 second
-python -m pytest tests                   # 207 tests, about 3 minutes
+python -m pytest tests                   # 221 tests, about 2 minutes
 git status --short data reports          # expect nothing, or only the .parquet file (see below)
 ```
 
 Pytest prints your own pass count and runtime on its final line. For this checkout,
-expect `207 passed`; a different result means your checkout or environment needs checking.
+expect `221 passed`; a different result means your checkout or environment needs checking.
 
 The curated CSV and `reports/data_quality_report.csv` come out byte-identical. Only the bytes of the Parquet
 file can differ, depending on your `pyarrow` version; its contents match.
@@ -365,16 +366,16 @@ scripts and saved artefacts for the recorded book/retraining/CPU/API/classifier/
 
 ## Run with Docker (API only)
 
-Use Docker to run or test the packaged API with its own Python runtime and dependencies,
-for example before deploying that image to Cloud Run. It starts the same FastAPI app as
-[the local Python command](#5-start-the-api) and serves the same saved models; it does
-not produce a second set of results. If you only want to check the results or run the
-API locally with Python, skip Docker. Running the container locally does not deploy
-anything to Cloud Run.
+Docker packages the API with its own Python and dependencies, so you can test the
+image before it goes to Cloud Run. It starts the same FastAPI app as
+[the local Python command](#5-start-the-api) and serves the same saved models, so the
+results are identical. If you only want to check results or run the API, Python is enough.
+Running the container locally does not deploy anything to Cloud Run.
 
-This image serves FastAPI only. It does not run the ETL, training or tests, and does
-not include Streamlit, notebooks or the book. The models are copied in from `models/`,
-which is in the repository, so a fresh clone builds as it is.
+The image serves FastAPI only. It has no ETL, training, tests, Streamlit, notebooks or book.
+The models are copied in from `models/`, which is in the repository, so a fresh clone builds
+as it is. You need the code first (`git clone` and `cd`, as in
+[step 1 of the Python route](#1-get-the-code-and-install)), then, from the repository root:
 
 ```bash
 docker build -t cpi-forecast-api .
@@ -387,10 +388,17 @@ docker stop cpi-forecast-api
 
 The `Dockerfile` copies `reports/` whole, so a new report the API reads needs no extra step.
 
+## Optional extras
+
+You do not need any of this to run the project. These sections show how the live demo is hosted and
+how forecasts can be saved to a database. They need your own Google Cloud, Streamlit or Supabase
+accounts, so skip them unless you want to host your own copy.
+
 ### Deploy to Google Cloud Run
 
 The live service is `cpi-forecast-juan` in `asia-southeast1`. The steps below push the exact image
-you tested to Artifact Registry and deploy it. Commit first, so the image tag names the code in it.
+you tested to Artifact Registry and deploy it. They assume the Artifact Registry repository `cpi-forecast`
+already exists in your project and that billing is on. Commit first, so the image tag names the code in it.
 
 ```bash
 PROJECT=<project-id>; REGION=asia-southeast1; SERVICE=cpi-forecast-juan
@@ -426,7 +434,7 @@ the public endpoints. `--concurrency 4` stops several 40-second simulations shar
 sets `PORT` and the image listens on it. The image installs with `constraints.txt`, so check a new
 revision's forecasts against the old one before you switch traffic.
 
-## Host the Streamlit demo
+### Host the Streamlit demo
 
 The demo can run on Streamlit Community Cloud from this GitHub repo, at a public
 `*.streamlit.app` link. It only needs the four packages in `app/requirements.txt`
@@ -452,6 +460,36 @@ about 15 seconds while Cloud Run wakes, and the scenario and RBA calls about 30 
 when the API is redeployed), so the same request repeated by anyone comes back
 instantly, and Cloud Run is not charged for it. The 4.3 Ensemble tab reads committed
 files and needs no API.
+
+### Optional: Supabase PostgreSQL example
+
+A small example of saving forecasts in a hosted PostgreSQL database and querying them with SQL. It
+is not part of the forecasting story: no model, the API, Streamlit or the ETL reads this table.
+
+- `sql/postgres/forecast_snapshots.sql` creates one table, `forecast_snapshots` (target, model, forecast
+  origin, target quarter, point forecast, actual). Its key stops a rerun from saving a row twice.
+- `sql/postgres/forecast_errors.sql` compares each saved forecast with the observed CPI.
+- `python -m src.models.forecast_snapshot` saves the one-quarter-ahead forecast of each model for both
+  targets and prints the comparison. Set `DATABASE_URL` first (use the Session pooler connection string
+  from Supabase). Without it the command saves nothing and says so.
+
+```bash
+export DATABASE_URL='postgresql://<user>:<password>@<session-pooler-host>:5432/postgres'
+python -m src.models.forecast_snapshot
+```
+
+The quarter it saves (2026Q1) was already published when it was run, so this is a retrospective wiring
+check, not a live forecast record. Result of the query on those six rows (the actual is the repository's
+series, see the headline CPI note under [Scope and caveats](#scope-and-caveats)):
+
+| target | model | quarter | forecast | actual | error |
+|---|---|---|---|---|---|
+| headline | elastic_net | 2026Q1 | 2.743 | 4.0 | 1.257 |
+| headline | ensemble | 2026Q1 | 3.154 | 4.0 | 0.846 |
+| headline | sarima | 2026Q1 | 3.384 | 4.0 | 0.616 |
+| trimmed_mean | elastic_net | 2026Q1 | 2.860 | 3.5 | 0.640 |
+| trimmed_mean | ensemble | 2026Q1 | 3.298 | 3.5 | 0.202 |
+| trimmed_mean | sarima | 2026Q1 | 3.508 | 3.5 | -0.008 |
 
 ## GitHub Actions
 
@@ -570,31 +608,6 @@ project's code computes from the data, so they aren't AI-written text and aren't
 
 The full explanation is in the
 [book's introduction](https://juanvu1810.github.io/Australian-CPI-Forecast/intro.html#ai-acknowledgement).
-
-## Optional: Supabase PostgreSQL example
-
-A small example of saving forecasts in a hosted PostgreSQL database and querying them with SQL. It
-is not part of the forecasting story: no model, the API, Streamlit or the ETL reads this table.
-
-- `sql/postgres/forecast_snapshots.sql` creates one table, `forecast_snapshots` (target, model, forecast
-  origin, target quarter, point forecast, actual). Its key stops a rerun from saving a row twice.
-- `sql/postgres/forecast_errors.sql` compares each saved forecast with the observed CPI.
-- `python -m src.models.forecast_snapshot` saves the one-quarter-ahead forecast of each model for both
-  targets and prints the comparison. Set `DATABASE_URL` first (use the Session pooler connection string
-  from Supabase). Without it the command saves nothing and says so.
-
-The quarter it saves (2026Q1) was already published when it was run, so this is a retrospective wiring
-check, not a live forecast record. Result of the query on those six rows (the actual is the repository's
-series, see the note on headline CPI above):
-
-| target | model | quarter | forecast | actual | error |
-|---|---|---|---|---|---|
-| headline | elastic_net | 2026Q1 | 2.743 | 4.0 | 1.257 |
-| headline | ensemble | 2026Q1 | 3.154 | 4.0 | 0.846 |
-| headline | sarima | 2026Q1 | 3.384 | 4.0 | 0.616 |
-| trimmed_mean | elastic_net | 2026Q1 | 2.860 | 3.5 | 0.640 |
-| trimmed_mean | ensemble | 2026Q1 | 3.298 | 3.5 | 0.202 |
-| trimmed_mean | sarima | 2026Q1 | 3.508 | 3.5 | -0.008 |
 
 ## Further reading
 
