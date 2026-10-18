@@ -41,11 +41,13 @@ STATIONARITY_COLUMNS = [
     "household_spending_growth",
     "inflation_expectations_business",
 ]
+# Drivers are the stationary versions (rate changes, growth rates) and the target is the quarterly CPI
+# change: YoY windows overlap, so correlating persistent series overstates the link. Appendix 6 and 7 explain.
+CORRELATION_TARGET = "cpi_qoq"
 CORRELATION_COLUMNS = [
-    "trimmed_mean_cpi_yoy",
     "trimmed_mean_cpi_qoq",
-    "unemployment_rate",
-    "cash_rate",
+    "unemployment_rate_change",
+    "cash_rate_change",
     "wpi_growth",
     "ppi_growth",
     "commodity_growth",
@@ -144,9 +146,9 @@ def build_stationarity_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_correlation_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """Correlate cpi_yoy with each driver lagged one quarter; strongest first."""
+    """Correlate quarterly CPI change with each driver lagged one quarter; strongest first."""
     rows = []
-    target = "cpi_yoy"
+    target = CORRELATION_TARGET
 
     if target not in df.columns:
         return pd.DataFrame(
@@ -155,7 +157,7 @@ def build_correlation_summary(df: pd.DataFrame) -> pd.DataFrame:
                 "source_variable",
                 "target",
                 "observations",
-                "correlation_with_cpi_yoy",
+                "correlation_with_cpi_qoq",
                 "abs_correlation",
                 "notes",
             ]
@@ -186,7 +188,7 @@ def build_correlation_summary(df: pd.DataFrame) -> pd.DataFrame:
                 "source_variable": source_variable,
                 "target": target,
                 "observations": len(pair),
-                "correlation_with_cpi_yoy": correlation,
+                "correlation_with_cpi_qoq": correlation,
                 "abs_correlation": abs(correlation) if pd.notna(correlation) else np.nan,
                 "notes": notes,
             }

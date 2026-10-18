@@ -11,7 +11,6 @@ from src import eda_export
 def test_default_export_columns_include_trimmed_mean_cpi_features():
     assert "trimmed_mean_cpi_yoy" in eda_export.STATIONARITY_COLUMNS
     assert "trimmed_mean_cpi_qoq" in eda_export.STATIONARITY_COLUMNS
-    assert "trimmed_mean_cpi_yoy" in eda_export.CORRELATION_COLUMNS
     assert "trimmed_mean_cpi_qoq" in eda_export.CORRELATION_COLUMNS
     assert "trimmed_mean_cpi_yoy_lag1" in eda_export.VIF_COLUMNS
 
@@ -43,13 +42,13 @@ def test_correlation_summary_uses_lagged_features_and_derives_missing_lag(monkey
         "CORRELATION_COLUMNS",
         ["existing_feature", "derived_feature", "missing_feature"],
     )
-    cpi_yoy = pd.Series([10.0, 20.0, 30.0, 40.0, 50.0])
+    cpi_qoq = pd.Series([10.0, 20.0, 30.0, 40.0, 50.0])
     existing_lag = pd.Series([np.nan, 1.0, 2.0, 3.0, 4.0])
     same_quarter_existing = pd.Series([99.0, -99.0, 99.0, -99.0, 99.0])
     derived_source = pd.Series([5.0, 15.0, 25.0, 35.0, 45.0])
     df = pd.DataFrame(
         {
-            "cpi_yoy": cpi_yoy,
+            "cpi_qoq": cpi_qoq,
             "existing_feature": same_quarter_existing,
             "existing_feature_lag1": existing_lag,
             "derived_feature": derived_source,
@@ -61,12 +60,12 @@ def test_correlation_summary_uses_lagged_features_and_derives_missing_lag(monkey
     existing = summary.loc[summary["variable"] == "existing_feature_lag1"].iloc[0]
     assert existing["source_variable"] == "existing_feature"
     assert existing["notes"] == "used existing lag1 feature"
-    assert existing["correlation_with_cpi_yoy"] == 1.0
+    assert existing["correlation_with_cpi_qoq"] == 1.0
 
     derived = summary.loc[summary["variable"] == "derived_feature_lag1"].iloc[0]
-    expected_derived_corr = cpi_yoy.iloc[1:].corr(derived_source.shift(1).iloc[1:])
+    expected_derived_corr = cpi_qoq.iloc[1:].corr(derived_source.shift(1).iloc[1:])
     assert derived["notes"] == "derived lag1 for dashboard export"
-    assert derived["correlation_with_cpi_yoy"] == expected_derived_corr
+    assert derived["correlation_with_cpi_qoq"] == expected_derived_corr
     assert "missing_feature_lag1" not in set(summary["variable"])
 
 
