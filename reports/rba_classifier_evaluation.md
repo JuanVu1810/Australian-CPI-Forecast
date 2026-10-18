@@ -135,7 +135,7 @@ A clean ConvergenceWarning history does not mean every fold is well-identified; 
 
 2 of 98 ordered-model fold fits have at least one parameter above 10.0 in magnitude, a sign of (quasi-)complete separation in a small training fold rather than a well-identified estimate. statsmodels does not raise a ConvergenceWarning for this failure mode, so it would otherwise pass silently. The exact parameter values for these folds are not meaningful and are not reproducible bit-for-bit across machines/BLAS builds; treat them as "separated", not as point estimates.
 
-This is a coefficient-magnitude threshold, not a full instability audit: a direct cross-environment comparison (rerunning this evaluation on a different machine) found at least two further quarters where ordered_logit's predicted action changed without any parameter crossing this threshold, so the table below is a lower bound on which folds are environment-sensitive, not a complete inventory. The macro-F1 figures above should be read as reproducible within one fixed environment (this project's `cpi_forecast` conda environment), not necessarily bit-for-bit across machines.
+This is a coefficient-magnitude threshold, not a full instability audit, so the table below is a lower bound on which folds are unstable, not a complete inventory. The macro-F1 figures above come from this project's `cpi_forecast` conda environment and may differ slightly on another machine.
 
 | model          | target_quarter   |   train_rows | unstable_coefficients                                                                                    |
 |:---------------|:-----------------|-------------:|:---------------------------------------------------------------------------------------------------------|

@@ -188,5 +188,5 @@ screen saw the whole sample, so the new sets may look a little better than they 
   both forecast the long-run mean there. This was already true of headline from horizon 3 (one coefficient or none).
 - Everything downstream was regenerated in the README order: Elastic Net, Ensemble, model comparison, RBA
   classifier, simulation fans, interval coverage and calibration, Tableau exports. SARIMA forecasts are unchanged.
-- The Cloud Run service was not redeployed. Until it is, it serves the earlier Elastic Net and Ensemble forecasts.
-- The reproducibility measurements in `reports/reproducibility_check*.csv` predate this change and were not repeated.
+- The Cloud Run service was redeployed the same day (revision `cpi-forecast-juan-00006-nah`, image tag `44eb23b`); its forecasts match the repository's to within 1e-9.
+- The separate reproducibility audit (check module, scripts, saved runs and the chapter 6 section) was removed on 2026-10-19 to keep the project simpler.

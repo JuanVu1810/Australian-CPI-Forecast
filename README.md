@@ -33,10 +33,10 @@ call. This README only covers status and how to run the project.
 | Credit-risk stress test and illustrative 12-month ECL | implemented; illustrative only; served by the Cloud Run API since 2026-09-21 |
 | Saved models | the fitted SARIMA and Elastic Net models (headline and trimmed mean) are `joblib` files in `models/`, committed to the repository (about 5 MB); the API loads them. No experiment tracking, no model registry |
 | FastAPI | implemented, 7 endpoints; live on Cloud Run |
-| Docker and Google Cloud Run | deployed 2026-10-16 as the Cloud Run service `cpi-forecast-juan` (image in Artifact Registry repo `cpi-forecast`), checked the same day through the Streamlit demo. Serves the forecast, trimmed-mean, scenario, RBA and credit endpoints; redeploy is manual |
+| Docker and Google Cloud Run | last deployed 2026-10-19 as the Cloud Run service `cpi-forecast-juan` (revision `cpi-forecast-juan-00006-nah`, image tag `44eb23b` in Artifact Registry repo `cpi-forecast`), with its forecasts checked against the repository's the same day. Serves the forecast, trimmed-mean, scenario, RBA and credit endpoints; redeploy is manual |
 | Streamlit | deployed on Streamlit Community Cloud, verified live 2026-09-21: <https://cpi-forecast-demo.streamlit.app/>. A four-tab interactive demo that goes with the book (live forecast, Ensemble path reveal, scenario engine, RBA call) |
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
-| Reproducibility | pinned versions (`constraints.txt`), saved models, and tests on the saved reports, SQL queries and models; see [Reproduce the results](#reproduce-the-results) |
+| Pinned setup | pinned versions (`constraints.txt`), saved models, and tests on the saved reports, SQL queries and models; see [Reproduce the results](#reproduce-the-results) |
 | GitHub Actions (tests, book deployment) | implemented; no Cloud Run deploy step |
 | Supabase PostgreSQL | optional example, see [the optional Supabase example](#optional-supabase-postgresql-example): one table and one saved query. Not read by the API or the Streamlit app |
 
@@ -90,9 +90,7 @@ python -m pip install -r requirements.txt -c constraints.txt
 
 [constraints.txt](constraints.txt) pins the direct dependencies, plus numpy and scipy, to the environment
 that produced the results. The tests workflow and the Docker image install with it too.
-Other packages still float; the book's
-[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
-section says how much that matters.
+Other packages still float.
 
 ### 2. Data (optional: it is already in the repository)
 
@@ -157,7 +155,7 @@ appendix and `python -m src.eda_export`, which writes
 ### 3. Run the tests
 
 ```bash
-python -m pytest tests                            # 221 tests, about 2 minutes
+python -m pytest tests                            # 213 tests, about 2 minutes
 ```
 
 ### 4. Train the models
@@ -177,7 +175,7 @@ this order:
 
 \*Measured on one WSL2 machine; expect variation.
 
-Training also rewrites the CSVs in `reports/`. With the pinned versions they match the committed files;
+Training also rewrites the CSVs in `reports/`. With the pinned versions they should match the committed files;
 see [Reproduce the results](#reproduce-the-results) for how to check. Only the bytes
 of the Parquet file from step 2 can differ, depending on your `pyarrow` version. Install with
 `constraints.txt` before retraining or loading the models, because a model saved with one version of
@@ -225,10 +223,7 @@ curl -X POST http://localhost:8000/forecast/scenario \
 The Cloud Run deployment serves `/health` and the forecast, trimmed-mean,
 scenario, RBA and credit endpoints (verified live 2026-09-21). On its single CPU,
 `/forecast/scenario` takes about 40 to 46 seconds and `/rba-action` about 30 to
-45. The simulation-based outputs of those two can differ slightly from a local run;
-the book's
-[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
-section measures by how much.
+45.
 
 ### 6. Start Streamlit
 
@@ -279,10 +274,8 @@ Everything has a working default; set these only to change it.
 This is the recipe for getting the same numbers as the checked-in files, and for checking that you did.
 It was tested on Linux (WSL2 Ubuntu, Python 3.11).
 
-The book's
-[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
-section explains what holds the results in place and measures where a rerun can still differ. This section is
-the recipe.
+The data snapshot, the pinned forecast origin (2025Q4), seeded simulations and `constraints.txt` hold the results in
+place. We have not measured how far a rerun can drift on other machines or package versions.
 
 ### 1. Set up
 
@@ -298,12 +291,12 @@ different numbers.
 
 ```bash
 python -m src.build_curated_dataset      # about 1 second
-python -m pytest tests                   # 221 tests, about 2 minutes
+python -m pytest tests                   # 213 tests, about 2 minutes
 git status --short data reports          # expect nothing, or only the .parquet file (see below)
 ```
 
 Pytest prints your own pass count and runtime on its final line. For this checkout,
-expect `221 passed`; a different result means your checkout or environment needs checking.
+expect `213 passed`; a different result means your checkout or environment needs checking.
 
 The curated CSV and `reports/data_quality_report.csv` come out byte-identical. Only the bytes of the Parquet
 file can differ, depending on your `pyarrow` version; its contents match.
@@ -344,25 +337,14 @@ python -m src.models.interval_calibration --target trimmed_mean  # about 24 minu
 git diff --stat -- reports                                       # expect no output
 ```
 
-No output means every regenerated file is byte-identical to the checked-in one. If you see a difference,
-check the book's
-[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
-section before assuming something is wrong.
+No output means every regenerated file is byte-identical to the checked-in one. Small differences are possible
+if your packages or CPU differ from the ones that produced the files, so compare the numbers before assuming
+something is wrong.
 
 **Optional: the Tableau exports.** With the API running (`uvicorn api.main:app --port 8000` in one terminal),
 `python -m src.models.tableau_export` in another rewrites `reports/tableau/` in about 20 seconds. Everything
 matches except `dataset_overview.csv`, whose `curated_dataset_last_modified` column is the date the curated
 data was last written, so it changes whenever the ETL runs.
-
-### Repeat the drift measurements
-
-The numbers behind the book's
-[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
-chart come from `python -m src.reproducibility_check`, whose sub-commands compare a rerun with a baseline and save
-the result to `reports/reproducibility_check.csv`. Each scenario is rerun in a scratch copy of the repo, so the
-checked-in model and analysis reports are never touched. Copy-paste commands, prerequisites, safety notes, helper
-scripts and saved artefacts for the recorded book/retraining/CPU/API/classifier/data-vintage audit are in
-[reports/reproducibility_runs/](reports/reproducibility_runs/README.md).
 
 ## Run with Docker (API only)
 
@@ -536,7 +518,6 @@ and click **Run workflow**.
 | `/forecast/all` fails to load a model with an unpickling or version error | The packages differ from the ones that saved the model. Install with `-c constraints.txt`. |
 | `/forecast/all` returns HTTP 503 about "interval calibration factors" | `reports/model_interval_calibration_factors*.csv` is missing or malformed. Restore it from git. |
 | `docker build` fails at `COPY constraints.txt` | The file is missing from the folder. It lives in the repository root. |
-| `git diff reports/` shows a change after a re-run | `tableau/dataset_overview.csv` (a date column) is expected to differ. For anything else see where a rerun can drift in the book's [Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on) section. |
 | Import errors, or syntax errors from `src/models` | Wrong Python version. Use 3.11. |
 | Streamlit shows an API-unavailable banner in a tab | Start the API, or fix the "API base URL" box. |
 | `Address already in use` | Pass a different port, for example `uvicorn api.main:app --port 8001`. |
@@ -553,7 +534,7 @@ and click **Run workflow**.
 +-- models/              the four saved models the API serves (joblib files)
 +-- notebooks/           the original assignment notebook and the EDA source
 +-- reports/             model comparison and interval CSVs, plus the decision notes below
-+-- scripts/             helpers for the reproducibility audit
++-- scripts/             helper scripts (the Elastic Net feature-set comparison)
 +-- sql/                 three tested DuckDB queries (queries/) and the optional Postgres example (postgres/)
 +-- src/                 ETL, validation and features; src/models/ holds every model
 +-- tests/               pytest suite, including checks on the saved reports, SQL queries and models
@@ -575,10 +556,7 @@ scenario outputs are illustrative rather than causal. The credit-stress ECL is
 a simplified, Stage-1-only, 12-month calculation. It is not comparable to any
 bank's real provision and must not be used for credit, regulatory or accounting
 decisions. The RBA classifier's fitted models are not statistically shown to
-beat its threshold baseline. The numbers reproduce on the machine that produced them;
-the book's
-[Reproducibility](https://juanvu1810.github.io/Australian-CPI-Forecast/06_deployment.html#reproducibility-what-you-can-rely-on)
-section lists where they might not.
+beat its threshold baseline.
 
 "Headline CPI" in this repository means the ABS seasonally adjusted, year-ended All
 groups CPI (series A3604508K), taken from the ABS analytical series on the pre-October

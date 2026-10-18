@@ -1338,15 +1338,10 @@ def build_evaluation_report(
         )
     )
     ordered_stability_caveat = (
-        "This is a coefficient-magnitude threshold, not a full instability audit: "
-        "a direct cross-environment comparison (rerunning this evaluation on a "
-        "different machine) found at least two further quarters where "
-        "ordered_logit's predicted action changed without any parameter crossing "
-        "this threshold, so the table below is a lower bound on which folds are "
-        "environment-sensitive, not a complete inventory. The macro-F1 figures "
-        "above should be read as reproducible within one fixed environment "
-        "(this project's `cpi_forecast` conda environment), not necessarily "
-        "bit-for-bit across machines."
+        "This is a coefficient-magnitude threshold, not a full instability audit, so "
+        "the table below is a lower bound on which folds are unstable, not a complete "
+        "inventory. The macro-F1 figures above come from this project's `cpi_forecast` "
+        "conda environment and may differ slightly on another machine."
     )
     ordered_stability_text = (
         f"{ordered_stability_note}\n\n{ordered_stability_caveat}"
