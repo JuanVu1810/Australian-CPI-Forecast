@@ -65,7 +65,7 @@ def test_rba_report_has_threshold_macro_f1_row(rba_lines):
     assert any(matches), "the macro-F1 table must keep a `| threshold | macro_f1 | accuracy | n |` row"
 
 
-@pytest.mark.parametrize("name", ["simulation_fan_ensemble.csv", "simulation_fan_ensemble_trimmed_mean.csv"])
+@pytest.mark.parametrize("name", ["simulation_fan_ensemble.csv"])
 def test_simulation_fan_reports_keep_their_columns(name):
     fan = pd.read_csv(REPORTS / name)
     assert {"forecast_origin", "horizon", "p10", "p25", "median", "p75", "p90"} <= set(fan.columns)
@@ -73,18 +73,13 @@ def test_simulation_fan_reports_keep_their_columns(name):
     assert fan["forecast_origin"].nunique() == 1
 
 
-@pytest.mark.parametrize(
-    "name", ["simulation_paths_sample_ensemble.csv", "simulation_paths_sample_ensemble_trimmed_mean.csv"]
-)
+@pytest.mark.parametrize("name", ["simulation_paths_sample_ensemble.csv"])
 def test_simulation_path_samples_keep_their_columns(name):
     paths = pd.read_csv(REPORTS / name)
     assert {"forecast_origin", "draw_id", "horizon", "value"} <= set(paths.columns)
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["model_interval_calibration_validation.csv", "model_interval_calibration_validation_trimmed_mean.csv"],
-)
+@pytest.mark.parametrize("name", ["model_interval_calibration_validation.csv"])
 def test_interval_calibration_reports_have_overall_raw_coverage(name):
     validation = pd.read_csv(REPORTS / name)
     assert {"model", "horizon", "raw_empirical_coverage"} <= set(validation.columns)

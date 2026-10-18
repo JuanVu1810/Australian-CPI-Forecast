@@ -4,11 +4,11 @@
 
 ## Scope
 
-Uses leakage-safe Ensemble horizon-1 headline and trimmed-mean CPI forecasts from the existing backtest reports, plus the curated lag-safe unemployment-rate change feature. Feature sets are fixed before evaluation: threshold uses headline_forecast only; the Taylor-rule baseline uses headline_forecast and unemployment_rate_change_lag1; the estimated Taylor-rule model fits cash_rate_change on inflation_gap (headline) and unemployment_rate_change_lag1; ordered logit/probit use those three plus trimmed_mean_forecast; Frank-Hall XGBoost adds taylor_implied_change, so its comparison to the ordered models is not a clean like-for-like feature match.
+Uses leakage-safe Ensemble horizon-1 headline CPI forecasts from the existing backtest report, plus the curated lag-safe unemployment-rate change feature. Feature sets are fixed before evaluation: threshold uses headline_forecast only; the Taylor-rule baseline uses headline_forecast and unemployment_rate_change_lag1; the estimated Taylor-rule model fits cash_rate_change on inflation_gap (headline) and unemployment_rate_change_lag1; ordered logit/probit use the same two; Frank-Hall XGBoost adds taylor_implied_change, so its comparison to the ordered models is not a clean like-for-like feature match.
 
 majority_vote_ensemble is not a fitted model: it majority-votes the same quarter's threshold, taylor_rule_estimated, ordered logit and ordered probit predictions (ties resolved by the threshold prediction). The fixed Taylor rule and Frank-Hall XGBoost are excluded from the vote as already-established weaker models.
 
-The Taylor-rule baseline is a deliberate simplification: unemployment_rate_change_lag1 stands in for an unemployment gap (the project does not estimate NAIRU or potential output), using fixed 0.5/0.5 coefficients, the RBA's 2.5% target midpoint, and the sample's mean real policy rate (cash_rate - headline_forecast = -0.369) as r*. The estimated variant refits by OLS each fold (cash_rate_change ~ inflation_gap + unemployment_rate_change_lag1), discretized with a fixed +/-0.125pp hold band. Frank-Hall XGBoost is two binary classifiers (P(Y>cut), P(Y>hold)) with small-sample hyperparameters (max_depth=2, n_estimators=50, min_child_weight=3, subsample=0.75, colsample_bytree=0.75, reg_alpha=0.1, reg_lambda=2.0), not searched or tuned.
+The Taylor-rule baseline is a deliberate simplification: unemployment_rate_change_lag1 stands in for an unemployment gap (the project does not estimate NAIRU or potential output), using fixed 0.5/0.5 coefficients, the RBA's 2.5% target midpoint, and the sample's mean real policy rate (cash_rate - headline_forecast = -0.413) as r*. The estimated variant refits by OLS each fold (cash_rate_change ~ inflation_gap + unemployment_rate_change_lag1), discretized with a fixed +/-0.125pp hold band. Frank-Hall XGBoost is two binary classifiers (P(Y>cut), P(Y>hold)) with small-sample hyperparameters (max_depth=2, n_estimators=50, min_child_weight=3, subsample=0.75, colsample_bytree=0.75, reg_alpha=0.1, reg_lambda=2.0), not searched or tuned.
 
 ## Joined Sample
 
@@ -40,26 +40,19 @@ No audited candidate at or above the chosen fit-size floor had a degenerate trai
 
 | model                  |   macro_f1 |   accuracy |   n |
 |:-----------------------|-----------:|-----------:|----:|
-| threshold              |      0.737 |      0.714 |  49 |
-| majority_vote_ensemble |      0.695 |      0.694 |  49 |
-| ordered_logit          |      0.654 |      0.653 |  49 |
-| ordered_probit         |      0.633 |      0.633 |  49 |
-| taylor_rule_estimated  |      0.471 |      0.469 |  49 |
-| taylor_rule            |      0.406 |      0.510 |  49 |
-| frank_hall_xgboost     |      0.391 |      0.469 |  49 |
+| threshold              |      0.701 |      0.673 |  49 |
+| majority_vote_ensemble |      0.648 |      0.633 |  49 |
+| ordered_probit         |      0.645 |      0.633 |  49 |
+| ordered_logit          |      0.618 |      0.612 |  49 |
+| taylor_rule_estimated  |      0.401 |      0.408 |  49 |
+| taylor_rule            |      0.395 |      0.490 |  49 |
+| frank_hall_xgboost     |      0.300 |      0.408 |  49 |
 
 Macro-F1 is the comparison metric because policy holds are common enough that raw accuracy can overstate usefulness.
 
 ## Why The Threshold Rule Uses Headline CPI
 
-The threshold baseline applies the RBA's published 2-3% target band to the headline CPI forecast, because that band is a target for CPI inflation. Trimmed mean is the underlying-inflation measure, and it does enter the ordered logit, ordered probit and Frank-Hall models as a feature. As a sensitivity check, the same rule was also applied to the trimmed-mean forecast over the same test quarters:
-
-| threshold_input       |   macro_f1 |   accuracy |   predicted_cut |   predicted_hold |   predicted_hike |
-|:----------------------|-----------:|-----------:|----------------:|-----------------:|-----------------:|
-| headline (reportable) |      0.737 |      0.714 |              14 |               24 |               11 |
-| trimmed mean          |      0.625 |      0.531 |              22 |               19 |                8 |
-
-The two inputs give different calls in 19 of 49 test quarters; compare each input's predicted-action counts with the actual test counts above to see where the calls differ. This check was run after the model design was fixed and on the same test quarters as every other comparison, so treat it as a sensitivity check rather than a model-selection step; the gap between the two inputs has no bootstrap interval.
+The threshold baseline applies the RBA's published 2-3% target band to the headline CPI forecast, because that band is a target for CPI inflation.
 
 ## Prediction Confidence
 
@@ -71,31 +64,20 @@ Representative rows (full 49-quarter x 4-model table available by rerunning `pyt
 
 | target_quarter   | model         | predicted_action   |   P(cut) |   P(hold) |   P(hike) |   confidence |
 |:-----------------|:--------------|:-------------------|---------:|----------:|----------:|-------------:|
-| 2012Q1           | threshold     | hold               |    0.180 |     0.733 |     0.087 |        0.733 |
+| 2012Q1           | threshold     | hold               |    0.122 |     0.705 |     0.173 |        0.705 |
 | 2012Q1           | ordered_logit | hike               |    0.000 |     0.000 |     1.000 |        1.000 |
-| 2016Q1           | threshold     | hold               |    0.402 |     0.576 |     0.022 |        0.576 |
-| 2016Q1           | ordered_logit | hike               |    0.198 |     0.367 |     0.435 |        0.435 |
-| 2020Q1           | threshold     | hold               |    0.378 |     0.604 |     0.018 |        0.604 |
-| 2020Q1           | ordered_logit | cut                |    0.467 |     0.451 |     0.082 |        0.467 |
-| 2024Q1           | threshold     | hike               |    0.000 |     0.067 |     0.933 |        0.933 |
-| 2024Q1           | ordered_logit | hold               |    0.104 |     0.475 |     0.421 |        0.475 |
+| 2016Q1           | threshold     | hold               |    0.346 |     0.608 |     0.046 |        0.608 |
+| 2016Q1           | ordered_logit | hike               |    0.178 |     0.325 |     0.497 |        0.497 |
+| 2020Q1           | threshold     | hold               |    0.431 |     0.541 |     0.028 |        0.541 |
+| 2020Q1           | ordered_logit | hold               |    0.446 |     0.460 |     0.094 |        0.460 |
+| 2024Q1           | threshold     | hike               |    0.000 |     0.035 |     0.965 |        0.965 |
+| 2024Q1           | ordered_logit | hold               |    0.096 |     0.456 |     0.448 |        0.456 |
 
 ## Majority Vote Ensemble Audit
 
 The ensemble combines exactly four existing per-fold predictions: threshold, taylor_rule_estimated, ordered_logit, ordered_probit. It estimates no parameters and uses no separate train/test split.
 
-Tie-break cases using the threshold prediction: 6 of 49 test quarters.
-
-## Tested And Reverted Ordered Feature Variant
-
-A pre-committed 5-feature ordered-model variant added cash_rate_lag1 and commodity_growth_lag1 to the active 3-feature set. Reverted: it worsened both ordered models on the same walk-forward window (kept here as a tested-and-rejected variant, not erased).
-
-Rejected feature set: headline_forecast, trimmed_mean_forecast, unemployment_rate_change_lag1, cash_rate_lag1, commodity_growth_lag1.
-
-| model          |   active_3_feature_macro_f1 |   tested_5_feature_macro_f1 |   macro_f1_change | tested_paired_bootstrap_95pct_ci   | status                   |
-|:---------------|----------------------------:|----------------------------:|------------------:|:-----------------------------------|:-------------------------|
-| ordered_logit  |                       0.654 |                       0.620 |            -0.034 | [0.000, 0.338]                     | tested_once_and_reverted |
-| ordered_probit |                       0.633 |                       0.653 |             0.020 | [-0.024, 0.281]                    | tested_once_and_reverted |
+Tie-break cases using the threshold prediction: 13 of 49 test quarters.
 
 ## Estimated Taylor Coefficient Audit
 
@@ -103,7 +85,7 @@ Final walk-forward fold coefficients:
 
 | target_quarter   |   intercept |   coef_inflation_gap |   coef_unemployment_change_lag1 |   predicted_change | unstable_coefficients   |
 |:-----------------|------------:|---------------------:|--------------------------------:|-------------------:|:------------------------|
-| 2024Q1           |      -0.047 |                0.145 |                          -0.165 |              0.082 |                         |
+| 2024Q1           |      -0.054 |                0.147 |                          -0.187 |              0.092 |                         |
 
 Unstable coefficient flags:
 
@@ -113,17 +95,17 @@ No estimated Taylor-rule fold had |coef_inflation_gap| or |coef_unemployment_cha
 
 Ordered logit/probit refit at every walk-forward step, so there is no single coefficient vector; the table below is the final fold (most training data). Betas are on the train-standardized feature scale; alphas are the transformed latent cut/hold and hold/hike cutoffs.
 
-| model          | target_quarter   |   train_rows |   beta_headline_forecast |   beta_trimmed_mean_forecast |   beta_unemployment_rate_change_lag1 |   alpha_cut_hold |   alpha_hold_hike |
-|:---------------|:-----------------|-------------:|-------------------------:|-----------------------------:|-------------------------------------:|-----------------:|------------------:|
-| ordered_logit  | 2024Q1           |           60 |                    1.431 |                        0.461 |                               -0.270 |           -0.836 |             1.634 |
-| ordered_probit | 2024Q1           |           60 |                    0.859 |                        0.226 |                               -0.063 |           -0.489 |             0.952 |
+| model          | target_quarter   |   train_rows |   beta_headline_forecast |   beta_unemployment_rate_change_lag1 |   alpha_cut_hold |   alpha_hold_hike |
+|:---------------|:-----------------|-------------:|-------------------------:|-------------------------------------:|-----------------:|------------------:|
+| ordered_logit  | 2024Q1           |           60 |                    1.836 |                               -0.182 |           -0.810 |             1.645 |
+| ordered_probit | 2024Q1           |           60 |                    1.060 |                               -0.044 |           -0.480 |             0.949 |
 
 First-vs-last-fold alpha comparison (checks whether thin initial folds produce visibly different cutoffs from the final fold):
 
 | model          | first_test_quarter   | last_test_quarter   |   change_alpha_cut_hold |   range_alpha_cut_hold |   change_alpha_hold_hike |   range_alpha_hold_hike |
 |:---------------|:---------------------|:--------------------|------------------------:|-----------------------:|-------------------------:|------------------------:|
-| ordered_logit  | 2012Q1               | 2024Q1              |                 197.335 |                198.486 |                  -53.169 |                  54.283 |
-| ordered_probit | 2012Q1               | 2024Q1              |                  61.121 |                 61.769 |                  -10.371 |                  10.978 |
+| ordered_logit  | 2012Q1               | 2024Q1              |                 576.348 |                577.617 |                 -286.317 |                 287.411 |
+| ordered_probit | 2012Q1               | 2024Q1              |                 107.936 |                108.618 |                  -37.961 |                  38.534 |
 
 ## OrderedModel Convergence Warnings
 
@@ -137,10 +119,10 @@ A clean ConvergenceWarning history does not mean every fold is well-identified; 
 
 This is a coefficient-magnitude threshold, not a full instability audit, so the table below is a lower bound on which folds are unstable, not a complete inventory. The macro-F1 figures above come from this project's `cpi_forecast` conda environment and may differ slightly on another machine.
 
-| model          | target_quarter   |   train_rows | unstable_coefficients                                                                                    |
-|:---------------|:-----------------|-------------:|:---------------------------------------------------------------------------------------------------------|
-| ordered_logit  | 2012Q1           |           12 | alpha_cut_hold, alpha_hold_hike, headline_forecast, trimmed_mean_forecast, unemployment_rate_change_lag1 |
-| ordered_probit | 2012Q1           |           12 | alpha_cut_hold, alpha_hold_hike, headline_forecast, trimmed_mean_forecast, unemployment_rate_change_lag1 |
+| model          | target_quarter   |   train_rows | unstable_coefficients                                                             |
+|:---------------|:-----------------|-------------:|:----------------------------------------------------------------------------------|
+| ordered_logit  | 2012Q1           |           12 | alpha_cut_hold, alpha_hold_hike, headline_forecast, unemployment_rate_change_lag1 |
+| ordered_probit | 2012Q1           |           12 | alpha_cut_hold, alpha_hold_hike, headline_forecast, unemployment_rate_change_lag1 |
 
 ## Small-Sample Caveat
 
@@ -148,12 +130,12 @@ At 49 test quarters, the macro-F1 ranking above is suggestive rather than decisi
 
 | gap                                |   observed_macro_f1_gap | paired_bootstrap_95pct_ci   |
 |:-----------------------------------|------------------------:|:----------------------------|
-| threshold - taylor_rule            |                   0.331 | [0.191, 0.469]              |
-| threshold - taylor_rule_estimated  |                   0.266 | [0.076, 0.457]              |
-| threshold - ordered_logit          |                   0.083 | [-0.109, 0.277]             |
-| threshold - ordered_probit         |                   0.103 | [-0.094, 0.291]             |
-| threshold - frank_hall_xgboost     |                   0.346 | [0.128, 0.539]              |
-| threshold - majority_vote_ensemble |                   0.041 | [-0.125, 0.210]             |
+| threshold - taylor_rule            |                   0.306 | [0.170, 0.439]              |
+| threshold - taylor_rule_estimated  |                   0.299 | [0.108, 0.485]              |
+| threshold - ordered_logit          |                   0.083 | [-0.114, 0.279]             |
+| threshold - ordered_probit         |                   0.056 | [-0.135, 0.243]             |
+| threshold - frank_hall_xgboost     |                   0.401 | [0.215, 0.565]              |
+| threshold - majority_vote_ensemble |                   0.053 | [-0.091, 0.203]             |
 
 ## Confusion Matrices
 
@@ -161,62 +143,62 @@ At 49 test quarters, the macro-F1 ranking above is suggestive rather than decisi
 
 | actual   |   cut |   hold |   hike |
 |:---------|------:|-------:|-------:|
-| cut      |    12 |      9 |      0 |
-| hold     |     2 |     15 |      3 |
+| cut      |     8 |     13 |      0 |
+| hold     |     1 |     17 |      2 |
 | hike     |     0 |      0 |      8 |
 
 ### taylor_rule
 
 | actual   |   cut |   hold |   hike |
 |:---------|------:|-------:|-------:|
-| cut      |    18 |      0 |      3 |
-| hold     |     7 |      0 |     13 |
+| cut      |    17 |      0 |      4 |
+| hold     |     5 |      0 |     15 |
 | hike     |     1 |      0 |      7 |
 
 ### taylor_rule_estimated
 
 | actual   |   cut |   hold |   hike |
 |:---------|------:|-------:|-------:|
-| cut      |     6 |     10 |      5 |
-| hold     |     7 |     12 |      1 |
-| hike     |     0 |      3 |      5 |
+| cut      |     3 |     13 |      5 |
+| hold     |     6 |     12 |      2 |
+| hike     |     1 |      2 |      5 |
 
 ### ordered_logit
 
 | actual   |   cut |   hold |   hike |
 |:---------|------:|-------:|-------:|
-| cut      |    16 |      1 |      4 |
-| hold     |    10 |      9 |      1 |
+| cut      |    15 |      2 |      4 |
+| hold     |    11 |      8 |      1 |
 | hike     |     0 |      1 |      7 |
 
 ### ordered_probit
 
 | actual   |   cut |   hold |   hike |
 |:---------|------:|-------:|-------:|
-| cut      |    16 |      1 |      4 |
+| cut      |    15 |      2 |      4 |
 | hold     |    11 |      8 |      1 |
-| hike     |     0 |      1 |      7 |
+| hike     |     0 |      0 |      8 |
 
 ### frank_hall_xgboost
 
 | actual   |   cut |   hold |   hike |
 |:---------|------:|-------:|-------:|
-| cut      |    14 |      4 |      3 |
-| hold     |    12 |      8 |      0 |
-| hike     |     0 |      7 |      1 |
+| cut      |    13 |      5 |      3 |
+| hold     |    13 |      7 |      0 |
+| hike     |     1 |      7 |      0 |
 
 ### majority_vote_ensemble
 
 | actual   |   cut |   hold |   hike |
 |:---------|------:|-------:|-------:|
-| cut      |    14 |      3 |      4 |
-| hold     |     6 |     13 |      1 |
-| hike     |     0 |      1 |      7 |
+| cut      |     9 |      8 |      4 |
+| hold     |     5 |     14 |      1 |
+| hike     |     0 |      0 |      8 |
 
 ## Interpretive Conclusion
 
-The threshold baseline remains the preferred reportable result: it has the highest macro-F1 point estimate. Its lead over ordered_logit, ordered_probit, and majority_vote_ensemble remains statistically unsettled because those paired-bootstrap intervals touch or cross zero. Its gaps over taylor_rule, taylor_rule_estimated, and frank_hall_xgboost are strictly positive across the paired-bootstrap 95% intervals. The majority-vote ensemble records macro-F1 0.695; threshold minus majority_vote_ensemble is 0.041 with paired-bootstrap 95% CI [-0.125, 0.210]. The estimated Taylor rule beats the fixed Taylor rule on macro-F1 (0.471 vs 0.406).
+The threshold baseline remains the preferred reportable result: it has the highest macro-F1 point estimate. Its lead over ordered_logit, ordered_probit, and majority_vote_ensemble remains statistically unsettled because those paired-bootstrap intervals touch or cross zero. Its gaps over taylor_rule, taylor_rule_estimated, and frank_hall_xgboost are strictly positive across the paired-bootstrap 95% intervals. The majority-vote ensemble records macro-F1 0.648; threshold minus majority_vote_ensemble is 0.053 with paired-bootstrap 95% CI [-0.091, 0.203]. The estimated Taylor rule beats the fixed Taylor rule on macro-F1 (0.401 vs 0.395).
 
-Beyond the statistics, threshold's non-statistical edge is transparency and hike detection: it correctly classifies all 8 of 8 hike quarters, versus 5 of 8 for taylor_rule_estimated (misses 3), 7 of 8 for ordered logit (1 called hold), and 7 of 8 for ordered probit (1 called hold). That hike-to-hold error is a structurally different, arguably more consequential, failure mode than the aggregate macro-F1 gap captures.
+Beyond the statistics, threshold's non-statistical edge is transparency and hike detection: it correctly classifies all 8 of 8 hike quarters, versus 5 of 8 for taylor_rule_estimated (misses 3), 7 of 8 for ordered logit (1 called hold), and 8 of 8 for ordered probit (0 called hold). That hike-to-hold error is a structurally different, arguably more consequential, failure mode than the aggregate macro-F1 gap captures.
 
 A plausible reading is that the CPI forecast features are highly correlated and the earliest valid training folds are thin. This exercise should stay a documented classifier comparison for the materiality discussion, not become an API-exposed policy predictor.

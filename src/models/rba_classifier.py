@@ -22,13 +22,12 @@ from src.models.elastic_net import (
     TARGET_COLUMN,
     load_elastic_net_feature_frame,
 )
-from src.models.ensemble import horizon_rmse_weights, simulate_ensemble_paths
+from src.models.ensemble import simulate_ensemble_paths
 from src.models.evaluation import CURATED_DATA_PATH, PROJECT_ROOT, load_target_series
 from src.models.interval_coverage import DEFAULT_N_SIMS, DEFAULT_SEED
 
 
 HEADLINE_BACKTEST_PATH = PROJECT_ROOT / "reports/backtest_predictions.csv"
-TRIMMED_MEAN_BACKTEST_PATH = PROJECT_ROOT / "reports/backtest_predictions_trimmed_mean.csv"
 CURATED_MACRO_PATH = PROJECT_ROOT / "data/curated/quarterly_macro_features.parquet"
 EVALUATION_REPORT_PATH = PROJECT_ROOT / "reports/rba_classifier_evaluation.md"
 
@@ -60,32 +59,12 @@ THRESHOLD_FEATURE_COLUMNS = ("headline_forecast",)
 TAYLOR_FEATURE_COLUMNS = ("headline_forecast", "unemployment_rate_change_lag1")
 BASE_CLASSIFIER_FEATURE_COLUMNS = (
     "headline_forecast",
-    "trimmed_mean_forecast",
     "unemployment_rate_change_lag1",
 )
 ORDINAL_FEATURE_COLUMNS = BASE_CLASSIFIER_FEATURE_COLUMNS
 TAYLOR_IMPLIED_CHANGE_COLUMN = "taylor_implied_change"
 XGBOOST_FEATURE_COLUMNS = (*BASE_CLASSIFIER_FEATURE_COLUMNS, TAYLOR_IMPLIED_CHANGE_COLUMN)
 FEATURE_COLUMNS = ORDINAL_FEATURE_COLUMNS
-REVERTED_ORDERED_FIVE_FEATURE_COLUMNS = (
-    *BASE_CLASSIFIER_FEATURE_COLUMNS,
-    "cash_rate_lag1",
-    "commodity_growth_lag1",
-)
-REVERTED_ORDERED_FIVE_FEATURE_RESULTS = {
-    "ordered_logit": {
-        "tested_macro_f1": 0.620,
-        "tested_accuracy": 0.610,
-        "threshold_minus_tested_gap": 0.155,
-        "paired_bootstrap_95pct_ci": "[0.000, 0.338]",
-    },
-    "ordered_probit": {
-        "tested_macro_f1": 0.653,
-        "tested_accuracy": 0.634,
-        "threshold_minus_tested_gap": 0.122,
-        "paired_bootstrap_95pct_ci": "[-0.024, 0.281]",
-    },
-}
 TAYLOR_INFLATION_TARGET_MIDPOINT = 2.5
 TAYLOR_INFLATION_COEFFICIENT = 0.5
 TAYLOR_UNEMPLOYMENT_CHANGE_COEFFICIENT = 0.5
@@ -163,12 +142,10 @@ def _load_ensemble_horizon_one(path: Path, feature_name: str) -> pd.DataFrame:
 
 def assemble_policy_sample(
     headline_path: Path = HEADLINE_BACKTEST_PATH,
-    trimmed_mean_path: Path = TRIMMED_MEAN_BACKTEST_PATH,
     macro_path: Path = CURATED_MACRO_PATH,
 ) -> pd.DataFrame:
-    """Join Ensemble headline/trimmed-mean forecasts to cash-rate action labels."""
+    """Join Ensemble headline forecasts to cash-rate action labels."""
     headline = _load_ensemble_horizon_one(headline_path, "headline_forecast")
-    trimmed_mean = _load_ensemble_horizon_one(trimmed_mean_path, "trimmed_mean_forecast")
     macro_columns = [
         "quarter",
         "cash_rate",
@@ -180,11 +157,7 @@ def assemble_policy_sample(
         columns={"quarter": "target_quarter"}
     )
 
-    sample = headline.merge(trimmed_mean, on="target_quarter", how="inner").merge(
-        macro,
-        on="target_quarter",
-        how="inner",
-    )
+    sample = headline.merge(macro, on="target_quarter", how="inner")
     sample["policy_action"] = discretize_cash_rate_change(sample["cash_rate_change"])
     sample = sample.dropna(
         subset=[
@@ -331,45 +304,6 @@ def threshold_baseline_predict(headline_forecast: pd.Series | np.ndarray) -> pd.
     predictions.loc[values.lt(2.0)] = "cut"
     predictions.loc[values.gt(3.0)] = "hike"
     return predictions.astype(ACTION_DTYPE)
-
-
-def threshold_input_sensitivity(test: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-    """Apply the threshold rule to the headline and to the trimmed-mean forecast.
-
-    A sensitivity check on the rule's input over the same rows, not a candidate model:
-    the reportable threshold baseline is defined on ``headline_forecast``. Returns the
-    per-input scores and the number of rows where the two inputs give different calls.
-    """
-    actual = test["policy_action"].astype(str).to_numpy()
-    calls = {}
-    rows = []
-    for column, label in (
-        ("headline_forecast", "headline (reportable)"),
-        ("trimmed_mean_forecast", "trimmed mean"),
-    ):
-        predicted = threshold_baseline_predict(test[column]).astype(str).to_numpy()
-        calls[label] = predicted
-        rows.append(
-            {
-                "threshold_input": label,
-                "macro_f1": float(
-                    f1_score(
-                        actual,
-                        predicted,
-                        labels=list(ACTION_ORDER),
-                        average="macro",
-                        zero_division=0,
-                    )
-                ),
-                "accuracy": float(accuracy_score(actual, predicted)),
-                **{
-                    f"predicted_{action}": int((predicted == action).sum())
-                    for action in ACTION_ORDER
-                },
-            }
-        )
-    disagreements = int((calls["headline (reportable)"] != calls["trimmed mean"]).sum())
-    return pd.DataFrame(rows), disagreements
 
 
 def majority_vote_ensemble_predict(
@@ -528,7 +462,6 @@ def _predict_threshold_confidence(
     sarima_series: pd.Series,
     n_sims: int,
     seed: int,
-    weights: dict[int, tuple[float, float]],
 ) -> tuple[pd.DataFrame, dict[str, float | str]]:
     """Simulate next-quarter CPI from the origin before the test quarter and turn the draws into threshold probabilities."""
     target_quarter = pd.Period(str(test.iloc[0]["target_quarter"]), freq="Q")
@@ -550,10 +483,7 @@ def _predict_threshold_confidence(
         train_frame,
         steps=1,
         n_sims=n_sims,
-        weights=weights,
         seed=seed,
-        target_column=TARGET_COLUMN,
-        elastic_net_feature_columns=ELASTIC_NET_FEATURE_COLUMNS,
         sarima_series=train_sarima,
     )
     horizon_one_draws = np.asarray(paths, dtype=float)[:, 0]
@@ -826,7 +756,6 @@ def predict_single_quarter(
         sarima_series=sarima_series,
         n_sims=threshold_n_sims,
         seed=threshold_seed,
-        weights=horizon_rmse_weights(horizons=(1,)),
     )
     (
         estimated_taylor_prediction,
@@ -950,7 +879,6 @@ def predict_single_quarter(
                     bool(ensemble_tie_break.iloc[0]) if model == "majority_vote_ensemble" else False
                 ),
                 "headline_forecast": float(test_row["headline_forecast"]),
-                "trimmed_mean_forecast": float(test_row["trimmed_mean_forecast"]),
                 "unemployment_rate_change_lag1": float(test_row["unemployment_rate_change_lag1"]),
                 TAYLOR_IMPLIED_CHANGE_COLUMN: float(test_row[TAYLOR_IMPLIED_CHANGE_COLUMN]),
                 "fit_warnings": warning_by_model.get(model, ""),
@@ -1267,29 +1195,12 @@ def build_evaluation_report(
             "chosen_test": [int(test_counts[label]) for label in ACTION_ORDER],
         }
     )
-    threshold_input_frame, threshold_input_disagreements = threshold_input_sensitivity(test)
     display_audit = split_choice.audit.copy()
     condensed_audit = _condensed_split_audit(display_audit, degenerate, split_choice.initial_train_size)
     display_metrics = metrics.copy()
+    active_metric_lookup = metrics.set_index("model")
     display_metrics["macro_f1"] = display_metrics["macro_f1"].round(3)
     display_metrics["accuracy"] = display_metrics["accuracy"].round(3)
-    active_metric_lookup = metrics.set_index("model")
-    reverted_rows = []
-    for model, tested in REVERTED_ORDERED_FIVE_FEATURE_RESULTS.items():
-        active_macro_f1 = float(active_metric_lookup.loc[model, "macro_f1"])
-        reverted_rows.append(
-            {
-                "model": model,
-                "active_3_feature_macro_f1": round(active_macro_f1, 3),
-                "tested_5_feature_macro_f1": tested["tested_macro_f1"],
-                "macro_f1_change": round(tested["tested_macro_f1"] - active_macro_f1, 3),
-                "tested_5_feature_accuracy": tested["tested_accuracy"],
-                "threshold_minus_tested_gap": tested["threshold_minus_tested_gap"],
-                "tested_paired_bootstrap_95pct_ci": tested["paired_bootstrap_95pct_ci"],
-                "status": "tested_once_and_reverted",
-            }
-        )
-    reverted_ordered_frame = pd.DataFrame(reverted_rows)
     ordered_warning_rows = (
         predictions.loc[
             predictions.get("fit_warnings", pd.Series("", index=predictions.index))
@@ -1600,15 +1511,15 @@ def build_evaluation_report(
             "## Scope",
             "",
             (
-                "Uses leakage-safe Ensemble horizon-1 headline and trimmed-mean CPI "
-                "forecasts from the existing backtest reports, plus the curated "
+                "Uses leakage-safe Ensemble horizon-1 headline CPI "
+                "forecasts from the existing backtest report, plus the curated "
                 "lag-safe unemployment-rate change feature. Feature sets are fixed "
                 "before evaluation: threshold uses headline_forecast only; the "
                 "Taylor-rule baseline uses headline_forecast and "
                 "unemployment_rate_change_lag1; the estimated Taylor-rule model fits "
                 "cash_rate_change on inflation_gap (headline) and "
-                "unemployment_rate_change_lag1; ordered logit/probit use those three "
-                "plus trimmed_mean_forecast; Frank-Hall XGBoost adds "
+                "unemployment_rate_change_lag1; ordered logit/probit use the same two; "
+                "Frank-Hall XGBoost adds "
                 "taylor_implied_change, so its comparison to the ordered models is not "
                 "a clean like-for-like feature match."
             ),
@@ -1668,23 +1579,7 @@ def build_evaluation_report(
             "",
             (
                 "The threshold baseline applies the RBA's published 2-3% target band to the "
-                "headline CPI forecast, because that band is a target for CPI inflation. "
-                "Trimmed mean is the underlying-inflation measure, and it does enter the "
-                "ordered logit, ordered probit and Frank-Hall models as a feature. As a "
-                "sensitivity check, the same rule was also applied to the trimmed-mean "
-                "forecast over the same test quarters:"
-            ),
-            "",
-            _markdown_table(threshold_input_frame),
-            "",
-            (
-                f"The two inputs give different calls in {threshold_input_disagreements} of "
-                f"{len(test)} test quarters; compare each input's predicted-action counts "
-                "with the actual test counts above to see where the calls differ. This "
-                "check was run after the model design was "
-                "fixed and on the same test quarters as every other comparison, so treat it "
-                "as a sensitivity check rather than a model-selection step; the gap between "
-                "the two inputs has no bootstrap interval."
+                "headline CPI forecast, because that band is a target for CPI inflation."
             ),
             "",
             "## Prediction Confidence",
@@ -1719,26 +1614,6 @@ def build_evaluation_report(
             (
                 f"Tie-break cases using the threshold prediction: {tie_break_count} of "
                 f"{len(test)} test quarters."
-            ),
-            "",
-            "## Tested And Reverted Ordered Feature Variant",
-            "",
-            (
-                "A pre-committed 5-feature ordered-model variant added cash_rate_lag1 "
-                "and commodity_growth_lag1 to the active 3-feature set. Reverted: it "
-                "worsened both ordered models on the same walk-forward window (kept "
-                "here as a tested-and-rejected variant, not erased)."
-            ),
-            "",
-            (
-                "Rejected feature set: "
-                f"{', '.join(REVERTED_ORDERED_FIVE_FEATURE_COLUMNS)}."
-            ),
-            "",
-            _markdown_table(
-                reverted_ordered_frame.drop(
-                    columns=["tested_5_feature_accuracy", "threshold_minus_tested_gap"]
-                )
             ),
             "",
             "## Estimated Taylor Coefficient Audit",
@@ -1838,7 +1713,6 @@ def build_evaluation_report(
 
 def run_rba_classifier_evaluation(
     headline_path: Path = HEADLINE_BACKTEST_PATH,
-    trimmed_mean_path: Path = TRIMMED_MEAN_BACKTEST_PATH,
     macro_path: Path = CURATED_MACRO_PATH,
     output_path: Path = EVALUATION_REPORT_PATH,
     candidate_initial_train_sizes: tuple[int, ...] = DEFAULT_CANDIDATE_INITIAL_TRAIN_SIZES,
@@ -1847,7 +1721,6 @@ def run_rba_classifier_evaluation(
     """Run the full Phase 3 policy classifier evaluation and write the report."""
     sample = assemble_policy_sample(
         headline_path=headline_path,
-        trimmed_mean_path=trimmed_mean_path,
         macro_path=macro_path,
     )
     split_choice = choose_walk_forward_split(
@@ -1876,7 +1749,6 @@ def _parse_initial_sizes(value: str) -> tuple[int, ...]:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--headline", type=Path, default=HEADLINE_BACKTEST_PATH)
-    parser.add_argument("--trimmed-mean", type=Path, default=TRIMMED_MEAN_BACKTEST_PATH)
     parser.add_argument("--macro", type=Path, default=CURATED_MACRO_PATH)
     parser.add_argument("--output", type=Path, default=EVALUATION_REPORT_PATH)
     parser.add_argument(
@@ -1892,7 +1764,6 @@ def main(argv: list[str] | None = None) -> None:
 
     sample, predictions, metrics, split_choice = run_rba_classifier_evaluation(
         headline_path=args.headline,
-        trimmed_mean_path=args.trimmed_mean,
         macro_path=args.macro,
         output_path=args.output,
         candidate_initial_train_sizes=_parse_initial_sizes(args.candidate_initial_train_sizes),

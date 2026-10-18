@@ -32,12 +32,6 @@ CPI_INDEX_NOTEBOOK_SEASONAL_ORDER = (0, 1, 1, 4)
 DEFAULT_ORDER = (1, 0, 2)
 DEFAULT_SEASONAL_ORDER = (1, 0, 2, 4)
 
-# Separate trimmed-mean CPI YoY specification from the headline defaults above.
-# Selected and stability-screened in reports/model_refit_phase1_decisions.md.
-TRIMMED_MEAN_DEFAULT_TARGET_COLUMN = "trimmed_mean_cpi_yoy"
-TRIMMED_MEAN_DEFAULT_ORDER = (1, 1, 1)
-TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER = (0, 0, 1, 4)
-
 
 def fit_sarima(
     series: pd.Series,

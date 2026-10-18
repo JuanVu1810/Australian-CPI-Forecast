@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.models import tableau_export
+from src.models import results_export
 
 
 def test_build_svar_shock_events_frame_filters_to_target_own_shock(monkeypatch):
@@ -9,8 +9,8 @@ def test_build_svar_shock_events_frame_filters_to_target_own_shock(monkeypatch):
     systems = {
         "Synthetic": {
             "target": target,
-            "columns": (target, *tableau_export.svar.COMMON_MACRO_COLUMNS),
-            "ordering": (target, *tableau_export.svar.COMMON_MACRO_COLUMNS),
+            "columns": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
+            "ordering": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
         }
     }
     index = pd.period_range("2023Q2", periods=12, freq="Q")
@@ -21,14 +21,14 @@ def test_build_svar_shock_events_frame_filters_to_target_own_shock(monkeypatch):
         return frame
 
     def fake_fit_svar(data, ordering):
-        assert data.index.max() == tableau_export.SVAR_EXPORT_FORECAST_ORIGIN
+        assert data.index.max() == results_export.SVAR_EXPORT_FORECAST_ORIGIN
         assert ordering == systems["Synthetic"]["ordering"]
         return object()
 
     def fake_structural_shocks(fitted):
         quarters = pd.period_range("2023Q3", periods=10, freq="Q")
         rows = []
-        for shock in (*tableau_export.svar.COMMON_MACRO_COLUMNS, target):
+        for shock in (*results_export.svar.COMMON_MACRO_COLUMNS, target):
             values = np.zeros(len(quarters))
             if shock == target:
                 values[-1] = 10.0
@@ -36,12 +36,12 @@ def test_build_svar_shock_events_frame_filters_to_target_own_shock(monkeypatch):
                 rows.append({"quarter": quarter, "shock": shock, "shock_value": value})
         return pd.DataFrame(rows)
 
-    monkeypatch.setattr(tableau_export, "SVAR_SYSTEMS", systems)
-    monkeypatch.setattr(tableau_export.svar, "load_svar_level_frame", fake_load_svar_level_frame)
-    monkeypatch.setattr(tableau_export.svar, "fit_svar", fake_fit_svar)
-    monkeypatch.setattr(tableau_export.svar, "structural_shocks", fake_structural_shocks)
+    monkeypatch.setattr(results_export, "SVAR_SYSTEMS", systems)
+    monkeypatch.setattr(results_export.svar, "load_svar_level_frame", fake_load_svar_level_frame)
+    monkeypatch.setattr(results_export.svar, "fit_svar", fake_fit_svar)
+    monkeypatch.setattr(results_export.svar, "structural_shocks", fake_structural_shocks)
 
-    events = tableau_export.build_svar_shock_events_frame()
+    events = results_export.build_svar_shock_events_frame()
 
     assert list(events.columns) == [
         "system",
@@ -67,8 +67,8 @@ def test_build_svar_historical_decomposition_frame_keeps_target_baseline_and_own
     systems = {
         "Synthetic": {
             "target": target,
-            "columns": (target, *tableau_export.svar.COMMON_MACRO_COLUMNS),
-            "ordering": (target, *tableau_export.svar.COMMON_MACRO_COLUMNS),
+            "columns": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
+            "ordering": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
         }
     }
     index = pd.period_range("2023Q2", periods=12, freq="Q")
@@ -79,14 +79,14 @@ def test_build_svar_historical_decomposition_frame_keeps_target_baseline_and_own
         return frame
 
     def fake_fit_svar(data, ordering):
-        assert data.index.max() == tableau_export.SVAR_EXPORT_FORECAST_ORIGIN
+        assert data.index.max() == results_export.SVAR_EXPORT_FORECAST_ORIGIN
         assert ordering == systems["Synthetic"]["ordering"]
         return object()
 
     def fake_historical_decomposition(fitted):
         rows = []
         for response in [target, "cash_rate"]:
-            for component in ["baseline", target, *tableau_export.svar.COMMON_MACRO_COLUMNS]:
+            for component in ["baseline", target, *results_export.svar.COMMON_MACRO_COLUMNS]:
                 rows.append(
                     {
                         "quarter": pd.Period("2025Q4", freq="Q"),
@@ -97,16 +97,16 @@ def test_build_svar_historical_decomposition_frame_keeps_target_baseline_and_own
                 )
         return pd.DataFrame(rows)
 
-    monkeypatch.setattr(tableau_export, "SVAR_SYSTEMS", systems)
-    monkeypatch.setattr(tableau_export.svar, "load_svar_level_frame", fake_load_svar_level_frame)
-    monkeypatch.setattr(tableau_export.svar, "fit_svar", fake_fit_svar)
+    monkeypatch.setattr(results_export, "SVAR_SYSTEMS", systems)
+    monkeypatch.setattr(results_export.svar, "load_svar_level_frame", fake_load_svar_level_frame)
+    monkeypatch.setattr(results_export.svar, "fit_svar", fake_fit_svar)
     monkeypatch.setattr(
-        tableau_export.svar,
+        results_export.svar,
         "historical_decomposition",
         fake_historical_decomposition,
     )
 
-    decomposition = tableau_export.build_svar_historical_decomposition_frame()
+    decomposition = results_export.build_svar_historical_decomposition_frame()
 
     assert list(decomposition.columns) == [
         "system",
@@ -119,9 +119,9 @@ def test_build_svar_historical_decomposition_frame_keeps_target_baseline_and_own
     assert set(decomposition["component"]) == {
         "baseline",
         target,
-        *tableau_export.svar.COMMON_MACRO_COLUMNS,
+        *results_export.svar.COMMON_MACRO_COLUMNS,
     }
-    assert len(decomposition) == 1 + 1 + len(tableau_export.svar.COMMON_MACRO_COLUMNS)
+    assert len(decomposition) == 1 + 1 + len(results_export.svar.COMMON_MACRO_COLUMNS)
 
 
 def test_build_credit_stress_frame_flattens_segment_by_scenario_payload():
@@ -176,7 +176,7 @@ def test_build_credit_stress_frame_flattens_segment_by_scenario_payload():
         ],
     }
 
-    frame = tableau_export.build_credit_stress_frame(payload)
+    frame = results_export.build_credit_stress_frame(payload)
 
     assert list(frame.columns) == [
         "segment",
@@ -214,4 +214,4 @@ def test_build_credit_stress_frame_flattens_segment_by_scenario_payload():
 
 
 def test_build_credit_stress_frame_returns_empty_frame_for_no_segments():
-    assert tableau_export.build_credit_stress_frame({"segments": []}).empty
+    assert results_export.build_credit_stress_frame({"segments": []}).empty

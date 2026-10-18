@@ -28,17 +28,11 @@ from src.models import (
     scenario,
     svar,
 )
-from src.models.elastic_net import (
-    TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
-    TRIMMED_MEAN_TARGET_COLUMN,
-    load_elastic_net_feature_frame,
-)
+from src.models.elastic_net import load_elastic_net_feature_frame
 from src.models.evaluation import (
     ELASTIC_NET_MODEL_PATH,
     SARIMA_MODEL_PATH,
     TARGET_COLUMN,
-    TRIMMED_MEAN_ELASTIC_NET_MODEL_PATH,
-    TRIMMED_MEAN_SARIMA_MODEL_PATH,
     load_target_series,
 )
 
@@ -48,12 +42,6 @@ INTERVAL_CALIBRATION_FACTORS_PATH = Path("reports/model_interval_calibration_fac
 INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH = Path(
     "reports/model_interval_calibration_validation.csv"
 )
-TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH = Path(
-    "reports/model_interval_calibration_factors_trimmed_mean.csv"
-)
-TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH = Path(
-    "reports/model_interval_calibration_validation_trimmed_mean.csv"
-)
 MAX_FORECAST_HORIZON = 8
 # The scenario endpoint refits an SVAR and simulates per request (~40s at 1000 draws), so it gets a lower cap.
 MAX_SCENARIO_SIMS = 2000
@@ -61,10 +49,6 @@ MAX_ABS_SHOCK_VALUE = 1000.0
 VALIDATED_INTERVAL_LOWER = 0.1
 VALIDATED_INTERVAL_UPPER = 0.9
 HEADLINE_MODEL_PATHS = {"sarima": SARIMA_MODEL_PATH, "elastic_net": ELASTIC_NET_MODEL_PATH}
-TRIMMED_MEAN_MODEL_PATHS = {
-    "sarima": TRIMMED_MEAN_SARIMA_MODEL_PATH,
-    "elastic_net": TRIMMED_MEAN_ELASTIC_NET_MODEL_PATH,
-}
 RBA_ACTION_CAVEAT = (
     "RBA action classifications are a documented comparison exercise, not a "
     "validated policy predictor. The threshold baseline is the reportable result, "
@@ -140,7 +124,6 @@ class RbaActionResponse(BaseModel):
     reportable_model: str
     reportable_action: str
     headline_forecast: float
-    trimmed_mean_forecast: float
     models: list[RbaActionModelPrediction]
     caveat: str
 
@@ -173,7 +156,6 @@ class CreditRiskStressTestResponse(BaseModel):
 
 
 class ScenarioForecastRequest(BaseModel):
-    target: str = Field(default="headline")
     shock_variable: str
     shock_value: float = Field(allow_inf_nan=False, ge=-MAX_ABS_SHOCK_VALUE, le=MAX_ABS_SHOCK_VALUE)
     horizons: list[int] = Field(
@@ -186,7 +168,6 @@ class ScenarioForecastRequest(BaseModel):
 
 
 class ScenarioForecastResponse(BaseModel):
-    target: str
     shock_variable: str
     shock_value: float
     shock_size: float
@@ -240,17 +221,14 @@ def _optional_float(value: object) -> float | None:
     return float(value)
 
 
-def _current_elastic_net_frame(
-    target_column: str = TARGET_COLUMN,
-    feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
-) -> pd.DataFrame:
+def _current_elastic_net_frame() -> pd.DataFrame:
     """Target plus Elastic Net features from the full curated data, indexed by quarter."""
-    series = load_target_series(CURATED_DATA_PATH, target_column=target_column)
+    series = load_target_series(CURATED_DATA_PATH, target_column=TARGET_COLUMN)
     exog = load_elastic_net_feature_frame(
         CURATED_DATA_PATH,
-        feature_columns=feature_columns,
+        feature_columns=elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
     )
-    return pd.concat([series.rename(target_column), exog], axis=1)
+    return pd.concat([series.rename(TARGET_COLUMN), exog], axis=1)
 
 
 def _load_model(path: Path):
@@ -518,16 +496,11 @@ def _elastic_net_family_forecast(
     requested_horizon: int,
     n_sims: int,
     seed: int,
-    target_column: str = TARGET_COLUMN,
-    feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
     forecast_origin: str | None = None,
 ) -> FamilyForecastData:
     """Forecast and simulate from the saved Elastic Net model, optionally from an earlier ``forecast_origin``."""
     fitted = _load_model(model_paths["elastic_net"])
-    current_frame = _current_elastic_net_frame(
-        target_column=target_column,
-        feature_columns=feature_columns,
-    )
+    current_frame = _current_elastic_net_frame()
     if forecast_origin is not None:
         origin_period = pd.Period(forecast_origin, freq="Q")
         current_frame = current_frame.loc[current_frame.index <= origin_period]
@@ -562,18 +535,14 @@ def _ensemble_family_forecast(
     requested_horizon: int,
     n_sims: int,
     seed: int,
-    target_column: str = TARGET_COLUMN,
-    feature_columns: tuple[str, ...] = elastic_net.ELASTIC_NET_FEATURE_COLUMNS,
 ) -> FamilyForecastData:
-    """Blend the SARIMA and Elastic Net forecasts with inverse-RMSE weights."""
+    """Average the SARIMA and Elastic Net forecasts 50/50."""
     sarima_result = _sarima_family_forecast(model_paths, requested_horizon, n_sims, seed)
     elastic_net_result = _elastic_net_family_forecast(
         model_paths,
         requested_horizon,
         n_sims,
         seed + 1,
-        target_column=target_column,
-        feature_columns=feature_columns,
         forecast_origin=sarima_result.forecast_origin,
     )
     if sarima_result.quarters != elastic_net_result.quarters:
@@ -581,24 +550,9 @@ def _ensemble_family_forecast(
     if sarima_result.forecast_origin != elastic_net_result.forecast_origin:
         raise RuntimeError("Ensemble components returned different forecast origins.")
 
-    horizons = tuple(range(1, requested_horizon + 1))
-    weights = ensemble.horizon_rmse_weights(
-        horizons=horizons,
-        path=ensemble.dynamic_weights_source_path(target_column),
-    )
-    forecast = ensemble.combine_point_forecasts(
-        sarima_result.forecast,
-        elastic_net_result.forecast,
-        weights=weights,
-        horizons=horizons,
-    )
+    forecast = ensemble.combine_point_forecasts(sarima_result.forecast, elastic_net_result.forecast)
     draws = ensemble.recenter_paths_to_median(
-        ensemble.combine_paths(
-            sarima_result.draws,
-            elastic_net_result.draws,
-            weights=weights,
-            horizons=horizons,
-        ),
+        ensemble.combine_paths(sarima_result.draws, elastic_net_result.draws),
         forecast,
     )
     return FamilyForecastData(
@@ -612,7 +566,7 @@ def _ensemble_family_forecast(
 
 
 def _build_live_rba_action_row(n_sims: int, seed: int) -> pd.DataFrame:
-    """The classifier's input row for the next quarter: both ensemble forecasts plus the origin's macro values."""
+    """The classifier's input row for the next quarter: the ensemble forecast plus the origin's macro values."""
     curated = load_curated_data()
     required_columns = {
         "quarter",
@@ -636,21 +590,6 @@ def _build_live_rba_action_row(n_sims: int, seed: int) -> pd.DataFrame:
         n_sims=n_sims,
         seed=seed,
     )
-    trimmed_mean = TRIMMED_MEAN_FAMILY_HANDLERS["ensemble"](
-        TRIMMED_MEAN_MODEL_PATHS,
-        requested_horizon=1,
-        n_sims=n_sims,
-        seed=seed + 2,
-    )
-    if headline.quarters[0] != trimmed_mean.quarters[0]:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Live RBA action forecasts do not align with each other: "
-                f"headline={headline.quarters[0]}, "
-                f"trimmed_mean={trimmed_mean.quarters[0]}."
-            ),
-        )
 
     target_quarter = headline.quarters[0]
     forecast_origin = str(pd.Period(target_quarter, freq="Q") - 1)
@@ -680,7 +619,6 @@ def _build_live_rba_action_row(n_sims: int, seed: int) -> pd.DataFrame:
             {
                 "target_quarter": target_quarter,
                 "headline_forecast": float(headline.forecast[0]),
-                "trimmed_mean_forecast": float(trimmed_mean.forecast[0]),
                 "cash_rate": float(latest["cash_rate"]),
                 "cash_rate_lag1": float(latest["cash_rate_lag1"]),
                 "unemployment_rate_change_lag1": float(
@@ -714,53 +652,11 @@ def _rba_action_model_predictions(predictions: pd.DataFrame) -> list[RbaActionMo
     return rows
 
 
-def _trimmed_mean_elastic_net_family_forecast(
-    model_paths: dict[str, Path],
-    requested_horizon: int,
-    n_sims: int,
-    seed: int,
-    forecast_origin: str | None = None,
-) -> FamilyForecastData:
-    """Elastic Net forecast for trimmed-mean CPI, using its own target and features."""
-    return _elastic_net_family_forecast(
-        model_paths,
-        requested_horizon,
-        n_sims,
-        seed,
-        target_column=TRIMMED_MEAN_TARGET_COLUMN,
-        feature_columns=TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
-        forecast_origin=forecast_origin,
-    )
-
-
-def _trimmed_mean_ensemble_family_forecast(
-    model_paths: dict[str, Path],
-    requested_horizon: int,
-    n_sims: int,
-    seed: int,
-) -> FamilyForecastData:
-    """Ensemble forecast for trimmed-mean CPI, using its own target and features."""
-    return _ensemble_family_forecast(
-        model_paths,
-        requested_horizon,
-        n_sims,
-        seed,
-        target_column=TRIMMED_MEAN_TARGET_COLUMN,
-        feature_columns=TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
-    )
-
-
-# Which function produces each model family's forecast, per target.
+# Which function produces each model family's forecast.
 FAMILY_HANDLERS = {
     "sarima": _sarima_family_forecast,
     "elastic_net": _elastic_net_family_forecast,
     "ensemble": _ensemble_family_forecast,
-}
-
-TRIMMED_MEAN_FAMILY_HANDLERS = {
-    "sarima": _sarima_family_forecast,
-    "elastic_net": _trimmed_mean_elastic_net_family_forecast,
-    "ensemble": _trimmed_mean_ensemble_family_forecast,
 }
 
 
@@ -770,9 +666,7 @@ def health(response: Response) -> dict[str, object]:
     required_files = [
         CURATED_DATA_PATH,
         INTERVAL_CALIBRATION_FACTORS_PATH,
-        TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH,
         *HEADLINE_MODEL_PATHS.values(),
-        *TRIMMED_MEAN_MODEL_PATHS.values(),
     ]
     missing = [str(path) for path in required_files if not path.exists()]
     if missing:
@@ -797,14 +691,14 @@ def features() -> dict[str, object]:
     }
 
 
-def _forecast_all_with_handlers(
-    request: AllForecastsRequest,
-    family_handlers: dict,
-    model_paths: dict[str, Path],
-    interval_calibration_factors_path: Path | None = None,
-    interval_calibration_validation_report_path: Path | None = None,
-) -> AllForecastsResponse:
-    """Run every family's handler, then add calibrated intervals and coverage; failed families go to ``unavailable``."""
+@app.post("/forecast/all", response_model=AllForecastsResponse)
+def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
+    """Headline CPI forecasts from every model family, with calibrated intervals and coverage.
+
+    A family that fails to load goes to ``unavailable`` instead of failing the whole request.
+    """
+    family_handlers = FAMILY_HANDLERS
+    model_paths = HEADLINE_MODEL_PATHS
     load_curated_data()
 
     models = []
@@ -839,14 +733,12 @@ def _forecast_all_with_handlers(
             interval_upper=interval_upper,
             lower=request.interval_lower,
             upper=request.interval_upper,
-            interval_calibration_factors_path=interval_calibration_factors_path,
         )
         empirical_coverage, coverage_n, significantly_miscalibrated = _coverage_fields_for_family(
             family,
             result.horizon_served,
             request.interval_lower,
             request.interval_upper,
-            interval_calibration_validation_report_path=interval_calibration_validation_report_path,
         )
         models.append(
             FamilyForecast(
@@ -872,25 +764,6 @@ def _forecast_all_with_handlers(
         unavailable=unavailable,
     )
 
-
-@app.post("/forecast/all", response_model=AllForecastsResponse)
-def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
-    """Headline CPI forecasts from every model family."""
-    return _forecast_all_with_handlers(request, FAMILY_HANDLERS, HEADLINE_MODEL_PATHS)
-
-
-@app.post("/forecast/trimmed-mean/all", response_model=AllForecastsResponse)
-def forecast_trimmed_mean_all(request: AllForecastsRequest) -> AllForecastsResponse:
-    """Trimmed-mean CPI forecasts from every model family."""
-    return _forecast_all_with_handlers(
-        request,
-        TRIMMED_MEAN_FAMILY_HANDLERS,
-        TRIMMED_MEAN_MODEL_PATHS,
-        interval_calibration_factors_path=TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH,
-        interval_calibration_validation_report_path=(
-            TRIMMED_MEAN_INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH
-        ),
-    )
 
 
 @lru_cache(maxsize=1)
@@ -923,7 +796,6 @@ def _rba_action_response() -> RbaActionResponse:
         reportable_model="threshold",
         reportable_action=str(threshold["predicted_action"]),
         headline_forecast=float(live["headline_forecast"]),
-        trimmed_mean_forecast=float(live["trimmed_mean_forecast"]),
         models=_rba_action_model_predictions(predictions),
         caveat=RBA_ACTION_CAVEAT,
     )
@@ -992,7 +864,6 @@ def credit_risk_stress_test(
 
 @lru_cache(maxsize=32)
 def _scenario_response(
-    target: str,
     shock_variable: str,
     shock_value: float,
     horizons: tuple[int, ...],
@@ -1003,7 +874,6 @@ def _scenario_response(
     """Run one scenario. Seeds and data are fixed, so repeating a request gives the same answer."""
     try:
         result = scenario.run_scenario(
-            target=target,
             shock_variable=shock_variable,
             shock_value=shock_value,
             horizons=horizons,
@@ -1026,14 +896,10 @@ def _scenario_response(
         interval_upper=result.interval_upper,
         lower=interval_lower,
         upper=interval_upper,
-        interval_calibration_factors_path=(
-            TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH if target == "trimmed_mean" else None
-        ),
         horizons=result.horizons,
     )
     caveat = result.caveat if calibrated else f"{result.caveat} {UNCALIBRATED_SCENARIO_NOTE}"
     return ScenarioForecastResponse(
-        target=result.target,
         shock_variable=result.shock_variable,
         shock_value=result.shock_value,
         shock_size=result.shock_size,
@@ -1051,7 +917,6 @@ def _scenario_response(
 def forecast_scenario(request: ScenarioForecastRequest) -> ScenarioForecastResponse:
     """CPI forecast after a user-chosen macro shock (SVAR impulse responses added to ensemble draws)."""
     return _scenario_response(
-        request.target,
         request.shock_variable,
         request.shock_value,
         tuple(request.horizons),

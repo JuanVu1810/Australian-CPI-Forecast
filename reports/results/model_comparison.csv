@@ -1,0 +1,5 @@
+target,model,n,rmse,mae
+Headline,sarima,488,1.564401,1.073211
+Headline,elastic_net,488,1.62456,1.235886
+Headline,ensemble,488,1.563004,1.123106
+Headline,seasonal_naive,488,2.107675,1.515164

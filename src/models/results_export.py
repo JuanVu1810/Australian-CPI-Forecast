@@ -1,48 +1,30 @@
-"""Export a bounded set of flat CSVs for the Tableau executive dashboard.
+"""Export the flat CSVs behind the book's charts and the Streamlit fallback.
 
 Calls the running FastAPI service over HTTP (same contract Streamlit uses)
-rather than loading or fitting models in-process, per this project's
-Streamlit/FastAPI serving separation. Reads only the small, already-generated
-comparison/coverage reports and metadata -- never the raw curated feature
-matrix or dataset/ downloads.
+rather than loading or fitting models in-process. Reads only the small,
+already-generated comparison/coverage reports and the curated data.
 
 Usage:
     uvicorn api.main:app --reload   # in one terminal
-    python -m src.models.tableau_export   # in another
+    python -m src.models.results_export   # in another
 
-Writes to reports/tableau/:
-    forecast.csv              -- point + interval, all families, both targets
-    rba_action.csv             -- all classifier rows from GET /rba-action
-    credit_stress.csv          -- illustrative 12-month ECL rows (segment x
-                                   scenario) from GET /credit-risk/stress-test
-    model_comparison.csv       -- overall RMSE/MAE per family, both targets
-    model_interval_coverage.csv -- overall coverage per family, both targets
-    dataset_overview.csv       -- one-row summary of the curated dataset
-    historical_indicators.csv  -- tidy full-history series for every distinct
-                                   exogenous macro variable plus both CPI
-                                   targets (raw levels, not the lag/interaction
-                                   engineering copies), with a per-variable
-                                   z-scored `value_standardized` column
-                                   alongside the raw `value`; includes actual
-                                   CPI, so it blends with forecast.csv on
-                                   `quarter` to lead a trend chart into the
-                                   forecast
-    elastic_net_feature_importance.csv -- tidy per-horizon Elastic Net
-                                   coefficients for both targets from
-                                   reports/elastic_net_coefficients*.csv, with
-                                   a readable feature_label and an
-                                   is_exogenous flag separating macro drivers
-                                   from the model's own autoregressive lags
-    svar_irf.csv             -- target responses to one-SD recursive Cholesky
-                                structural shocks in the four SVAR exogenous
-                                variables, with bootstrap bands
-    svar_shock_events.csv    -- located historical own-target structural
-                                shocks, standardized within each system's own
-                                history
-    svar_historical_decomposition.csv -- each target's actual fitted-history
-                                path decomposed into the zero-shock baseline,
-                                target own-shock, and four exogenous-shock
-                                contributions
+Writes to reports/results/:
+    forecast.csv              -- point + interval, all families
+    rba_action.csv            -- all classifier rows from GET /rba-action
+    credit_stress.csv         -- illustrative 12-month ECL rows (segment x
+                                 scenario) from GET /credit-risk/stress-test
+    model_comparison.csv      -- overall RMSE/MAE per family
+    model_interval_coverage.csv -- overall coverage per family
+    historical_indicators.csv -- tidy full-history series for every distinct
+                                 macro variable plus both CPI measures, with a
+                                 per-variable z-scored `value_standardized`
+    svar_irf.csv              -- target responses to one-SD recursive Cholesky
+                                 structural shocks, with bootstrap bands
+    svar_shock_events.csv     -- located historical own-target structural
+                                 shocks, standardized within each system
+    svar_historical_decomposition.csv -- each target's fitted-history path
+                                 decomposed into baseline, own-shock and
+                                 macro-shock contributions
 """
 
 from __future__ import annotations
@@ -58,8 +40,7 @@ from src.models import svar
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CURATED_DATA_PATH = PROJECT_ROOT / "data/curated/quarterly_macro_features.csv"
-SERIES_AVAILABILITY_PATH = PROJECT_ROOT / "data/metadata/series_availability.csv"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "reports/tableau"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "reports/results"
 DEFAULT_API_BASE_URL = "http://localhost:8000"
 SVAR_EXPORT_FORECAST_ORIGIN = svar.FORECAST_ORIGIN_PIN
 SVAR_EXPORT_HORIZONS = tuple(range(1, 9))
@@ -79,51 +60,11 @@ HISTORICAL_INDICATOR_COLUMNS = {
     "inflation_expectations_business": "Business Inflation Expectations",
 }
 
-ELASTIC_NET_COEFFICIENT_REPORTS = {
-    "Headline": PROJECT_ROOT / "reports/elastic_net_coefficients.csv",
-    "Trimmed mean": PROJECT_ROOT / "reports/elastic_net_coefficients_trimmed_mean.csv",
-}
-
-# Readable labels for every feature name that appears in either coefficient
-# report. Own-target lags are flagged separately (AUTOREGRESSIVE_FEATURES)
-# rather than dropped, so Tableau can show how much of the forecast is
-# inertia versus exogenous macro drivers.
-FEATURE_LABELS = {
-    "cash_rate_change_lag1": "Cash Rate Change (lag 1)",
-    "cash_rate_change_lag1_x_unemployment_rate_change_lag1": (
-        "Cash Rate Change x Unemployment Rate Change Interaction (lag 1)"
-    ),
-    "commodity_growth_lag1": "Commodity Price Growth (lag 1)",
-    "commodity_growth_lag1_sq": "Commodity Price Growth Squared (lag 1)",
-    "cpi_yoy_lag1": "Headline CPI YoY (lag 1, autoregressive)",
-    "cpi_yoy_lag4": "Headline CPI YoY (lag 4, autoregressive)",
-    "inflation_expectations_business_lag1": "Business Inflation Expectations (lag 1)",
-    "ppi_growth_lag2": "Producer Price Growth (lag 2)",
-    "ppi_growth_lag2_sq": "Producer Price Growth Squared (lag 2)",
-    "trimmed_mean_cpi_yoy_lag1": "Trimmed Mean CPI YoY (lag 1, autoregressive)",
-    "trimmed_mean_cpi_yoy_lag4": "Trimmed Mean CPI YoY (lag 4, autoregressive)",
-    "unemployment_rate_change_lag1": "Unemployment Rate Change (lag 1)",
-    "wti_growth_lag1": "WTI Oil Price Growth (lag 1)",
-    "wti_growth_lag1_sq": "WTI Oil Price Growth Squared (lag 1)",
-}
-
-AUTOREGRESSIVE_FEATURES = {
-    "cpi_yoy_lag1",
-    "cpi_yoy_lag4",
-    "trimmed_mean_cpi_yoy_lag1",
-    "trimmed_mean_cpi_yoy_lag4",
-}
-
 FORECAST_TARGETS = {
     "Headline": {
         "endpoint": "/forecast/all",
         "comparison_report": PROJECT_ROOT / "reports/model_comparison_all.csv",
         "coverage_report": PROJECT_ROOT / "reports/model_interval_coverage.csv",
-    },
-    "Trimmed mean": {
-        "endpoint": "/forecast/trimmed-mean/all",
-        "comparison_report": PROJECT_ROOT / "reports/model_comparison_trimmed_mean_all.csv",
-        "coverage_report": PROJECT_ROOT / "reports/model_interval_coverage_trimmed_mean.csv",
     },
 }
 
@@ -170,7 +111,6 @@ def build_rba_action_frame(payload: dict) -> pd.DataFrame:
     frame["target_quarter"] = payload["target_quarter"]
     frame["forecast_origin"] = payload["forecast_origin"]
     frame["headline_forecast"] = payload["headline_forecast"]
-    frame["trimmed_mean_forecast"] = payload["trimmed_mean_forecast"]
     frame["reportable_model"] = payload["reportable_model"]
     frame["reportable_action"] = payload["reportable_action"]
     return frame
@@ -216,7 +156,7 @@ def build_credit_stress_frame(payload: dict) -> pd.DataFrame:
 
 
 def build_model_comparison_frame() -> pd.DataFrame:
-    """Overall RMSE/MAE per model for both targets, without the RBA row."""
+    """Overall RMSE/MAE per model, without the RBA row."""
     frames = []
     for target_label, config in FORECAST_TARGETS.items():
         path = config["comparison_report"]
@@ -235,7 +175,7 @@ def build_model_comparison_frame() -> pd.DataFrame:
 
 
 def build_coverage_frame() -> pd.DataFrame:
-    """Overall interval coverage per model for both targets."""
+    """Overall interval coverage per model."""
     frames = []
     for target_label, config in FORECAST_TARGETS.items():
         path = config["coverage_report"]
@@ -255,29 +195,6 @@ def build_coverage_frame() -> pd.DataFrame:
     ]
 
 
-def build_dataset_overview_frame() -> pd.DataFrame:
-    """One-row summary of the curated dataset's date range and sources."""
-    indicator_columns = list(HISTORICAL_INDICATOR_COLUMNS)
-    curated = pd.read_csv(CURATED_DATA_PATH, usecols=["quarter", *indicator_columns])
-    observed = curated.loc[curated[indicator_columns].notna().any(axis=1)]
-    quarters = observed["quarter"].astype(str)
-    series_availability = pd.read_csv(SERIES_AVAILABILITY_PATH)
-    return pd.DataFrame(
-        [
-            {
-                "quarter_range_start": quarters.min(),
-                "quarter_range_end": quarters.max(),
-                "n_quarters": len(quarters),
-                "n_source_series": len(series_availability),
-                "n_source_families": series_availability["source_family"].nunique(),
-                "curated_dataset_last_modified": pd.Timestamp(
-                    CURATED_DATA_PATH.stat().st_mtime, unit="s"
-                ).strftime("%Y-%m-%d"),
-            }
-        ]
-    )
-
-
 def build_historical_indicators_frame() -> pd.DataFrame:
     """Long table of every indicator's full history, raw and z-scored."""
     columns = list(HISTORICAL_INDICATOR_COLUMNS)
@@ -292,27 +209,6 @@ def build_historical_indicators_frame() -> pd.DataFrame:
     long_frame = long_frame.join(stats, on="variable")
     long_frame["value_standardized"] = (long_frame["value"] - long_frame["mean"]) / long_frame["std"]
     return long_frame.drop(columns=["mean", "std"])
-
-
-def build_feature_importance_frame() -> pd.DataFrame:
-    """Elastic Net coefficients per target, horizon and feature, with readable labels."""
-    frames = []
-    for target_label, path in ELASTIC_NET_COEFFICIENT_REPORTS.items():
-        if not path.exists():
-            continue
-        report = pd.read_csv(path, usecols=["horizon", "feature", "coef"])
-        report["target"] = target_label
-        frames.append(report)
-    if not frames:
-        return pd.DataFrame()
-    combined = pd.concat(frames, ignore_index=True)
-    # coef is read off a StandardScaler -> ElasticNet pipeline (elastic_net.py),
-    # so magnitudes are already on a comparable standardized scale across
-    # features -- abs_coef is a valid cross-feature importance ranking as-is.
-    combined["feature_label"] = combined["feature"].map(FEATURE_LABELS).fillna(combined["feature"])
-    combined["is_exogenous"] = ~combined["feature"].isin(AUTOREGRESSIVE_FEATURES)
-    combined["abs_coef"] = combined["coef"].abs()
-    return combined[["target", "horizon", "feature", "feature_label", "is_exogenous", "coef", "abs_coef"]]
 
 
 def _fit_pinned_svar(config: dict):
@@ -464,18 +360,14 @@ def main() -> None:
     build_credit_stress_frame(credit_stress_payload).to_csv(args.output_dir / "credit_stress.csv", index=False)
     build_model_comparison_frame().to_csv(args.output_dir / "model_comparison.csv", index=False)
     build_coverage_frame().to_csv(args.output_dir / "model_interval_coverage.csv", index=False)
-    build_dataset_overview_frame().to_csv(args.output_dir / "dataset_overview.csv", index=False)
     historical_frame.to_csv(args.output_dir / "historical_indicators.csv", index=False)
-    build_feature_importance_frame().to_csv(
-        args.output_dir / "elastic_net_feature_importance.csv", index=False
-    )
     build_svar_irf_frame().to_csv(args.output_dir / "svar_irf.csv", index=False)
     build_svar_shock_events_frame().to_csv(args.output_dir / "svar_shock_events.csv", index=False)
     build_svar_historical_decomposition_frame().to_csv(
         args.output_dir / "svar_historical_decomposition.csv", index=False
     )
 
-    print(f"Wrote 11 CSVs to {args.output_dir}")
+    print(f"Wrote 9 CSVs to {args.output_dir}")
 
 
 if __name__ == "__main__":

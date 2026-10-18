@@ -155,11 +155,6 @@ def test_run_scenario_keeps_tier1_paths_independent_of_shock_size(monkeypatch, t
         "bootstrap_orth_irf_draws",
         lambda *args, **kwargs: irf_draws.copy(),
     )
-    monkeypatch.setattr(
-        scenario.ensemble,
-        "horizon_rmse_weights",
-        lambda horizons, path=None: {horizon: (0.5, 0.5) for horizon in horizons},
-    )
 
     def fake_simulate_ensemble_paths(*args, **kwargs):
         del args, kwargs
@@ -174,7 +169,6 @@ def test_run_scenario_keeps_tier1_paths_independent_of_shock_size(monkeypatch, t
     )
 
     zero = scenario.run_scenario(
-        target="headline",
         shock_variable="unemployment_rate",
         shock_value=4.5,
         horizons=(1, 2),
@@ -182,7 +176,6 @@ def test_run_scenario_keeps_tier1_paths_independent_of_shock_size(monkeypatch, t
         curated_path=curated_path,
     )
     nonzero = scenario.run_scenario(
-        target="headline",
         shock_variable="unemployment_rate",
         shock_value=5.5,
         horizons=(1, 2),
@@ -203,7 +196,6 @@ def test_run_scenario_keeps_tier1_paths_independent_of_shock_size(monkeypatch, t
 def _fake_scenario_result(horizons=(1, 2), forecast=(3.1, 3.2), lower=(2.6, 2.7), upper=(3.6, 3.7)):
     n = len(horizons)
     return scenario.ScenarioResult(
-        target="headline",
         target_column="cpi_yoy",
         shock_variable="cash_rate",
         shock_value=4.35,
@@ -235,7 +227,6 @@ def test_forecast_scenario_api_returns_caveat_and_calibrated_interval(monkeypatc
 
     response = api_main.forecast_scenario(
         api_main.ScenarioForecastRequest(
-            target="headline",
             shock_variable="cash_rate",
             shock_value=4.35,
             horizons=[1, 2],
@@ -248,7 +239,7 @@ def test_forecast_scenario_api_returns_caveat_and_calibrated_interval(monkeypatc
     # Each side is widened around the forecast by that horizon's factor: 3.1 -/+ 2 * 0.5 and 3.2 -/+ 3 * 0.5.
     np.testing.assert_allclose(response["interval_lower"], [2.1, 1.7])
     np.testing.assert_allclose(response["interval_upper"], [4.1, 4.7])
-    assert "fail multivariate residual whiteness and normality diagnostics" in response["caveat"]
+    assert "fails multivariate residual whiteness and normality diagnostics" in response["caveat"]
     assert api_main.UNCALIBRATED_SCENARIO_NOTE not in response["caveat"]
 
 
@@ -268,27 +259,6 @@ def test_forecast_scenario_api_matches_factors_by_horizon_not_position(monkeypat
 
     np.testing.assert_allclose(response["interval_lower"], [0.5])  # horizon 4 uses factor 5, not horizon 1's factor
     np.testing.assert_allclose(response["interval_upper"], [5.5])
-
-
-def test_forecast_scenario_api_uses_the_trimmed_mean_factors_for_that_target(monkeypatch, tmp_path):
-    headline, trimmed = tmp_path / "headline.csv", tmp_path / "trimmed.csv"
-    _write_factors(headline, {1: 1.0})
-    _write_factors(trimmed, {1: 4.0})
-    monkeypatch.setattr(api_main, "INTERVAL_CALIBRATION_FACTORS_PATH", headline)
-    monkeypatch.setattr(api_main, "TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH", trimmed)
-    monkeypatch.setattr(
-        api_main.scenario,
-        "run_scenario",
-        lambda **kwargs: _fake_scenario_result(horizons=(1,), forecast=(3.0,), lower=(2.5,), upper=(3.5,)),
-    )
-
-    response = api_main.forecast_scenario(
-        api_main.ScenarioForecastRequest(
-            target="trimmed_mean", shock_variable="cash_rate", shock_value=4.0, horizons=[1]
-        )
-    ).model_dump()
-
-    np.testing.assert_allclose(response["interval_lower"], [1.0])
 
 
 def test_forecast_scenario_api_leaves_other_percentiles_raw_and_says_so(monkeypatch, tmp_path):

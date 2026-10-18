@@ -91,10 +91,11 @@ def test_run_ensemble_path_sample_writes_long_format_draws(monkeypatch, tmp_path
         fake_simulate_ensemble_paths,
     )
 
+    monkeypatch.setattr(simulation_fan, "ELASTIC_NET_FEATURE_COLUMNS", ("cpi_yoy_lag1",))
+
     frame = simulation_fan.run_ensemble_path_sample(
         curated_path=curated_path,
         output_path=output_path,
-        elastic_net_feature_columns=("cpi_yoy_lag1",),
         n_sims=n_sims,
         n_draws=20,
         seed=123,
@@ -145,16 +146,12 @@ def test_sample_paths_frame_rejects_out_of_range_horizons():
 def test_simulation_fan_output_paths_are_distinct_and_named():
     expected_names = {
         "simulation_fan_sarima.csv",
-        "simulation_fan_sarima_trimmed_mean.csv",
         "simulation_fan_elastic_net.csv",
-        "simulation_fan_elastic_net_trimmed_mean.csv",
         "simulation_fan_ensemble.csv",
-        "simulation_fan_ensemble_trimmed_mean.csv",
         "simulation_fan_svar_headline.csv",
-        "simulation_fan_svar_trimmed_mean.csv",
     }
     output_paths = tuple(simulation_fan.SIMULATION_FAN_OUTPUT_PATHS.values())
 
-    assert len(output_paths) == 8
-    assert len(set(output_paths)) == 8
+    assert len(output_paths) == 4
+    assert len(set(output_paths)) == 4
     assert {path.name for path in output_paths} == expected_names

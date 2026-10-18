@@ -18,7 +18,6 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 from api import main as api_main
-from src.models.elastic_net import TRIMMED_MEAN_TARGET_COLUMN
 from src.models.evaluation import CURATED_DATA_PATH, PROJECT_ROOT, TARGET_COLUMN, load_target_series
 
 
@@ -37,28 +36,23 @@ DO UPDATE SET actual = COALESCE(forecast_snapshots.actual, excluded.actual)
 
 
 def collect_snapshot_rows() -> pd.DataFrame:
-    """Serve the one-quarter-ahead forecast of every model and target, with the observed CPI if published."""
-    request = api_main.AllForecastsRequest(horizon=1)
-    responses = [
-        ("headline", TARGET_COLUMN, api_main.forecast_all(request)),
-        ("trimmed_mean", TRIMMED_MEAN_TARGET_COLUMN, api_main.forecast_trimmed_mean_all(request)),
-    ]
+    """Serve the one-quarter-ahead forecast of every model, with the observed CPI if published."""
+    response = api_main.forecast_all(api_main.AllForecastsRequest(horizon=1))
+    observed = load_target_series(CURATED_DATA_PATH, target_column=TARGET_COLUMN)
     rows = []
-    for target, target_column, response in responses:
-        observed = load_target_series(CURATED_DATA_PATH, target_column=target_column)
-        for model in response.models:
-            target_quarter = model.quarters[0]
-            actual = observed.get(pd.Period(target_quarter, freq="Q"))
-            rows.append(
-                {
-                    "target": target,
-                    "model": model.model_family,
-                    "forecast_origin": model.forecast_origin,
-                    "target_quarter": target_quarter,
-                    "point_forecast": model.forecast[0],
-                    "actual": None if actual is None else float(actual),
-                }
-            )
+    for model in response.models:
+        target_quarter = model.quarters[0]
+        actual = observed.get(pd.Period(target_quarter, freq="Q"))
+        rows.append(
+            {
+                "target": "headline",
+                "model": model.model_family,
+                "forecast_origin": model.forecast_origin,
+                "target_quarter": target_quarter,
+                "point_forecast": model.forecast[0],
+                "actual": None if actual is None else float(actual),
+            }
+        )
     return pd.DataFrame(rows)
 
 

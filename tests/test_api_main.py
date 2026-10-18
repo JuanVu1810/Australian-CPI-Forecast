@@ -30,7 +30,6 @@ def _use_tmp_models(monkeypatch, tmp_path, with_elastic_net=False):
     if with_elastic_net:
         joblib.dump({}, paths["elastic_net"])
     monkeypatch.setattr(api_main, "HEADLINE_MODEL_PATHS", paths)
-    monkeypatch.setattr(api_main, "TRIMMED_MEAN_MODEL_PATHS", paths)
 
 
 def _patch_elastic_net_fit(monkeypatch, fit):
@@ -140,57 +139,6 @@ def test_forecast_all_returns_saved_sarima_and_marks_missing_families(
     assert "elastic_net.joblib not found" in unavailable["ensemble"]
 
 
-def test_trimmed_mean_forecast_all_uses_trimmed_handlers_and_calibration(
-    monkeypatch,
-    tmp_path,
-):
-    _use_tmp_models(monkeypatch, tmp_path)
-    curated_path = tmp_path / "curated.csv"
-    factors_path = tmp_path / "trimmed_calibration_factors.csv"
-    _write_curated_frame(curated_path, end_quarter="2021Q4")
-    _write_interval_calibration_factors(factors_path)
-    monkeypatch.setattr(api_main, "CURATED_DATA_PATH", curated_path)
-    monkeypatch.setattr(
-        api_main,
-        "TRIMMED_MEAN_INTERVAL_CALIBRATION_FACTORS_PATH",
-        factors_path,
-    )
-    api_main._load_interval_calibration_factors.cache_clear()
-
-    def fake_trimmed_sarima_family_forecast(model_paths, requested_horizon, n_sims, seed):
-        return api_main.FamilyForecastData(
-            forecast=[10.0, 20.0],
-            draws=np.column_stack(
-                [
-                    np.linspace(9.0, 11.0, n_sims),
-                    np.linspace(18.0, 22.0, n_sims),
-                ]
-            ),
-            quarters=["2022Q1", "2022Q2"],
-            forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
-        )
-
-    monkeypatch.setattr(
-        api_main,
-        "TRIMMED_MEAN_FAMILY_HANDLERS",
-        {"sarima": fake_trimmed_sarima_family_forecast},
-    )
-
-    payload = api_main.forecast_trimmed_mean_all(
-        api_main.AllForecastsRequest(horizon=2, n_sims=100)
-    ).model_dump()
-
-    assert payload["requested_horizon"] == 2
-    assert payload["unavailable"] == []
-    model = payload["models"][0]
-    assert model["model_family"] == "sarima"
-    assert model["forecast"] == [10.0, 20.0]
-    np.testing.assert_allclose(model["interval_lower"], [8.4, 19.2])
-    np.testing.assert_allclose(model["interval_upper"], [11.6, 20.8])
-
-
 def test_rba_action_returns_live_policy_breakdown_and_marks_threshold(
     monkeypatch,
     tmp_path,
@@ -219,20 +167,9 @@ def test_rba_action_returns_live_policy_breakdown_and_marks_threshold(
             horizon_cap=None,
         )
 
-    def fake_trimmed_ensemble(model_paths, requested_horizon, n_sims, seed):
-        return api_main.FamilyForecastData(
-            forecast=[2.7],
-            draws=np.zeros((n_sims, 1)),
-            quarters=["2022Q1"],
-            forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
-        )
-
     def fake_predict_single_quarter(train, test, **kwargs):
         assert test.iloc[0]["target_quarter"] == "2022Q1"
         assert test.iloc[0]["headline_forecast"] == pytest.approx(3.2)
-        assert test.iloc[0]["trimmed_mean_forecast"] == pytest.approx(2.7)
         assert test.iloc[0]["cash_rate"] == pytest.approx(3.25)
         return pd.DataFrame(
             {
@@ -263,7 +200,6 @@ def test_rba_action_returns_live_policy_breakdown_and_marks_threshold(
         )
 
     monkeypatch.setitem(api_main.FAMILY_HANDLERS, "ensemble", fake_headline_ensemble)
-    monkeypatch.setitem(api_main.TRIMMED_MEAN_FAMILY_HANDLERS, "ensemble", fake_trimmed_ensemble)
     predict_calls = []
 
     def counting_predict_single_quarter(*args, **kwargs):
@@ -285,7 +221,6 @@ def test_rba_action_returns_live_policy_breakdown_and_marks_threshold(
     assert payload["reportable_model"] == "threshold"
     assert payload["reportable_action"] == "hike"
     assert payload["headline_forecast"] == pytest.approx(3.2)
-    assert payload["trimmed_mean_forecast"] == pytest.approx(2.7)
     assert len(payload["models"]) == 7
     threshold = payload["models"][0]
     assert threshold["model"] == "threshold"
@@ -847,13 +782,9 @@ def _fake_ensemble_components(monkeypatch, seen):
         requested_horizon,
         n_sims,
         seed,
-        target_column,
-        feature_columns,
         forecast_origin=None,
     ):
         seen["elastic_net_model_paths"] = model_paths
-        seen["elastic_target"] = target_column
-        seen["elastic_features"] = feature_columns
         seen["elastic_forecast_origin"] = forecast_origin
         return api_main.FamilyForecastData(
             forecast=[3.0, 4.0, 5.0],
@@ -864,16 +795,11 @@ def _fake_ensemble_components(monkeypatch, seen):
             horizon_cap=None,
         )
 
-    def fake_horizon_rmse_weights(horizons, path=None):
-        seen["weights_path"] = path
-        return {horizon: (0.25, 0.75) for horizon in horizons}
-
     monkeypatch.setattr(api_main, "_sarima_family_forecast", fake_sarima_family_forecast)
     monkeypatch.setattr(api_main, "_elastic_net_family_forecast", fake_elastic_net_family_forecast)
-    monkeypatch.setattr(api_main.ensemble, "horizon_rmse_weights", fake_horizon_rmse_weights)
 
 
-def test_forecast_all_ensemble_blends_sarima_and_elastic_net_with_inverse_rmse_weights(
+def test_forecast_all_ensemble_averages_sarima_and_elastic_net_50_50(
     monkeypatch,
     tmp_path,
 ):
@@ -892,34 +818,12 @@ def test_forecast_all_ensemble_blends_sarima_and_elastic_net_with_inverse_rmse_w
     assert ensemble["model_family"] == "ensemble"
     assert ensemble["horizon"] == 3
     assert ensemble["horizon_cap"] is None
-    assert ensemble["forecast"] == [2.5, 3.5, 4.5]
+    assert ensemble["forecast"] == [2.0, 3.0, 4.0]
     assert ensemble["quarters"] == ["2022Q1", "2022Q2", "2022Q3"]
     assert len(ensemble["interval_lower"]) == 3
     assert len(ensemble["interval_upper"]) == 3
     assert seen["sarima_model_paths"] is api_main.HEADLINE_MODEL_PATHS
     assert seen["elastic_net_model_paths"] is api_main.HEADLINE_MODEL_PATHS
-    assert seen["weights_path"] == api_main.ensemble.DYNAMIC_WEIGHTS_SOURCE_PATH
-    assert seen["elastic_forecast_origin"] == "2021Q4"
-
-
-def test_trimmed_mean_ensemble_uses_trimmed_components_and_dynamic_weights(monkeypatch):
-    seen = {}
-    _fake_ensemble_components(monkeypatch, seen)
-
-    result = api_main.TRIMMED_MEAN_FAMILY_HANDLERS["ensemble"](
-        api_main.TRIMMED_MEAN_MODEL_PATHS,
-        requested_horizon=3,
-        n_sims=100,
-        seed=42,
-    )
-
-    assert seen["weights_path"] == api_main.ensemble.TRIMMED_MEAN_DYNAMIC_WEIGHTS_SOURCE_PATH
-    assert result.forecast == [2.5, 3.5, 4.5]
-    assert result.quarters == ["2022Q1", "2022Q2", "2022Q3"]
-    assert result.horizon_cap is None
-    assert seen["sarima_model_paths"] is api_main.TRIMMED_MEAN_MODEL_PATHS
-    assert seen["elastic_target"] == "trimmed_mean_cpi_yoy"
-    assert seen["elastic_features"][0] == "trimmed_mean_cpi_yoy_lag1"
     assert seen["elastic_forecast_origin"] == "2021Q4"
 
 

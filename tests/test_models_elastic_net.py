@@ -169,13 +169,11 @@ def test_scaler_is_fit_on_feature_columns_only_not_target():
     assert elastic_net.TARGET_COLUMN not in fitted.scaler.columns
 
 
-def test_trimmed_mean_elastic_net_feature_constants_are_separate_from_headline():
-    trimmed = elastic_net.TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS
+def test_elastic_net_feature_constants_are_own_lags_plus_three_macro_terms():
     headline = elastic_net.ELASTIC_NET_FEATURE_COLUMNS
 
-    assert trimmed[:2] == ("trimmed_mean_cpi_yoy_lag1", "trimmed_mean_cpi_yoy_lag4")
     assert headline[:2] == ("cpi_yoy_lag1", "cpi_yoy_lag4")
-    assert trimmed[2:] == headline[2:] == elastic_net.ELASTIC_NET_MACRO_FEATURE_COLUMNS
+    assert headline[2:] == elastic_net.ELASTIC_NET_MACRO_FEATURE_COLUMNS
     assert set(elastic_net.ELASTIC_NET_MACRO_FEATURE_COLUMNS) == {
         "inflation_expectations_business_lag1",
         "cash_rate_change_lag1",

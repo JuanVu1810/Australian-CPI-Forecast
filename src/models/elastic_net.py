@@ -41,12 +41,11 @@ from src.models.sarima import forecast_sarima
 
 
 TARGET_COLUMN = "cpi_yoy"
-TRIMMED_MEAN_TARGET_COLUMN = "trimmed_mean_cpi_yoy"
-# WHY these three: the quarterly-CPI screen in book appendix 7 and 11 finds a Granger signal only for business
+# WHY these three: the quarterly-CPI screen in book appendix 5 finds a Granger signal only for business
 # inflation expectations, the cash rate and (weakly) PPI, all at lag 1. The earlier eleven-term sets (oil,
 # commodity, unemployment, squared and interaction terms) came from a YoY screen whose p-values were too small.
-# Walk-forward RMSE on the same 53 origins was a tie for headline and 4% lower for trimmed mean, so we use the
-# smaller set for both. See reports/model_refit_phase1_decisions.md (addendum).
+# Walk-forward RMSE on the same 53 origins was a tie with the old set for headline, so we use the smaller set.
+# See reports/model_refit_phase1_decisions.md (addendum).
 ELASTIC_NET_MACRO_FEATURE_COLUMNS = (
     "inflation_expectations_business_lag1",
     "cash_rate_change_lag1",
@@ -55,11 +54,6 @@ ELASTIC_NET_MACRO_FEATURE_COLUMNS = (
 ELASTIC_NET_FEATURE_COLUMNS = (
     "cpi_yoy_lag1",
     "cpi_yoy_lag4",
-    *ELASTIC_NET_MACRO_FEATURE_COLUMNS,
-)
-TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS = (
-    "trimmed_mean_cpi_yoy_lag1",
-    "trimmed_mean_cpi_yoy_lag4",
     *ELASTIC_NET_MACRO_FEATURE_COLUMNS,
 )
 

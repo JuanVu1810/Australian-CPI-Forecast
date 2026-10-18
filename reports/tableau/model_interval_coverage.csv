@@ -1,7 +1,0 @@
-target,model,n,nominal_coverage,empirical_coverage,significantly_miscalibrated
-Headline,elastic_net,488,0.8,0.706967,True
-Headline,ensemble,488,0.8,0.672131,True
-Headline,sarima,616,0.8,0.780844,False
-Trimmed mean,elastic_net,488,0.8,0.743852,True
-Trimmed mean,ensemble,488,0.8,0.717213,True
-Trimmed mean,sarima,616,0.8,0.777597,False

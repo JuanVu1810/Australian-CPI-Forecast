@@ -12,7 +12,7 @@ COPY models models
 COPY data/curated data/curated
 # The credit stress test reads its PD/LGD/EAD assumption CSVs from data/metadata
 COPY data/metadata data/metadata
-# The API reads the interval and ensemble-weight reports at request time
+# The API reads the interval calibration reports at request time
 COPY reports reports
 
 # Cloud Run sets PORT; 8000 is the default for running locally

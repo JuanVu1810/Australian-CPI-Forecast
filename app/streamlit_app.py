@@ -42,35 +42,12 @@ LIVE_API_TIMEOUT_SECONDS = 60  # Cloud Run's first call after idle took ~14s
 # The scenario endpoint takes ~40s and /rba-action ~10s on a laptop, so they get longer.
 SLOW_API_TIMEOUT_SECONDS = 120
 
-ENSEMBLE_FLAGSHIP_CONFIG = {
-    "Headline": {
-        "sample_path": PROJECT_ROOT / "reports/simulation_paths_sample_ensemble.csv",
-        "fan_path": PROJECT_ROOT / "reports/simulation_fan_ensemble.csv",
-        "value_label": "Simulated headline CPI YoY (%)",
-        "reported_target": "Headline",
-    },
-    "Trimmed mean": {
-        "sample_path": PROJECT_ROOT / "reports/simulation_paths_sample_ensemble_trimmed_mean.csv",
-        "fan_path": PROJECT_ROOT / "reports/simulation_fan_ensemble_trimmed_mean.csv",
-        "value_label": "Simulated trimmed-mean CPI YoY (%)",
-        "reported_target": "Trimmed mean",
-    },
-}
-
-FORECAST_TARGET_CONFIG = {
-    "Headline": {
-        "endpoint": "/forecast/all",
-        "history_column": "cpi_yoy",
-        "display_name": "Headline CPI YoY",
-        "coverage_report": "reports/model_interval_coverage.csv",
-    },
-    "Trimmed mean": {
-        "endpoint": "/forecast/trimmed-mean/all",
-        "history_column": "trimmed_mean_cpi_yoy",
-        "display_name": "Trimmed Mean CPI YoY",
-        "coverage_report": "reports/model_interval_coverage_trimmed_mean.csv",
-    },
-}
+ENSEMBLE_SAMPLE_PATH = PROJECT_ROOT / "reports/simulation_paths_sample_ensemble.csv"
+ENSEMBLE_FAN_PATH = PROJECT_ROOT / "reports/simulation_fan_ensemble.csv"
+ENSEMBLE_VALUE_LABEL = "Simulated headline CPI YoY (%)"
+FORECAST_ENDPOINT = "/forecast/all"
+HISTORY_COLUMN = "cpi_yoy"
+COVERAGE_REPORT = "reports/model_interval_coverage.csv"
 MODEL_LABELS = {
     "ensemble": "Ensemble (SARIMA + Elastic Net)",
     "sarima": "SARIMA",
@@ -83,20 +60,7 @@ SCENARIO_SHOCK_VARIABLES = (
     "commodity_growth",
     "inflation_expectations_business",
 )
-SCENARIO_TARGET_CONFIG = {
-    "Headline (cpi_yoy)": {
-        "request_value": "headline",
-        "baseline_endpoint": "/forecast/all",
-        "history_column": "cpi_yoy",
-        "axis_title": "CPI YoY (%)",
-    },
-    "Trimmed mean (trimmed_mean_cpi_yoy)": {
-        "request_value": "trimmed_mean",
-        "baseline_endpoint": "/forecast/trimmed-mean/all",
-        "history_column": "trimmed_mean_cpi_yoy",
-        "axis_title": "Trimmed Mean CPI YoY (%)",
-    },
-}
+SCENARIO_AXIS_TITLE = "CPI YoY (%)"
 
 SECONDARY_MODELS = (
     "taylor_rule",
@@ -113,14 +77,14 @@ PALETTE = {
     "light": {
         "fan": "#eb6834", "median": "#a33d19", "muted": "#898781", "grid": "#e1e0d9",
         "ink": "#1c1b1a", "paper": "#fbfaf8", "border": "#e5e2dc", "accent2": "#3a6b63",
-        "headline": "#2a78d6", "trimmed": "#eb6834", "target": "#2f8f5b", "midpoint": "#4d6b57",
+        "headline": "#2a78d6", "target": "#2f8f5b", "midpoint": "#4d6b57",
         "scenario": "#eb6834", "baseline": "#2a78d6",
         "actual": "#2a78d6", "forecast": "#eb6834", "miscalibrated": "#b83232", "nominal": "#898781",
     },
     "dark": {
         "fan": "#d95926", "median": "#ffb08f", "muted": "#a8a49c", "grid": "#2c2c2a",
         "ink": "#ece9e4", "paper": "#15140f", "border": "#33312b", "accent2": "#7fc4b8",
-        "headline": "#3987e5", "trimmed": "#d95926", "target": "#61b983", "midpoint": "#8eb89b",
+        "headline": "#3987e5", "target": "#61b983", "midpoint": "#8eb89b",
         "scenario": "#d95926", "baseline": "#3987e5",
         "actual": "#3987e5", "forecast": "#d95926", "miscalibrated": "#ff8a8a", "nominal": "#898781",
     },
@@ -358,7 +322,7 @@ def _rba_target_band(start, end, colors: dict, y_axis_title: str):
 
 def build_forecast_chart(history: pd.DataFrame, forecast: pd.DataFrame, theme_type: str) -> alt.LayerChart:
     colors = PALETTE[theme_type]
-    color_scale = alt.Scale(domain=["Headline", "Trimmed mean"], range=[colors["headline"], colors["trimmed"]])
+    color_scale = alt.Scale(domain=["Headline"], range=[colors["headline"]])
     dash_scale = alt.Scale(domain=["Actual", "Forecast"], range=[[1, 0], [6, 3]])
     start = min(history["quarter_date"].min(), forecast["quarter_date"].min())
     end = max(history["quarter_date"].max(), forecast["quarter_date"].max())
@@ -471,33 +435,22 @@ def _model_label(model_family: str) -> str:
 
 
 def _history_frame(curated: pd.DataFrame) -> pd.DataFrame:
-    """Recent actual headline and trimmed-mean CPI in long format for the forecast chart."""
-    frames = []
-    recent = curated.tail(HISTORY_QUARTERS_SHOWN)
-    for target_label, config in FORECAST_TARGET_CONFIG.items():
-        frame = recent[["quarter_date", config["history_column"]]].rename(columns={config["history_column"]: "value"})
-        frame["target"] = target_label
-        frame["series"] = "Actual"
-        frames.append(frame)
-    return pd.concat(frames, ignore_index=True)
+    """Recent actual headline CPI in long format for the forecast chart."""
+    frame = curated.tail(HISTORY_QUARTERS_SHOWN)[["quarter_date", HISTORY_COLUMN]].rename(
+        columns={HISTORY_COLUMN: "value"}
+    )
+    frame["target"] = "Headline"
+    frame["series"] = "Actual"
+    return frame.reset_index(drop=True)
 
 
-def _combined_forecast_frame(
-    curated: pd.DataFrame,
-    selected_family: str,
-    payloads_by_target: dict[str, dict],
-    family_maps_by_target: dict[str, dict[str, dict]],
-) -> pd.DataFrame:
-    frames = []
-    for target_label, payload in payloads_by_target.items():
-        family_forecast = family_maps_by_target[target_label][selected_family]
-        target_column = FORECAST_TARGET_CONFIG[target_label]["history_column"]
-        fallback = float(curated[target_column].dropna().iloc[-1])
-        anchor_value = _anchor_value(curated, target_column, family_forecast["forecast_origin"], fallback)
-        frame = _scenario_frame(family_forecast, anchor_value, "Forecast")
-        frame["target"] = target_label
-        frames.append(frame)
-    return pd.concat(frames, ignore_index=True)
+def _forecast_frame(curated: pd.DataFrame, family_forecast: dict) -> pd.DataFrame:
+    """One family's forecast rows, bridged to the observed value at the forecast origin."""
+    fallback = float(curated[HISTORY_COLUMN].dropna().iloc[-1])
+    anchor_value = _anchor_value(curated, HISTORY_COLUMN, family_forecast["forecast_origin"], fallback)
+    frame = _scenario_frame(family_forecast, anchor_value, "Forecast")
+    frame["target"] = "Headline"
+    return frame
 
 
 def _scenario_frame(payload: dict, anchor_value: float, series: str) -> pd.DataFrame:
@@ -566,24 +519,15 @@ with forecast_tab:
     st.caption(
         "Pick a horizon and load the forecasts served by the API. Book: section 6, Deployment."
     )
-    live_control_cols = st.columns(2)
-    with live_control_cols[0]:
-        live_target_label = st.radio("Target detail", options=list(FORECAST_TARGET_CONFIG), horizontal=True, key="live_forecast_target")
-    with live_control_cols[1]:
-        live_horizon = st.slider("Forecast horizon (quarters)", min_value=1, max_value=MAX_FORECAST_HORIZON, value=MAX_FORECAST_HORIZON, key="live_forecast_horizon")
+    live_horizon = st.slider(
+        "Forecast horizon (quarters)", min_value=1, max_value=MAX_FORECAST_HORIZON, value=MAX_FORECAST_HORIZON, key="live_forecast_horizon"
+    )
 
     if st.button("Load live forecasts", key="load_live_forecasts"):
-        live_payloads_by_target: dict[str, dict] = {}
-        live_fetch_error = None
         with st.spinner("Loading forecasts..."):
-            for label, config in FORECAST_TARGET_CONFIG.items():
-                payload, error = api_request("POST", api_base_url, config["endpoint"], json={"horizon": live_horizon})
-                if error:
-                    live_fetch_error = error
-                    break
-                live_payloads_by_target[label] = payload
+            live_payload, live_fetch_error = api_request("POST", api_base_url, FORECAST_ENDPOINT, json={"horizon": live_horizon})
         st.session_state["live_forecast_result"] = {
-            "payloads_by_target": live_payloads_by_target,
+            "payload": live_payload,
             "error": live_fetch_error,
             "horizon": live_horizon,
         }
@@ -594,27 +538,23 @@ with forecast_tab:
     elif live_result["error"]:
         st.info(live_result["error"])
     else:
-        live_payloads_by_target = live_result["payloads_by_target"]
+        live_payload = live_result["payload"]
         if live_result["horizon"] != live_horizon:
             st.info("Loaded forecasts use the previous horizon. Reload to refresh this view.")
-        live_family_maps = {label: _family_map(payload) for label, payload in live_payloads_by_target.items()}
-        common_families = set.intersection(*(set(fm) for fm in live_family_maps.values()))
-        live_unavailable = [
-            {"target": label, **item} for label, payload in live_payloads_by_target.items() for item in payload.get("unavailable", [])
-        ]
-        if not common_families:
-            st.warning("No model family is currently servable for both headline and trimmed-mean targets.")
+        live_family_map = _family_map(live_payload)
+        live_unavailable = live_payload.get("unavailable", [])
+        if not live_family_map:
+            st.warning("No model family is currently servable.")
         else:
-            family_names = _ordered_families(common_families)
+            family_names = _ordered_families(set(live_family_map))
             live_selected_family = st.selectbox(
                 "Model family", options=family_names, format_func=_model_label, index=0, key="live_forecast_family"
             )
-            live_target_config = FORECAST_TARGET_CONFIG[live_target_label]
-            live_family_forecast = live_family_maps[live_target_label][live_selected_family]
+            live_family_forecast = live_family_map[live_selected_family]
             origin_cols = st.columns(4)
             origin_cols[0].metric("Forecast origin", live_family_forecast["forecast_origin"])
             origin_cols[1].metric("Horizon served", live_family_forecast["horizon"])
-            origin_cols[2].metric(f"Next quarter {live_target_label.lower()}", f"{live_family_forecast['forecast'][0]:.2f}%")
+            origin_cols[2].metric("Next quarter headline CPI", f"{live_family_forecast['forecast'][0]:.2f}%")
             origin_cols[3].metric(
                 f"Next quarter {INTERVAL_LABEL}",
                 f"[{live_family_forecast['interval_lower'][0]:.2f}, {live_family_forecast['interval_upper'][0]:.2f}]",
@@ -622,23 +562,22 @@ with forecast_tab:
             if any(live_family_forecast.get("significantly_miscalibrated") or []):
                 st.warning(
                     f"`{_model_label(live_selected_family)}` has at least one significantly miscalibrated "
-                    f"horizon for `{live_target_label}` per `{live_target_config['coverage_report']}`. Treat "
-                    "the shaded band as an indicative calibrated simulation interval, not a validated "
-                    "probability guarantee."
+                    f"horizon per `{COVERAGE_REPORT}`. Treat the shaded band as an indicative calibrated "
+                    "simulation interval, not a validated probability guarantee."
                 )
             live_history = _history_frame(curated)
-            live_forecast_frame = _combined_forecast_frame(curated, live_selected_family, live_payloads_by_target, live_family_maps)
-            st.markdown(f"**{_model_label(live_selected_family)}: headline and trimmed-mean CPI**")
+            live_forecast_frame = _forecast_frame(curated, live_family_forecast)
+            st.markdown(f"**{_model_label(live_selected_family)}: headline CPI**")
             st.caption(
                 "The RBA target band is fixed at 2.0-3.0% with a dashed 2.5% midpoint. Forecast "
                 f"uncertainty is shown as a shaded {INTERVAL_LABEL}."
             )
             st.altair_chart(build_forecast_chart(live_history, live_forecast_frame, theme_type), width="stretch")
             st.caption(
-                "Ensemble combines SARIMA and Elastic Net forecasts only. SVAR is kept separate as "
-                "structural scenario evidence and is not blended into this combiner."
+                "Ensemble is a plain 50/50 average of the SARIMA and Elastic Net forecasts. SVAR is kept "
+                "separate as structural scenario evidence and is not blended into this combiner."
             )
-            with st.expander(f"{live_target_label} forecast table"):
+            with st.expander("Forecast table"):
                 live_table = pd.DataFrame(
                     {
                         "quarter": live_family_forecast["quarters"],
@@ -651,22 +590,16 @@ with forecast_tab:
         if live_unavailable:
             with st.expander(f"Unavailable families ({len(live_unavailable)})"):
                 for item in live_unavailable:
-                    st.write(f"**{item['target']} / {item['model_family']}**: {item['reason']}")
+                    st.write(f"**{item['model_family']}**: {item['reason']}")
 
 with ensemble_tab:
     st.caption(
-        "Pick a target, then drag the slider or press Play to reveal a sample of the Monte-Carlo "
+        "Drag the slider or press Play to reveal a sample of the Monte-Carlo "
         "draws behind the Ensemble forecast. Book: section 4.3."
     )
-    ensemble_target = st.radio(
-        "Target", options=list(ENSEMBLE_FLAGSHIP_CONFIG), horizontal=True, key="ensemble_target"
-    )
-    ensemble_config = ENSEMBLE_FLAGSHIP_CONFIG[ensemble_target]
-    sample_path = ensemble_config["sample_path"]
-    fan_path = ensemble_config["fan_path"]
-    if sample_path.exists() and fan_path.exists():
-        sample = load_report(sample_path)
-        fan = load_report(fan_path)
+    if ENSEMBLE_SAMPLE_PATH.exists() and ENSEMBLE_FAN_PATH.exists():
+        sample = load_report(ENSEMBLE_SAMPLE_PATH)
+        fan = load_report(ENSEMBLE_FAN_PATH)
         n_draws = int(sample["draw_id"].max()) + 1
         forecast_origin = str(fan["forecast_origin"].iloc[0])
 
@@ -677,34 +610,32 @@ with ensemble_tab:
 
         slider_col, play_col = st.columns([5, 1])
         with slider_col:
-            n_reveal = st.slider("Paths revealed", 1, n_draws, value=1, key=f"ensemble_reveal_{ensemble_target}")
+            n_reveal = st.slider("Paths revealed", 1, n_draws, value=1, key="ensemble_reveal")
         chart_placeholder = st.empty()
         with play_col:
             st.write("")
-            play = st.button("▶ Play", key=f"ensemble_play_{ensemble_target}")
+            play = st.button("▶ Play", key="ensemble_play")
         if play:
             for step in range(1, n_draws + 1, max(1, n_draws // 60)):
                 chart_placeholder.altair_chart(
-                    build_ensemble_path_chart(sample, fan, step, theme_type, ensemble_config["value_label"]),
+                    build_ensemble_path_chart(sample, fan, step, theme_type, ENSEMBLE_VALUE_LABEL),
                     width="stretch",
                 )
                 time.sleep(0.03)
             chart_placeholder.altair_chart(
-                build_ensemble_path_chart(sample, fan, n_draws, theme_type, ensemble_config["value_label"]),
+                build_ensemble_path_chart(sample, fan, n_draws, theme_type, ENSEMBLE_VALUE_LABEL),
                 width="stretch",
             )
         else:
             chart_placeholder.altair_chart(
-                build_ensemble_path_chart(sample, fan, n_reveal, theme_type, ensemble_config["value_label"]),
+                build_ensemble_path_chart(sample, fan, n_reveal, theme_type, ENSEMBLE_VALUE_LABEL),
                 width="stretch",
             )
 
-        reported_path = PROJECT_ROOT / "reports/tableau/forecast.csv"
+        reported_path = PROJECT_ROOT / "reports/results/forecast.csv"
         if reported_path.exists():
             reported = load_report(reported_path)
-            reported = reported[
-                (reported["model_family"] == "ensemble") & (reported["target"] == ensemble_config["reported_target"])
-            ].sort_values("horizon")
+            reported = reported[reported["model_family"] == "ensemble"].sort_values("horizon")
             if not reported.empty:
                 h1_reported = float(reported["forecast"].iloc[0])
                 h1_median = float(fan.sort_values("horizon")["median"].iloc[0])
@@ -729,20 +660,16 @@ with scenario_tab:
         "Pick a shock variable and size, then run it against the live API. Only the surprise "
         "relative to the SVAR's own forecast counts. Book: section 4.5."
     )
-    scenario_control_cols = st.columns(4)
-    scenario_target_label = scenario_control_cols[0].radio(
-        "Target", options=list(SCENARIO_TARGET_CONFIG), key="scenario_target"
-    )
-    scenario_shock_variable = scenario_control_cols[1].selectbox(
+    scenario_control_cols = st.columns(3)
+    scenario_shock_variable = scenario_control_cols[0].selectbox(
         "Shock variable", options=SCENARIO_SHOCK_VARIABLES, format_func=_readable_name, key="scenario_shock_variable"
     )
-    scenario_shock_value = scenario_control_cols[2].number_input(
+    scenario_shock_value = scenario_control_cols[1].number_input(
         "Shock value", value=0.0, min_value=-1000.0, max_value=1000.0, step=0.25, key="scenario_shock_value"
     )
-    scenario_max_horizon = scenario_control_cols[3].slider(
+    scenario_max_horizon = scenario_control_cols[2].slider(
         "Max horizon (quarters)", min_value=1, max_value=MAX_FORECAST_HORIZON, value=MAX_FORECAST_HORIZON, key="scenario_max_horizon"
     )
-    scenario_target = SCENARIO_TARGET_CONFIG[scenario_target_label]
     scenario_horizons = list(range(1, scenario_max_horizon + 1))
 
     if st.button("Run scenario", key="run_scenario"):
@@ -752,7 +679,6 @@ with scenario_tab:
                 api_base_url,
                 "/forecast/scenario",
                 json={
-                    "target": scenario_target["request_value"],
                     "shock_variable": scenario_shock_variable,
                     "shock_value": scenario_shock_value,
                     "horizons": scenario_horizons,
@@ -765,7 +691,7 @@ with scenario_tab:
                 baseline_payload, baseline_error = api_request(
                     "POST",
                     api_base_url,
-                    scenario_target["baseline_endpoint"],
+                    FORECAST_ENDPOINT,
                     json={"horizon": scenario_max_horizon},
                 )
         st.session_state["scenario_result"] = {
@@ -773,7 +699,6 @@ with scenario_tab:
             "error": scenario_error,
             "baseline_payload": baseline_payload,
             "baseline_error": baseline_error,
-            "target": scenario_target,
         }
 
     scenario_result = st.session_state.get("scenario_result")
@@ -783,22 +708,20 @@ with scenario_tab:
         scenario_payload = scenario_result["payload"]
         scenario_error = scenario_result["error"]
         baseline_payload = scenario_result["baseline_payload"]
-        scenario_target = scenario_result["target"]
 
     if scenario_result is not None and scenario_error:
         st.info(scenario_error)
     elif scenario_result is not None and scenario_payload is not None:
-        scenario_metric_cols = st.columns(4)
+        scenario_metric_cols = st.columns(3)
         scenario_metric_cols[0].metric("Forecast origin", scenario_payload["forecast_origin"])
-        scenario_metric_cols[1].metric("Target", scenario_payload["target"])
-        scenario_metric_cols[2].metric("Shock value", f"{scenario_payload['shock_value']:.3f}")
-        scenario_metric_cols[3].metric("Shock size", f"{scenario_payload['shock_size']:.3f}")
+        scenario_metric_cols[1].metric("Shock value", f"{scenario_payload['shock_value']:.3f}")
+        scenario_metric_cols[2].metric("Shock size", f"{scenario_payload['shock_size']:.3f}")
 
-        anchor_value = _anchor_value(curated, scenario_target["history_column"], scenario_payload["forecast_origin"])
+        anchor_value = _anchor_value(curated, HISTORY_COLUMN, scenario_payload["forecast_origin"])
         scenario_frame = _scenario_frame(scenario_payload, anchor_value, "SVAR shock scenario")
         baseline_ensemble = _family_map(baseline_payload).get("ensemble") if baseline_payload else None
         if baseline_ensemble is not None:
-            baseline_anchor_value = _anchor_value(curated, scenario_target["history_column"], baseline_ensemble["forecast_origin"])
+            baseline_anchor_value = _anchor_value(curated, HISTORY_COLUMN, baseline_ensemble["forecast_origin"])
             baseline_frame = _scenario_frame(baseline_ensemble, baseline_anchor_value, "Ensemble baseline")
             scenario_chart_frame = pd.concat([baseline_frame, scenario_frame], ignore_index=True)
         else:
@@ -809,7 +732,7 @@ with scenario_tab:
             "Read-only overlay: the dashed Ensemble baseline is SARIMA + Elastic Net only; the "
             "solid line is the scenario endpoint's SVAR-adjusted Ensemble draw."
         )
-        st.altair_chart(build_scenario_chart(scenario_chart_frame, theme_type, scenario_target["axis_title"]), width="stretch")
+        st.altair_chart(build_scenario_chart(scenario_chart_frame, theme_type, SCENARIO_AXIS_TITLE), width="stretch")
         st.warning(scenario_payload["caveat"])
         with st.expander("Scenario forecast table"):
             scenario_table = pd.DataFrame(
@@ -841,12 +764,11 @@ with rba_tab:
 
     if rba_result and rba_result["payload"] is not None:
         rba_payload = rba_result["payload"]
-        rba_headline_cols = st.columns(5)
+        rba_headline_cols = st.columns(4)
         rba_headline_cols[0].metric("Threshold action", rba_payload["reportable_action"])
         rba_headline_cols[1].metric("Target quarter", rba_payload["target_quarter"])
         rba_headline_cols[2].metric("Forecast origin", rba_payload["forecast_origin"])
         rba_headline_cols[3].metric("Headline forecast", f"{rba_payload['headline_forecast']:.2f}%")
-        rba_headline_cols[4].metric("Trimmed mean forecast", f"{rba_payload['trimmed_mean_forecast']:.2f}%")
         st.warning(rba_payload["caveat"])
 
         rba_models = pd.DataFrame(rba_payload.get("models", []))
@@ -883,7 +805,7 @@ with rba_tab:
                 st.markdown("**Secondary classifier comparison**")
                 st.dataframe(secondary_table, width="stretch", hide_index=True)
     else:
-        rba_path = PROJECT_ROOT / "reports/tableau/rba_action.csv"
+        rba_path = PROJECT_ROOT / "reports/results/rba_action.csv"
         if rba_path.exists():
             rba_static = load_report(rba_path)
             origin = str(rba_static["forecast_origin"].iloc[0])

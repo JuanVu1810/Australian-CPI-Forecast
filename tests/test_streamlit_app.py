@@ -68,7 +68,6 @@ def test_local_mode_errors_keep_the_startup_hint(monkeypatch):
 # answers (shared by every visitor) instead of recomputing for each click.
 SCENARIO_PAYLOAD = {
     "forecast_origin": "2025Q4",
-    "target": "headline",
     "shock_value": 0.0,
     "shock_size": -1.0,
     "horizons": [1, 2],
@@ -84,7 +83,6 @@ RBA_PAYLOAD = {
     "target_quarter": "2026Q1",
     "forecast_origin": "2025Q4",
     "headline_forecast": 2.6,
-    "trimmed_mean_forecast": 2.7,
     "caveat": "test caveat",
     "models": [],
 }

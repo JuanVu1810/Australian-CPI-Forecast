@@ -27,13 +27,13 @@ call. This README only covers status and how to run the project.
 | Component | Status |
 |---|---|
 | Data retrieval, ETL, validation (custom + Pandera), Parquet, DuckDB | implemented |
-| SARIMA, Elastic Net, Ensemble for headline and trimmed-mean CPI, walk-forward validated | implemented |
+| SARIMA, Elastic Net and a 50/50 Ensemble for headline CPI, walk-forward validated | implemented |
 | SVAR and scenario engine | implemented locally; illustrative, since both VAR systems fail residual whiteness and normality diagnostics |
 | RBA policy-action classifier | implemented; served by the Cloud Run API since 2026-09-21 |
 | Credit-risk stress test and illustrative 12-month ECL | implemented; illustrative only; served by the Cloud Run API since 2026-09-21 |
-| Saved models | the fitted SARIMA and Elastic Net models (headline and trimmed mean) are `joblib` files in `models/`, committed to the repository (about 5 MB); the API loads them. No experiment tracking, no model registry |
+| Saved models | the fitted SARIMA and Elastic Net models are `joblib` files in `models/`, committed to the repository (about 5 MB); the API loads them. No experiment tracking, no model registry |
 | FastAPI | implemented, 7 endpoints; live on Cloud Run |
-| Docker and Google Cloud Run | last deployed 2026-10-19 as the Cloud Run service `cpi-forecast-juan` (revision `cpi-forecast-juan-00006-nah`, image tag `44eb23b` in Artifact Registry repo `cpi-forecast`), with its forecasts checked against the repository's the same day. Serves the forecast, trimmed-mean, scenario, RBA and credit endpoints; redeploy is manual |
+| Docker and Google Cloud Run | last deployed 2026-10-19 as the Cloud Run service `cpi-forecast-juan` (revision `cpi-forecast-juan-00006-nah`, image tag `44eb23b` in Artifact Registry repo `cpi-forecast`), with its forecasts checked against the repository's the same day. Serves the forecast, scenario, RBA and credit endpoints; redeploy is manual (the repository has changed since this deploy: see the note under [Deploy to Google Cloud Run](#deploy-to-google-cloud-run)) |
 | Streamlit | deployed on Streamlit Community Cloud, verified live 2026-09-21: <https://cpi-forecast-demo.streamlit.app/>. A four-tab interactive demo that goes with the book (live forecast, Ensemble path reveal, scenario engine, RBA call) |
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
 | Pinned setup | pinned versions (`constraints.txt`), saved models, and tests on the saved reports, SQL queries and models; see [Reproduce the results](#reproduce-the-results) |
@@ -45,8 +45,8 @@ call. This README only covers status and how to run the project.
 | I want to | Use | Needs |
 |---|---|---|
 | Read the results | the book, or the live API docs | nothing |
-| Run everything: ETL, tests, training, API, Streamlit, book | [Python](#run-with-python) | Python 3.11; about 45 minutes of model training |
-| Check that I get the same results as the checked-in files | [Reproduce the results](#reproduce-the-results) | Python 3.11; about 10 minutes with the saved models, over an hour if you retrain |
+| Run everything: ETL, tests, training, API, Streamlit, book | [Python](#run-with-python) | Python 3.11; about 10 minutes of model training |
+| Check that I get the same results as the checked-in files | [Reproduce the results](#reproduce-the-results) | Python 3.11; about 10 minutes with the saved models, about 1.5 hours if you also regenerate the reports |
 | Serve just the API in a container | [Docker](#run-with-docker-api-only) | Docker only: the models are in the repository |
 | Host my own copy online | [Optional extras](#optional-extras) | your own Google Cloud, Streamlit or Supabase account |
 
@@ -55,7 +55,7 @@ flowchart LR
     X["data_retrieval.py<br/>(optional, needs network)"] -.-> R["dataset/ + data/<br/>(committed)"]
     R --> E["ETL<br/>src.build_curated_dataset"]
     E --> C["data/curated/<br/>+ DuckDB"]
-    C --> T["Train: 5 commands<br/>(about 45 min)"]
+    C --> T["Train: 2 commands<br/>(about 10 min)"]
     T --> M["models/<br/>joblib files"]
     M --> A["FastAPI :8000"]
     A --> S["Streamlit :8501"]
@@ -155,23 +155,21 @@ appendix and `python -m src.eda_export`, which writes
 ### 3. Run the tests
 
 ```bash
-python -m pytest tests                            # 213 tests, about 2 minutes
+python -m pytest tests                            # 190 tests, about 2 minutes
 ```
 
 ### 4. Train the models
 
-The API loads four saved models from `models/` (`sarima`, `elastic_net`, `trimmed_mean_sarima` and
-`trimmed_mean_elastic_net`, each a `.joblib` file). They are already in the repository, trained on the data up
-to the 2025Q4 forecast origin, so **you can skip this step**. To retrain, run these five commands once, in
-this order:
+The API loads two saved models from `models/` (`sarima` and `elastic_net`, each a `.joblib` file). They are
+already in the repository, trained on the data up to the 2025Q4 forecast origin, so **you can skip this step**.
+To retrain, run these two commands once:
 
 | Command | Saves | Time* |
 |---|---|---|
 | `python -m src.models.evaluation` | `models/sarima.joblib` | 25 s |
 | `python -m src.models.elastic_net` | `models/elastic_net.joblib` | 9 min |
-| `python -m src.models.ensemble` | nothing (the Ensemble blends the two models above) | 9 min |
-| `python -m src.models.model_comparison --target trimmed_mean` | `models/trimmed_mean_sarima.joblib` and `models/trimmed_mean_elastic_net.joblib` | 17 min |
-| `python -m src.models.ensemble --target trimmed_mean` | nothing | 10 min |
+
+The Ensemble is a plain 50/50 average of the two, so it has nothing to train.
 
 \*Measured on one WSL2 machine; expect variation.
 
@@ -203,24 +201,23 @@ request shocks one SVAR variable to a level:
 ```bash
 curl -X POST http://localhost:8000/forecast/scenario \
   -H "Content-Type: application/json" \
-  -d '{"target": "headline", "shock_variable": "unemployment_rate", "shock_value": 6.0, "horizons": [1, 2, 3, 4]}'
+  -d '{"shock_variable": "unemployment_rate", "shock_value": 6.0, "horizons": [1, 2, 3, 4]}'
 ```
 
-`target` is `headline` or `trimmed_mean`; `shock_variable` is one of
+`shock_variable` is one of
 `unemployment_rate`, `cash_rate`, `commodity_growth` or
 `inflation_expectations_business`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/health` | `ok` only if the curated data, the four saved models and the calibration factors exist; otherwise 503 with the missing files |
+| GET | `/health` | `ok` only if the curated data, the two saved models and the calibration factors exist; otherwise 503 with the missing files |
 | GET | `/features` | row count, columns and quarter range of the curated dataset |
 | POST | `/forecast/all` | headline forecasts from every family; body: `horizon` (1 to 8, default 8), `n_sims`, `interval_lower`, `interval_upper` |
-| POST | `/forecast/trimmed-mean/all` | the same for trimmed-mean CPI |
 | POST | `/forecast/scenario` | SVAR shock scenario; `shock_value` must be a finite number between -1000 and 1000, `n_sims` at most 2000. The default 10th/90th interval is widened with the same calibration factors as `/forecast/all`; other percentiles are returned raw and the caveat says so. Repeated requests are served from a cache |
 | GET | `/rba-action` | RBA cut/hold/hike readings from seven classifiers |
 | GET | `/credit-risk/stress-test` | illustrative credit stress and 12-month ECL |
 
-The Cloud Run deployment serves `/health` and the forecast, trimmed-mean,
+The Cloud Run deployment serves `/health` and the forecast,
 scenario, RBA and credit endpoints (verified live 2026-09-21). On its single CPU,
 `/forecast/scenario` takes about 40 to 46 seconds and `/rba-action` about 30 to
 45.
@@ -291,12 +288,12 @@ different numbers.
 
 ```bash
 python -m src.build_curated_dataset      # about 1 second
-python -m pytest tests                   # 213 tests, about 2 minutes
+python -m pytest tests                   # 190 tests, about 2 minutes
 git status --short data reports          # expect nothing, or only the .parquet file (see below)
 ```
 
 Pytest prints your own pass count and runtime on its final line. For this checkout,
-expect `213 passed`; a different result means your checkout or environment needs checking.
+expect `190 passed`; a different result means your checkout or environment needs checking.
 
 The curated CSV and `reports/data_quality_report.csv` come out byte-identical. Only the bytes of the Parquet
 file can differ, depending on your `pyarrow` version; its contents match.
@@ -308,7 +305,7 @@ Pick one.
 **A. Use the saved models (nothing to do).** `models/` is in the repository. These are the models behind the
 checked-in forecasts.
 
-**B. Retrain (about 45 minutes).** Run the five commands in [step 4](#4-train-the-models) above. They overwrite
+**B. Retrain (about 10 minutes).** Run the two commands in [step 4](#4-train-the-models) above. They overwrite
 `models/`. The files can differ in bytes between machines; compare the forecasts, not the files.
 
 ### 4. Check that you got the same results
@@ -319,8 +316,8 @@ checked-in forecasts.
 curl -s -X POST http://localhost:8000/forecast/all -H "Content-Type: application/json" -d '{"horizon": 4}'
 ```
 
-The Ensemble's four headline forecasts should read 3.214, 3.219, 2.998 and 3.103. Every model, both targets and
-all eight horizons match `reports/tableau/forecast.csv` to within 1e-15.
+The Ensemble's four headline forecasts should read 3.147, 3.167, 2.983 and 3.102. Every model and
+all eight horizons match `reports/results/forecast.csv` to within 1e-15.
 
 **After B,** regenerate the other reports and let git do the comparing:
 
@@ -329,11 +326,8 @@ python -m src.models.model_comparison --no-rba                   # about 7 minut
 python -m src.models.rba_classifier                              # about 9 minutes
 python -m src.models.simulation_fan                              # about 1.5 minutes
 python -m src.eda_export                                         # about 1 second
-python -m src.models.svar_unemployment_export                    # about 1 second
 python -m src.models.interval_coverage                           # about 22 minutes
-python -m src.models.interval_coverage --target trimmed_mean     # about 23 minutes
 python -m src.models.interval_calibration                        # about 24 minutes
-python -m src.models.interval_calibration --target trimmed_mean  # about 24 minutes
 git diff --stat -- reports                                       # expect no output
 ```
 
@@ -341,10 +335,9 @@ No output means every regenerated file is byte-identical to the checked-in one. 
 if your packages or CPU differ from the ones that produced the files, so compare the numbers before assuming
 something is wrong.
 
-**Optional: the Tableau exports.** With the API running (`uvicorn api.main:app --port 8000` in one terminal),
-`python -m src.models.tableau_export` in another rewrites `reports/tableau/` in about 20 seconds. Everything
-matches except `dataset_overview.csv`, whose `curated_dataset_last_modified` column is the date the curated
-data was last written, so it changes whenever the ETL runs.
+**Optional: the result exports.** With the API running (`uvicorn api.main:app --port 8000` in one terminal),
+`python -m src.models.results_export` in another rewrites `reports/results/` in about 20 seconds. These are the
+CSVs the book charts and the Streamlit fallback read.
 
 ## Run with Docker (API only)
 
@@ -378,7 +371,10 @@ accounts, so skip them unless you want to host your own copy.
 
 ### Deploy to Google Cloud Run
 
-The live service is `cpi-forecast-juan` in `asia-southeast1`. The steps below push the exact image
+The live service is `cpi-forecast-juan` in `asia-southeast1`. **It was deployed on 2026-10-19 from the code before the
+simplification pass:** it still serves `/forecast/trimmed-mean/all` and an Ensemble weighted by inverse RMSE, while this
+repository serves headline CPI only, with a plain 50/50 Ensemble. Redeploy to bring them in line (the numbers in the book
+come from the repository, not from the live service). The steps below push the exact image
 you tested to Artifact Registry and deploy it. They assume the Artifact Registry repository `cpi-forecast`
 already exists in your project and that billing is on. Commit first, so the image tag names the code in it.
 
@@ -451,8 +447,8 @@ is not part of the forecasting story: no model, the API, Streamlit or the ETL re
 - `sql/postgres/forecast_snapshots.sql` creates one table, `forecast_snapshots` (target, model, forecast
   origin, target quarter, point forecast, actual). Its key stops a rerun from saving a row twice.
 - `sql/postgres/forecast_errors.sql` compares each saved forecast with the observed CPI.
-- `python -m src.models.forecast_snapshot` saves the one-quarter-ahead forecast of each model for both
-  targets and prints the comparison. Set `DATABASE_URL` first (use the Session pooler connection string
+- `python -m src.models.forecast_snapshot` saves the one-quarter-ahead forecast of each model
+  and prints the comparison. Set `DATABASE_URL` first (use the Session pooler connection string
   from Supabase). Without it the command saves nothing and says so.
 
 ```bash
@@ -461,19 +457,16 @@ python -m src.models.forecast_snapshot
 ```
 
 The quarter it saves (2026Q1) was already published when it was run, so this is a retrospective wiring
-check, not a live forecast record. Result of the query on those six rows (the actual is the repository's
+check, not a live forecast record. Result of the query on those three rows (the actual is the repository's
 series, see the headline CPI note under [Scope and caveats](#scope-and-caveats)):
-
-*Refreshed on 19 October 2026 after the retrain of the Elastic Net and Ensemble, so every row uses the current models.*
 
 | target | model | quarter | forecast | actual | error |
 |---|---|---|---|---|---|
 | headline | elastic_net | 2026Q1 | 2.911 | 4.0 | 1.089 |
-| headline | ensemble | 2026Q1 | 3.214 | 4.0 | 0.786 |
+| headline | ensemble | 2026Q1 | 3.147 | 4.0 | 0.853 |
 | headline | sarima | 2026Q1 | 3.384 | 4.0 | 0.616 |
-| trimmed_mean | elastic_net | 2026Q1 | 2.830 | 3.5 | 0.670 |
-| trimmed_mean | ensemble | 2026Q1 | 3.288 | 3.5 | 0.212 |
-| trimmed_mean | sarima | 2026Q1 | 3.508 | 3.5 | -0.008 |
+
+*The three rows above are recomputed from the current models. The hosted table was not refreshed after the simplification pass, so it still holds the older Ensemble row and the trimmed-mean rows.*
 
 ## GitHub Actions
 
@@ -531,10 +524,9 @@ and click **Run workflow**.
 +-- book/                Jupyter Book source (book/australian_cpi_forecasting)
 +-- data/                processed series, curated dataset, metadata; analytics/ holds the DuckDB file built by the ETL
 +-- dataset/             raw downloads from ABS, RBA, APRA and Yahoo Finance
-+-- models/              the four saved models the API serves (joblib files)
++-- models/              the two saved models the API serves (joblib files)
 +-- notebooks/           the original assignment notebook and the EDA source
 +-- reports/             model comparison and interval CSVs, plus the decision notes below
-+-- scripts/             helper scripts (the Elastic Net feature-set comparison)
 +-- sql/                 three tested DuckDB queries (queries/) and the optional Postgres example (postgres/)
 +-- src/                 ETL, validation and features; src/models/ holds every model
 +-- tests/               pytest suite, including checks on the saved reports, SQL queries and models
@@ -561,8 +553,7 @@ beat its threshold baseline.
 "Headline CPI" in this repository means the ABS seasonally adjusted, year-ended All
 groups CPI (series A3604508K), taken from the ABS analytical series on the pre-October
 2025 basis. It is not the original-terms figure the ABS quotes in its releases. For
-2026Q1 the repository holds 4.0% against the ABS's 4.6%, and the trimmed mean is 3.5%
-against 3.3%. The models are trained and scored on the series in the repository, so
+2026Q1 the repository holds 4.0% against the ABS's 4.6%. The models are trained and scored on the series in the repository, so
 every accuracy check here, including the Supabase snapshot, uses it too.
 
 ## AI acknowledgement
@@ -596,7 +587,7 @@ specific modelling choices live in `reports/`. To check that you get the same nu
 [Reproduce the results](#reproduce-the-results).
 
 - [Interval calibration remediation and the SARIMAX removal](reports/model_interval_calibration_remediation_decisions.md)
-- [Trimmed-mean refit decisions](reports/model_refit_phase1_decisions.md)
+- [Model refit decisions](reports/model_refit_phase1_decisions.md)
 - [SVAR gate decisions](reports/svar_gate_decisions.md)
 - [SVAR five-variable evidence note](reports/svar_five_variable_evidence_note.md)
 - [RBA classifier evaluation](reports/rba_classifier_evaluation.md) (generated by `python -m src.models.rba_classifier`)

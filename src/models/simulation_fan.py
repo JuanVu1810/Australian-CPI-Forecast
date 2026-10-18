@@ -13,8 +13,6 @@ from src.models import ensemble, svar
 from src.models.elastic_net import (
     ELASTIC_NET_FEATURE_COLUMNS,
     TARGET_COLUMN,
-    TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
-    TRIMMED_MEAN_TARGET_COLUMN,
     load_elastic_net_feature_frame,
     simulate_elastic_net_paths,
 )
@@ -28,47 +26,26 @@ from src.models.interval_coverage import DEFAULT_N_SIMS, DEFAULT_SEED
 from src.models.sarima import (
     DEFAULT_ORDER as SARIMA_DEFAULT_ORDER,
     DEFAULT_SEASONAL_ORDER as SARIMA_DEFAULT_SEASONAL_ORDER,
-    TRIMMED_MEAN_DEFAULT_ORDER,
-    TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
     simulate_sarima_paths,
 )
 
 
 SIMULATION_FAN_SARIMA_OUTPUT_PATH = PROJECT_ROOT / "reports/simulation_fan_sarima.csv"
-SIMULATION_FAN_SARIMA_TRIMMED_MEAN_OUTPUT_PATH = (
-    PROJECT_ROOT / "reports/simulation_fan_sarima_trimmed_mean.csv"
-)
 SIMULATION_FAN_ELASTIC_NET_OUTPUT_PATH = (
     PROJECT_ROOT / "reports/simulation_fan_elastic_net.csv"
 )
-SIMULATION_FAN_ELASTIC_NET_TRIMMED_MEAN_OUTPUT_PATH = (
-    PROJECT_ROOT / "reports/simulation_fan_elastic_net_trimmed_mean.csv"
-)
 SIMULATION_FAN_ENSEMBLE_OUTPUT_PATH = PROJECT_ROOT / "reports/simulation_fan_ensemble.csv"
-SIMULATION_FAN_ENSEMBLE_TRIMMED_MEAN_OUTPUT_PATH = (
-    PROJECT_ROOT / "reports/simulation_fan_ensemble_trimmed_mean.csv"
-)
 SIMULATION_FAN_SVAR_HEADLINE_OUTPUT_PATH = (
     PROJECT_ROOT / "reports/simulation_fan_svar_headline.csv"
-)
-SIMULATION_FAN_SVAR_TRIMMED_MEAN_OUTPUT_PATH = (
-    PROJECT_ROOT / "reports/simulation_fan_svar_trimmed_mean.csv"
 )
 SIMULATION_PATHS_SAMPLE_ENSEMBLE_OUTPUT_PATH = (
     PROJECT_ROOT / "reports/simulation_paths_sample_ensemble.csv"
 )
-SIMULATION_PATHS_SAMPLE_ENSEMBLE_TRIMMED_MEAN_OUTPUT_PATH = (
-    PROJECT_ROOT / "reports/simulation_paths_sample_ensemble_trimmed_mean.csv"
-)
 SIMULATION_FAN_OUTPUT_PATHS = {
     "sarima": SIMULATION_FAN_SARIMA_OUTPUT_PATH,
-    "sarima_trimmed_mean": SIMULATION_FAN_SARIMA_TRIMMED_MEAN_OUTPUT_PATH,
     "elastic_net": SIMULATION_FAN_ELASTIC_NET_OUTPUT_PATH,
-    "elastic_net_trimmed_mean": SIMULATION_FAN_ELASTIC_NET_TRIMMED_MEAN_OUTPUT_PATH,
     "ensemble": SIMULATION_FAN_ENSEMBLE_OUTPUT_PATH,
-    "ensemble_trimmed_mean": SIMULATION_FAN_ENSEMBLE_TRIMMED_MEAN_OUTPUT_PATH,
     "svar_headline": SIMULATION_FAN_SVAR_HEADLINE_OUTPUT_PATH,
-    "svar_trimmed_mean": SIMULATION_FAN_SVAR_TRIMMED_MEAN_OUTPUT_PATH,
 }
 FAN_PERCENTILES = (10, 25, 50, 75, 90)
 FAN_OUTPUT_COLUMNS = (
@@ -179,11 +156,6 @@ def _load_svar_frame(curated_path: Path, columns: Sequence[str]) -> pd.DataFrame
 def _simulate_pinned_ensemble_paths(
     curated_path: Path,
     *,
-    target_column: str,
-    sarima_order: tuple[int, int, int],
-    sarima_seasonal_order: tuple[int, int, int, int],
-    elastic_net_feature_columns: tuple[str, ...],
-    weights: tuple[float, float] | dict[int, tuple[float, float]] | None,
     horizons: Sequence[int],
     n_sims: int,
     seed: int,
@@ -191,34 +163,24 @@ def _simulate_pinned_ensemble_paths(
     """Simulate ensemble paths from the pinned origin; return the paths and the origin quarter."""
     series = load_target_series(
         curated_path,
-        target_column=target_column,
+        target_column=TARGET_COLUMN,
         max_quarter=svar.FORECAST_ORIGIN_PIN,
     )
     frame = _elastic_net_training_frame(
         curated_path,
-        target_column=target_column,
-        feature_columns=elastic_net_feature_columns,
+        target_column=TARGET_COLUMN,
+        feature_columns=ELASTIC_NET_FEATURE_COLUMNS,
     )
     if series.index[-1] != frame.index[-1]:
         raise ValueError(
-            f"Ensemble {target_column!r} components end on different quarters: "
+            "Ensemble components end on different quarters: "
             f"SARIMA={series.index[-1]}, Elastic Net={frame.index[-1]}."
-        )
-    if weights is None:
-        weights = ensemble.horizon_rmse_weights(
-            horizons=tuple(int(h) for h in horizons),
-            path=ensemble.dynamic_weights_source_path(target_column),
         )
     paths = ensemble.simulate_ensemble_paths(
         frame,
         steps=max(horizons),
         n_sims=n_sims,
-        weights=weights,
         seed=seed,
-        target_column=target_column,
-        sarima_order=sarima_order,
-        sarima_seasonal_order=sarima_seasonal_order,
-        elastic_net_feature_columns=elastic_net_feature_columns,
         sarima_series=series,
     )
     return paths, str(frame.index[-1])
@@ -301,12 +263,7 @@ def run_ensemble_fan(
     *,
     curated_path: Path = CURATED_DATA_PATH,
     output_path: Path = SIMULATION_FAN_ENSEMBLE_OUTPUT_PATH,
-    target_column: str = TARGET_COLUMN,
     model_family: str = "ensemble",
-    sarima_order: tuple[int, int, int] = SARIMA_DEFAULT_ORDER,
-    sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
-    elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
-    weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
     horizons: Sequence[int] = DEFAULT_HORIZONS,
     n_sims: int = DEFAULT_N_SIMS,
     seed: int = DEFAULT_SEED,
@@ -315,11 +272,6 @@ def run_ensemble_fan(
     """Save the ensemble percentile fan from the pinned forecast origin."""
     paths, forecast_origin = _simulate_pinned_ensemble_paths(
         curated_path,
-        target_column=target_column,
-        sarima_order=sarima_order,
-        sarima_seasonal_order=sarima_seasonal_order,
-        elastic_net_feature_columns=elastic_net_feature_columns,
-        weights=weights,
         horizons=horizons,
         n_sims=n_sims,
         seed=seed,
@@ -327,7 +279,7 @@ def run_ensemble_fan(
     fan = fan_frame_from_paths(
         paths,
         model_family=model_family,
-        target_column=target_column,
+        target_column=TARGET_COLUMN,
         forecast_origin=forecast_origin,
         horizons=horizons,
     )
@@ -391,12 +343,7 @@ def run_ensemble_path_sample(
     *,
     curated_path: Path = CURATED_DATA_PATH,
     output_path: Path = SIMULATION_PATHS_SAMPLE_ENSEMBLE_OUTPUT_PATH,
-    target_column: str = TARGET_COLUMN,
     model_family: str = "ensemble",
-    sarima_order: tuple[int, int, int] = SARIMA_DEFAULT_ORDER,
-    sarima_seasonal_order: tuple[int, int, int, int] = SARIMA_DEFAULT_SEASONAL_ORDER,
-    elastic_net_feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
-    weights: tuple[float, float] | dict[int, tuple[float, float]] | None = None,
     horizons: Sequence[int] = DEFAULT_HORIZONS,
     n_sims: int = DEFAULT_N_SIMS,
     n_draws: int = 120,
@@ -407,11 +354,6 @@ def run_ensemble_path_sample(
     """Save a sample of the same ensemble draws ``run_ensemble_fan`` summarises, as individual paths."""
     paths, forecast_origin = _simulate_pinned_ensemble_paths(
         curated_path,
-        target_column=target_column,
-        sarima_order=sarima_order,
-        sarima_seasonal_order=sarima_seasonal_order,
-        elastic_net_feature_columns=elastic_net_feature_columns,
-        weights=weights,
         horizons=horizons,
         n_sims=n_sims,
         seed=seed,
@@ -419,7 +361,7 @@ def run_ensemble_path_sample(
     sample = sample_paths_frame(
         paths,
         model_family=model_family,
-        target_column=target_column,
+        target_column=TARGET_COLUMN,
         forecast_origin=forecast_origin,
         horizons=horizons,
         n_draws=n_draws,
@@ -481,30 +423,9 @@ def run_all_simulation_fans(
             seed=seed,
             verbose=verbose,
         ),
-        "sarima_trimmed_mean": run_sarima_fan(
-            curated_path=curated_path,
-            output_path=SIMULATION_FAN_SARIMA_TRIMMED_MEAN_OUTPUT_PATH,
-            target_column=TRIMMED_MEAN_TARGET_COLUMN,
-            model_family="sarima_trimmed_mean",
-            order=TRIMMED_MEAN_DEFAULT_ORDER,
-            seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
-            n_sims=n_sims,
-            seed=seed,
-            verbose=verbose,
-        ),
         "elastic_net": run_elastic_net_fan(
             curated_path=curated_path,
             output_path=SIMULATION_FAN_ELASTIC_NET_OUTPUT_PATH,
-            n_sims=n_sims,
-            seed=seed,
-            verbose=verbose,
-        ),
-        "elastic_net_trimmed_mean": run_elastic_net_fan(
-            curated_path=curated_path,
-            output_path=SIMULATION_FAN_ELASTIC_NET_TRIMMED_MEAN_OUTPUT_PATH,
-            target_column=TRIMMED_MEAN_TARGET_COLUMN,
-            model_family="elastic_net_trimmed_mean",
-            feature_columns=TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
             n_sims=n_sims,
             seed=seed,
             verbose=verbose,
@@ -516,20 +437,6 @@ def run_all_simulation_fans(
             seed=seed,
             verbose=verbose,
         ),
-        "ensemble_trimmed_mean": run_ensemble_fan(
-            curated_path=curated_path,
-            output_path=SIMULATION_FAN_ENSEMBLE_TRIMMED_MEAN_OUTPUT_PATH,
-            target_column=TRIMMED_MEAN_TARGET_COLUMN,
-            model_family="ensemble_trimmed_mean",
-            sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
-            sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
-            elastic_net_feature_columns=(
-                TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS
-            ),
-            n_sims=n_sims,
-            seed=seed,
-            verbose=verbose,
-        ),
         "svar_headline": run_svar_fan(
             curated_path=curated_path,
             output_path=SIMULATION_FAN_SVAR_HEADLINE_OUTPUT_PATH,
@@ -537,34 +444,9 @@ def run_all_simulation_fans(
             seed=seed,
             verbose=verbose,
         ),
-        "svar_trimmed_mean": run_svar_fan(
-            curated_path=curated_path,
-            output_path=SIMULATION_FAN_SVAR_TRIMMED_MEAN_OUTPUT_PATH,
-            target_column=TRIMMED_MEAN_TARGET_COLUMN,
-            model_family="svar_trimmed_mean",
-            columns=svar.SYSTEM_B_COLUMNS,
-            ordering=svar.SYSTEM_B_CHOLESKY_ORDER,
-            n_sims=svar_n_sims,
-            seed=seed,
-            verbose=verbose,
-        ),
         "ensemble_path_sample": run_ensemble_path_sample(
             curated_path=curated_path,
             output_path=SIMULATION_PATHS_SAMPLE_ENSEMBLE_OUTPUT_PATH,
-            n_sims=n_sims,
-            seed=seed,
-            verbose=verbose,
-        ),
-        "ensemble_path_sample_trimmed_mean": run_ensemble_path_sample(
-            curated_path=curated_path,
-            output_path=SIMULATION_PATHS_SAMPLE_ENSEMBLE_TRIMMED_MEAN_OUTPUT_PATH,
-            target_column=TRIMMED_MEAN_TARGET_COLUMN,
-            model_family="ensemble_trimmed_mean",
-            sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
-            sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
-            elastic_net_feature_columns=(
-                TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS
-            ),
             n_sims=n_sims,
             seed=seed,
             verbose=verbose,

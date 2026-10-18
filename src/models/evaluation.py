@@ -34,8 +34,6 @@ COMPARISON_OUTPUT_PATH = PROJECT_ROOT / "reports/model_comparison_sarima.csv"
 MODELS_DIR = PROJECT_ROOT / "models"
 SARIMA_MODEL_PATH = MODELS_DIR / "sarima.joblib"
 ELASTIC_NET_MODEL_PATH = MODELS_DIR / "elastic_net.joblib"
-TRIMMED_MEAN_SARIMA_MODEL_PATH = MODELS_DIR / "trimmed_mean_sarima.joblib"
-TRIMMED_MEAN_ELASTIC_NET_MODEL_PATH = MODELS_DIR / "trimmed_mean_elastic_net.joblib"
 
 TARGET_COLUMN = "cpi_yoy"
 QUARTER_COLUMN = "quarter"

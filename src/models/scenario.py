@@ -2,7 +2,7 @@
 
 Scenario paths combine the existing SARIMA + Elastic Net ensemble predictive
 draws with raw, paired SVAR bootstrap impulse-response draws. The IRFs come
-from the documented Phase 1b VAR(2)-in-levels systems, which still fail
+from the documented Phase 1b VAR(2)-in-levels system, which still fails
 multivariate residual whiteness and normality diagnostics after COVID
 treatment checks and the block-bootstrap IRF fix. Scenario outputs are
 illustrative under an imperfect specification, not precise causal estimates.
@@ -18,19 +18,8 @@ import numpy as np
 import pandas as pd
 
 from src.models import ensemble, svar
-from src.models.elastic_net import (
-    ELASTIC_NET_FEATURE_COLUMNS,
-    TARGET_COLUMN,
-    TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
-    TRIMMED_MEAN_TARGET_COLUMN,
-)
+from src.models.elastic_net import ELASTIC_NET_FEATURE_COLUMNS, TARGET_COLUMN
 from src.models.evaluation import CURATED_DATA_PATH, DEFAULT_HORIZONS
-from src.models.sarima import (
-    DEFAULT_ORDER as SARIMA_DEFAULT_ORDER,
-    DEFAULT_SEASONAL_ORDER as SARIMA_DEFAULT_SEASONAL_ORDER,
-    TRIMMED_MEAN_DEFAULT_ORDER,
-    TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
-)
 
 
 DEFAULT_N_SIMS = 1000
@@ -38,8 +27,8 @@ DEFAULT_SEED = 42
 DEFAULT_LOWER_QUANTILE = 0.1
 DEFAULT_UPPER_QUANTILE = 0.9
 SCENARIO_CAVEAT = (
-    "Scenario IRFs come from Phase 1b VAR(2)-in-levels SVAR systems that still "
-    "fail multivariate residual whiteness and normality diagnostics after COVID "
+    "Scenario IRFs come from a Phase 1b VAR(2)-in-levels SVAR system that still "
+    "fails multivariate residual whiteness and normality diagnostics after COVID "
     "treatment checks and the block-bootstrap IRF fix; adjusted forecasts are "
     "illustrative under a documented, imperfect specification, not precise "
     "causal estimates."
@@ -48,7 +37,6 @@ SCENARIO_CAVEAT = (
 
 @dataclass(frozen=True)
 class ScenarioResult:
-    target: str
     target_column: str
     shock_variable: str
     shock_value: float
@@ -63,27 +51,6 @@ class ScenarioResult:
     baseline_paths: np.ndarray
     shock_contribution: np.ndarray
     combined_paths: np.ndarray
-
-
-# The SVAR system and ensemble settings used for each scenario target.
-TARGET_CONFIGS = {
-    "headline": {
-        "target_column": TARGET_COLUMN,
-        "svar_columns": svar.SYSTEM_A_COLUMNS,
-        "svar_ordering": svar.SYSTEM_A_CHOLESKY_ORDER,
-        "sarima_order": SARIMA_DEFAULT_ORDER,
-        "sarima_seasonal_order": SARIMA_DEFAULT_SEASONAL_ORDER,
-        "elastic_net_feature_columns": ELASTIC_NET_FEATURE_COLUMNS,
-    },
-    "trimmed_mean": {
-        "target_column": TRIMMED_MEAN_TARGET_COLUMN,
-        "svar_columns": svar.SYSTEM_B_COLUMNS,
-        "svar_ordering": svar.SYSTEM_B_CHOLESKY_ORDER,
-        "sarima_order": TRIMMED_MEAN_DEFAULT_ORDER,
-        "sarima_seasonal_order": TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
-        "elastic_net_feature_columns": TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
-    },
-}
 
 
 def compute_shock_size(
@@ -156,7 +123,6 @@ def combine_scenario_paths(
 
 
 def run_scenario(
-    target: str,
     shock_variable: str,
     shock_value: float,
     horizons: Sequence[int] = DEFAULT_HORIZONS,
@@ -166,11 +132,8 @@ def run_scenario(
     seed: int = DEFAULT_SEED,
     curated_path: Path = CURATED_DATA_PATH,
 ) -> ScenarioResult:
-    """Run one headline or trimmed-mean SVAR-adjusted ensemble scenario."""
-    if target not in TARGET_CONFIGS:
-        raise ValueError("target must be 'headline' or 'trimmed_mean'.")
-    config = TARGET_CONFIGS[target]
-    target_column = config["target_column"]
+    """Run one SVAR-adjusted headline CPI ensemble scenario."""
+    target_column = TARGET_COLUMN
     requested_horizons = _validate_horizons(horizons)
     _validate_quantiles(lower_quantile, upper_quantile)
     if n_sims < 1:
@@ -187,11 +150,11 @@ def run_scenario(
     # (svar.FORECAST_ORIGIN_PIN) so no component here fits on data later than
     # 2025Q4, regardless of how far the curated CSV itself has been refreshed.
     frame = frame.loc[frame.index <= svar.FORECAST_ORIGIN_PIN]
-    svar_frame = _numeric_complete_rows(frame, config["svar_columns"])
+    svar_frame = _numeric_complete_rows(frame, svar.SYSTEM_A_COLUMNS)
     fitted_svar = svar.fit_svar(
         svar_frame,
         lag_order=svar.DEFAULT_SVAR_LAG_ORDER,
-        ordering=config["svar_ordering"],
+        ordering=svar.SYSTEM_A_CHOLESKY_ORDER,
     )
     svar_forecast = svar.forecast_from_fit(fitted_svar, steps=steps)
     shock_size = compute_shock_size(
@@ -200,20 +163,11 @@ def run_scenario(
         shock_value=shock_value,
     )
 
-    weights = ensemble.horizon_rmse_weights(
-        horizons=tuple(range(1, steps + 1)),
-        path=ensemble.dynamic_weights_source_path(target_column),
-    )
     tier1_paths = ensemble.simulate_ensemble_paths(
         frame,
         steps=steps,
         n_sims=n_sims,
-        weights=weights,
         seed=seed,
-        target_column=target_column,
-        sarima_order=config["sarima_order"],
-        sarima_seasonal_order=config["sarima_seasonal_order"],
-        elastic_net_feature_columns=config["elastic_net_feature_columns"],
         sarima_series=frame[target_column],
     )
     irf_draws = svar.bootstrap_orth_irf_draws(
@@ -236,7 +190,7 @@ def run_scenario(
         lower=lower_quantile,
         upper=upper_quantile,
     )
-    ensemble_columns = (target_column, *config["elastic_net_feature_columns"])
+    ensemble_columns = (target_column, *ELASTIC_NET_FEATURE_COLUMNS)
     clean_frame = _numeric_complete_rows(frame, ensemble_columns).sort_index()
     forecast_origin = str(clean_frame.index[-1])
     future_quarters = []
@@ -244,7 +198,6 @@ def run_scenario(
         future_quarters.append(str(clean_frame.index[-1] + horizon))
 
     return ScenarioResult(
-        target=target,
         target_column=target_column,
         shock_variable=str(shock_variable),
         shock_value=float(shock_value),

@@ -1,0 +1,8 @@
+model,predicted_action,confidence,p_cut,p_hold,p_hike,reportable,majority_vote_tie_break,target_quarter,forecast_origin,headline_forecast,reportable_model,reportable_action
+threshold,hike,0.594,0.013,0.393,0.594,True,False,2026Q1,2025Q4,3.147366724563544,threshold,hike
+taylor_rule,cut,,,,,False,False,2026Q1,2025Q4,3.147366724563544,threshold,hike
+taylor_rule_estimated,hold,0.30207747912859023,0.33326758693412745,0.30207747912859023,0.3646549339372823,False,False,2026Q1,2025Q4,3.147366724563544,threshold,hike
+ordered_logit,hold,0.5347062630479948,0.1930628893536189,0.5347062630479948,0.2722308475983862,False,False,2026Q1,2025Q4,3.147366724563544,threshold,hike
+ordered_probit,hold,0.5137519374336401,0.1971088090582374,0.5137519374336401,0.28913925350812253,False,False,2026Q1,2025Q4,3.147366724563544,threshold,hike
+frank_hall_xgboost,cut,,,,,False,False,2026Q1,2025Q4,3.147366724563544,threshold,hike
+majority_vote_ensemble,hold,,,,,False,False,2026Q1,2025Q4,3.147366724563544,threshold,hike
