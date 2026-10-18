@@ -464,15 +464,15 @@ The quarter it saves (2026Q1) was already published when it was run, so this is 
 check, not a live forecast record. Result of the query on those six rows (the actual is the repository's
 series, see the headline CPI note under [Scope and caveats](#scope-and-caveats)):
 
-*This table was recorded before the October 2026 retrain of the Elastic Net and Ensemble (new feature sets), so the Elastic Net and Ensemble rows are out of date. SARIMA is unchanged. Rerun the snapshot to refresh them.*
+*Refreshed on 19 October 2026 after the retrain of the Elastic Net and Ensemble, so every row uses the current models.*
 
 | target | model | quarter | forecast | actual | error |
 |---|---|---|---|---|---|
-| headline | elastic_net | 2026Q1 | 2.743 | 4.0 | 1.257 |
-| headline | ensemble | 2026Q1 | 3.154 | 4.0 | 0.846 |
+| headline | elastic_net | 2026Q1 | 2.911 | 4.0 | 1.089 |
+| headline | ensemble | 2026Q1 | 3.214 | 4.0 | 0.786 |
 | headline | sarima | 2026Q1 | 3.384 | 4.0 | 0.616 |
-| trimmed_mean | elastic_net | 2026Q1 | 2.860 | 3.5 | 0.640 |
-| trimmed_mean | ensemble | 2026Q1 | 3.298 | 3.5 | 0.202 |
+| trimmed_mean | elastic_net | 2026Q1 | 2.830 | 3.5 | 0.670 |
+| trimmed_mean | ensemble | 2026Q1 | 3.288 | 3.5 | 0.212 |
 | trimmed_mean | sarima | 2026Q1 | 3.508 | 3.5 | -0.008 |
 
 ## GitHub Actions
