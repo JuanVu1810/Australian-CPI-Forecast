@@ -13,7 +13,7 @@ from src.models import ensemble, svar
 from src.models.elastic_net import (
     ELASTIC_NET_FEATURE_COLUMNS,
     TARGET_COLUMN,
-    TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
     TRIMMED_MEAN_TARGET_COLUMN,
     load_elastic_net_feature_frame,
     simulate_elastic_net_paths,
@@ -504,7 +504,7 @@ def run_all_simulation_fans(
             output_path=SIMULATION_FAN_ELASTIC_NET_TRIMMED_MEAN_OUTPUT_PATH,
             target_column=TRIMMED_MEAN_TARGET_COLUMN,
             model_family="elastic_net_trimmed_mean",
-            feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+            feature_columns=TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
             n_sims=n_sims,
             seed=seed,
             verbose=verbose,
@@ -524,7 +524,7 @@ def run_all_simulation_fans(
             sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
             sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
             elastic_net_feature_columns=(
-                TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS
+                TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS
             ),
             n_sims=n_sims,
             seed=seed,
@@ -563,7 +563,7 @@ def run_all_simulation_fans(
             sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
             sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
             elastic_net_feature_columns=(
-                TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS
+                TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS
             ),
             n_sims=n_sims,
             seed=seed,

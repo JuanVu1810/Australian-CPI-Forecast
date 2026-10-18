@@ -21,7 +21,7 @@ from src.models import ensemble, svar
 from src.models.elastic_net import (
     ELASTIC_NET_FEATURE_COLUMNS,
     TARGET_COLUMN,
-    TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
     TRIMMED_MEAN_TARGET_COLUMN,
 )
 from src.models.evaluation import CURATED_DATA_PATH, DEFAULT_HORIZONS
@@ -81,7 +81,7 @@ TARGET_CONFIGS = {
         "svar_ordering": svar.SYSTEM_B_CHOLESKY_ORDER,
         "sarima_order": TRIMMED_MEAN_DEFAULT_ORDER,
         "sarima_seasonal_order": TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
-        "elastic_net_feature_columns": TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+        "elastic_net_feature_columns": TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
     },
 }
 

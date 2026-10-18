@@ -42,57 +42,25 @@ from src.models.sarima import forecast_sarima
 
 TARGET_COLUMN = "cpi_yoy"
 TRIMMED_MEAN_TARGET_COLUMN = "trimmed_mean_cpi_yoy"
+# WHY these three: the quarterly-CPI screen in book appendix 7 and 11 finds a Granger signal only for business
+# inflation expectations, the cash rate and (weakly) PPI, all at lag 1. The earlier eleven-term sets (oil,
+# commodity, unemployment, squared and interaction terms) came from a YoY screen whose p-values were too small.
+# Walk-forward RMSE on the same 53 origins was a tie for headline and 4% lower for trimmed mean, so we use the
+# smaller set for both. See reports/model_refit_phase1_decisions.md (addendum).
 ELASTIC_NET_MACRO_FEATURE_COLUMNS = (
-    "cash_rate_change_lag1",
-    "unemployment_rate_change_lag1",
     "inflation_expectations_business_lag1",
-    "ppi_growth_lag2",
-    "commodity_growth_lag1",
-    "wti_growth_lag1",
-    "ppi_growth_lag2_sq",
-    "wti_growth_lag1_sq",
-    "cash_rate_change_lag1_x_unemployment_rate_change_lag1",
+    "cash_rate_change_lag1",
+    "ppi_growth_lag1",
 )
 ELASTIC_NET_FEATURE_COLUMNS = (
     "cpi_yoy_lag1",
     "cpi_yoy_lag4",
     *ELASTIC_NET_MACRO_FEATURE_COLUMNS,
 )
-# WHY these nine: with only the five oil/commodity terms the trimmed-mean fit collapsed to an
-# intercept-only model at horizons 5-8 (found 2026-09-19), so the cash-rate, unemployment and
-# expectations terms were added. All are I(0) and pass a VIF re-check (max 5.58). ppi_growth_lag1
-# (not lag2) follows trimmed mean's own lag screening. See reports/model_refit_phase1_decisions.md.
-TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_MACRO_FEATURE_COLUMNS = (
-    "cash_rate_change_lag1",
-    "unemployment_rate_change_lag1",
-    "inflation_expectations_business_lag1",
-    "ppi_growth_lag1",
-    "commodity_growth_lag1",
-    "wti_growth_lag1",
-    "commodity_growth_lag1_sq",
-    "wti_growth_lag1_sq",
-    "cash_rate_change_lag1_x_unemployment_rate_change_lag1",
-)
-TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS = (
+TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS = (
     "trimmed_mean_cpi_yoy_lag1",
     "trimmed_mean_cpi_yoy_lag4",
-    *TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_MACRO_FEATURE_COLUMNS,
-)
-TRIMMED_MEAN_ELASTIC_NET_BRENT_ALT_MACRO_FEATURE_COLUMNS = (
-    "cash_rate_change_lag1",
-    "unemployment_rate_change_lag1",
-    "inflation_expectations_business_lag1",
-    "ppi_growth_lag1",
-    "commodity_growth_lag1",
-    "brent_growth_lag1",
-    "commodity_growth_lag1_sq",
-    "brent_growth_lag1_sq",
-    "cash_rate_change_lag1_x_unemployment_rate_change_lag1",
-)
-TRIMMED_MEAN_ELASTIC_NET_BRENT_ALT_FEATURE_COLUMNS = (
-    "trimmed_mean_cpi_yoy_lag1",
-    "trimmed_mean_cpi_yoy_lag4",
-    *TRIMMED_MEAN_ELASTIC_NET_BRENT_ALT_MACRO_FEATURE_COLUMNS,
+    *ELASTIC_NET_MACRO_FEATURE_COLUMNS,
 )
 
 FORECAST_HORIZON = 8

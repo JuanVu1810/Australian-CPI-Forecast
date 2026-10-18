@@ -29,7 +29,7 @@ from src.models import (
     svar,
 )
 from src.models.elastic_net import (
-    TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
     TRIMMED_MEAN_TARGET_COLUMN,
     load_elastic_net_feature_frame,
 )
@@ -728,7 +728,7 @@ def _trimmed_mean_elastic_net_family_forecast(
         n_sims,
         seed,
         target_column=TRIMMED_MEAN_TARGET_COLUMN,
-        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+        feature_columns=TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
         forecast_origin=forecast_origin,
     )
 
@@ -746,7 +746,7 @@ def _trimmed_mean_ensemble_family_forecast(
         n_sims,
         seed,
         target_column=TRIMMED_MEAN_TARGET_COLUMN,
-        feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+        feature_columns=TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
     )
 
 

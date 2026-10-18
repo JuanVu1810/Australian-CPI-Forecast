@@ -118,16 +118,8 @@ def test_run_scenario_keeps_tier1_paths_independent_of_shock_size(monkeypatch, t
             "cpi_yoy_lag1": np.linspace(1.9, 2.9, len(quarters)),
             "cpi_yoy_lag4": np.linspace(1.6, 2.6, len(quarters)),
             "cash_rate_change_lag1": np.zeros(len(quarters)),
-            "unemployment_rate_change_lag1": np.zeros(len(quarters)),
             "inflation_expectations_business_lag1": np.linspace(2.8, 3.8, len(quarters)),
-            "ppi_growth_lag2": np.ones(len(quarters)),
-            "commodity_growth_lag1": np.linspace(-0.5, 0.5, len(quarters)),
-            "wti_growth_lag1": np.ones(len(quarters)),
-            "ppi_growth_lag2_sq": np.ones(len(quarters)),
-            "wti_growth_lag1_sq": np.ones(len(quarters)),
-            "cash_rate_change_lag1_x_unemployment_rate_change_lag1": np.zeros(
-                len(quarters)
-            ),
+            "ppi_growth_lag1": np.ones(len(quarters)),
         }
     ).to_csv(curated_path, index=False)
 

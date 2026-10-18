@@ -12,7 +12,7 @@ from src.models.elastic_net import (
     DEFAULT_INITIAL_TRAIN_SIZE as ELASTIC_NET_INITIAL_TRAIN_SIZE,
     ELASTIC_NET_FEATURE_COLUMNS,
     TARGET_COLUMN,
-    TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+    TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
     TRIMMED_MEAN_TARGET_COLUMN,
     load_elastic_net_feature_frame,
     simulate_elastic_net_paths,
@@ -392,7 +392,7 @@ def run_trimmed_mean_interval_coverage(
         target_column=TRIMMED_MEAN_TARGET_COLUMN,
         sarima_order=TRIMMED_MEAN_DEFAULT_ORDER,
         sarima_seasonal_order=TRIMMED_MEAN_DEFAULT_SEASONAL_ORDER,
-        elastic_net_feature_columns=TRIMMED_MEAN_ELASTIC_NET_PRIMARY_WTI_FEATURE_COLUMNS,
+        elastic_net_feature_columns=TRIMMED_MEAN_ELASTIC_NET_FEATURE_COLUMNS,
         weights=None,
         verbose=verbose,
     )

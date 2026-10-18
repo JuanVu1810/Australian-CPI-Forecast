@@ -1,9 +1,9 @@
 target,model,n,rmse,mae
-Headline,sarima,424,1.652592,1.155351
-Headline,elastic_net,424,1.705798,1.245831
-Headline,ensemble,424,1.640356,1.15985
-Headline,seasonal_naive,424,2.163358,1.518632
-Trimmed mean,sarima,424,1.298886,0.776841
-Trimmed mean,elastic_net,424,1.333597,0.915858
-Trimmed mean,ensemble,424,1.249152,0.802744
-Trimmed mean,seasonal_naive,424,1.580535,0.926179
+Headline,sarima,488,1.564401,1.073211
+Headline,elastic_net,488,1.62456,1.235886
+Headline,ensemble,488,1.551608,1.108056
+Headline,seasonal_naive,488,2.107675,1.515164
+Trimmed mean,sarima,488,1.232279,0.744409
+Trimmed mean,elastic_net,488,1.215589,0.861509
+Trimmed mean,ensemble,488,1.161878,0.763418
+Trimmed mean,seasonal_naive,488,1.535048,0.941189

@@ -158,3 +158,35 @@ No commodity/oil interaction was added for trimmed mean this phase: the
 retained commodity/oil terms are already two closely related supply-shock
 channels, and the small 40-quarter minimum training window argues for
 testing their squared terms before adding another cross-product.
+
+## Addendum 2026-10-19: Elastic Net feature sets replaced
+
+Scope: the Elastic Net feature sets only. SARIMA orders and the decisions above about them are unchanged. The
+"Trimmed-Mean Exogenous Feature Decision" and "Non-Linear Elastic Net Term Decisions" sections above are
+superseded for the Elastic Net; they record what was decided in August.
+
+**Why.** Those decisions rested on a screen of the YoY series. The overlapping four-quarter windows left the
+Granger regression residuals autocorrelated (17 of 22 failed a Ljung-Box test), so the p-values were far too small.
+The screen was rebuilt on quarterly CPI with BIC-chosen lags (book appendix 6, 7, 10 and 11). Only business
+inflation expectations, the cash rate and, more weakly, PPI show a signal.
+
+**New sets.** Both targets use `inflation_expectations_business_lag1`, `cash_rate_change_lag1` and
+`ppi_growth_lag1`, plus the target's own lags 1 and 4 (five predictors). They replace the eleven-term sets with oil,
+commodity, unemployment, squared and interaction terms. The set was fixed before any result was seen.
+
+**Test.** `scripts/compare_elastic_net_feature_sets.py` scores both sets on the 53 forecast origins they share
+(`reports/elastic_net_feature_set_comparison.csv`). Headline pooled RMSE: 1.706 (old) against 1.708 (new), a tie.
+Trimmed mean: 1.334 against 1.280, 4.0% lower, mostly at horizons 5 to 7 and worse at horizon 2 (+6.3%). The
+screen saw the whole sample, so the new sets may look a little better than they would on unseen data.
+
+**Consequences.**
+- The new sets let the backtest start earlier (the oil and commodity series start later), so every model is now
+  scored on 61 origins from 2008Q4 (488 forecasts) instead of 53 from 2010Q4 (424). Pooled RMSE figures are not
+  comparable with the earlier reports. The RBA classifier's joined sample grew from 53 to 61 quarters (2009Q1 to
+  2024Q1) and its test window from 41 to 49 quarters.
+- Headline Elastic Net keeps no non-zero coefficient from horizon 5, and trimmed mean none at horizons 7 and 8, so
+  both forecast the long-run mean there. This was already true of headline from horizon 3 (one coefficient or none).
+- Everything downstream was regenerated in the README order: Elastic Net, Ensemble, model comparison, RBA
+  classifier, simulation fans, interval coverage and calibration, Tableau exports. SARIMA forecasts are unchanged.
+- The Cloud Run service was not redeployed. Until it is, it serves the earlier Elastic Net and Ensemble forecasts.
+- The reproducibility measurements in `reports/reproducibility_check*.csv` predate this change and were not repeated.

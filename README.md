@@ -326,7 +326,7 @@ checked-in forecasts.
 curl -s -X POST http://localhost:8000/forecast/all -H "Content-Type: application/json" -d '{"horizon": 4}'
 ```
 
-The Ensemble's four headline forecasts should read 3.154, 3.128, 2.938 and 3.037. Every model, both targets and
+The Ensemble's four headline forecasts should read 3.214, 3.219, 2.998 and 3.103. Every model, both targets and
 all eight horizons match `reports/tableau/forecast.csv` to within 1e-15.
 
 **After B,** regenerate the other reports and let git do the comparing:
@@ -481,6 +481,8 @@ python -m src.models.forecast_snapshot
 The quarter it saves (2026Q1) was already published when it was run, so this is a retrospective wiring
 check, not a live forecast record. Result of the query on those six rows (the actual is the repository's
 series, see the headline CPI note under [Scope and caveats](#scope-and-caveats)):
+
+*This table was recorded before the October 2026 retrain of the Elastic Net and Ensemble (new feature sets), so the Elastic Net and Ensemble rows are out of date. SARIMA is unchanged. Rerun the snapshot to refresh them.*
 
 | target | model | quarter | forecast | actual | error |
 |---|---|---|---|---|---|
