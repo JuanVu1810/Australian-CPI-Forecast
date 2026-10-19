@@ -1,4 +1,10 @@
-"""Export static EDA summaries for the Streamlit dashboard."""
+"""Export static EDA summaries for the Streamlit dashboard.
+
+These exports screen a broader pre-selection candidate pool (including trimmed mean and
+wages) than any shipped model uses, so ``eda_vif.csv`` will not match the book's appendix
+VIF page or the Elastic Net's five features. See
+``reports/model_interval_calibration_remediation_decisions.md``.
+"""
 
 from __future__ import annotations
 
