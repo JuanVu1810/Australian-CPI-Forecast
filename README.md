@@ -33,7 +33,7 @@ call. This README only covers status and how to run the project.
 | Credit-risk stress test and illustrative 12-month ECL | implemented; illustrative only; served by the Cloud Run API since 2026-09-21 |
 | Saved models | the fitted SARIMA and Elastic Net models are `joblib` files in `models/`, committed to the repository (about 5 MB); the API loads them. No experiment tracking, no model registry |
 | FastAPI | implemented, 7 endpoints; live on Cloud Run |
-| Docker and Google Cloud Run | last deployed 2026-10-19 as the Cloud Run service `cpi-forecast-juan` (revision `cpi-forecast-juan-00006-nah`, image tag `44eb23b` in Artifact Registry repo `cpi-forecast`), with its forecasts checked against the repository's the same day. Serves the forecast, scenario, RBA and credit endpoints; redeploy is manual (the repository has changed since this deploy: see the note under [Deploy to Google Cloud Run](#deploy-to-google-cloud-run)) |
+| Docker and Google Cloud Run | last deployed 2026-10-19 as the Cloud Run service `cpi-forecast-juan` (revision `cpi-forecast-juan-00008-sus`, image tag `c0fa38e` in Artifact Registry repo `cpi-forecast`), with its forecasts checked against the repository's the same day. Serves the forecast, scenario, RBA and credit endpoints; redeploy is manual |
 | Streamlit | deployed on Streamlit Community Cloud, verified live 2026-09-21: <https://cpi-forecast-demo.streamlit.app/>. A four-tab interactive demo that goes with the book (live forecast, Ensemble path reveal, scenario engine, RBA call) |
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
 | Pinned setup | pinned versions (`constraints.txt`), saved models, and tests on the saved reports, SQL queries and models; see [Reproduce the results](#reproduce-the-results) |
@@ -371,10 +371,7 @@ accounts, so skip them unless you want to host your own copy.
 
 ### Deploy to Google Cloud Run
 
-The live service is `cpi-forecast-juan` in `asia-southeast1`. **It was deployed on 2026-10-19 from the code before the
-simplification pass:** it still serves `/forecast/trimmed-mean/all`, an Ensemble weighted by inverse RMSE and credit-stress scenarios from the old trimmed-mean SVAR, while this
-repository serves headline CPI only, with a plain 50/50 Ensemble. Redeploy to bring them in line (the numbers in the book
-come from the repository, not from the live service). The steps below push the exact image
+The live service is `cpi-forecast-juan` in `asia-southeast1`. The steps below push the exact image
 you tested to Artifact Registry and deploy it. They assume the Artifact Registry repository `cpi-forecast`
 already exists in your project and that billing is on. Commit first, so the image tag names the code in it.
 
@@ -466,7 +463,7 @@ series, see the headline CPI note under [Scope and caveats](#scope-and-caveats))
 | headline | ensemble | 2026Q1 | 3.147 | 4.0 | 0.853 |
 | headline | sarima | 2026Q1 | 3.384 | 4.0 | 0.616 |
 
-*The three rows above are recomputed from the current models. The hosted table was not refreshed after the simplification pass, so it still holds the older Ensemble row and the trimmed-mean rows.*
+*Refreshed on 19 October 2026 after the simplification pass: the trimmed-mean rows and the old Ensemble row were replaced.*
 
 ## GitHub Actions
 
