@@ -5,7 +5,6 @@ from src.models import model_comparison
 from src.models.evaluation import (
     align_rba_forecasts_to_grid,
     compute_baseline_predictions,
-    compute_conformal_scale_factors,
     compute_current_conformal_scale_factors,
     compute_interval_coverage_table,
     compute_metric_table,
@@ -277,47 +276,6 @@ def test_walk_forward_interval_coverage_records_hits_and_widths_deterministicall
     np.testing.assert_allclose(result["nonconformity_score"], [0.0, 11.0, 0.0, 11.0, 0.0, 11.0])
     assert result["forecast_origin"].iloc[0] == pd.Period("2020Q4", freq="Q")
     assert result["target_quarter"].iloc[1] == pd.Period("2021Q2", freq="Q")
-
-
-def test_compute_conformal_scale_factors_returns_target_quantile_by_model_horizon():
-    predictions = pd.DataFrame(
-        {
-            "model": ["a", "a", "a", "a", "b", "b"],
-            "horizon": [1, 1, 1, 2, 1, 1],
-            "nonconformity_score": [0.5, 1.0, 1.5, 3.0, 2.0, 4.0],
-        }
-    )
-
-    factors = compute_conformal_scale_factors(predictions, target_coverage=0.8)
-
-    a_h1 = factors.loc[(factors["model"].eq("a")) & (factors["horizon"].eq(1))].iloc[0]
-    assert a_h1["n"] == 3
-    assert a_h1["target_coverage"] == 0.8
-    assert a_h1["scale_factor"] == 1.3
-
-    a_h2 = factors.loc[(factors["model"].eq("a")) & (factors["horizon"].eq(2))].iloc[0]
-    assert a_h2["scale_factor"] == 3.0
-
-    b_h1 = factors.loc[(factors["model"].eq("b")) & (factors["horizon"].eq(1))].iloc[0]
-    assert b_h1["scale_factor"] == 3.6
-
-
-def test_compute_conformal_scale_factors_floors_scale_at_one():
-    predictions = pd.DataFrame(
-        {
-            "model": ["a", "a", "b", "b"],
-            "horizon": [1, 1, 1, 1],
-            "nonconformity_score": [0.1, 0.2, 1.2, 1.4],
-        }
-    )
-
-    factors = compute_conformal_scale_factors(predictions, target_coverage=0.8)
-
-    assert factors["scale_factor"].ge(1.0).all()
-    a_h1 = factors.loc[(factors["model"].eq("a")) & (factors["horizon"].eq(1))].iloc[0]
-    assert a_h1["scale_factor"] == 1.0
-    b_h1 = factors.loc[(factors["model"].eq("b")) & (factors["horizon"].eq(1))].iloc[0]
-    assert np.isclose(b_h1["scale_factor"], 1.36)
 
 
 def test_apply_interval_calibration_preserves_asymmetric_bounds_at_scale_one():

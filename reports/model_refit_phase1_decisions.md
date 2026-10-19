@@ -2,6 +2,8 @@
 
 [![content: AI-generated](../book/australian_cpi_forecasting/_static/badges/ai-generated.svg)](https://juanvu1810.github.io/Australian-CPI-Forecast/intro.html#ai-acknowledgement)
 
+> **Update 2026-10-19:** the project now forecasts headline CPI only and the Ensemble is a plain 50/50 average. The trimmed-mean models, reports and the inverse-RMSE weights discussed below were removed, so read those parts as history, not as current behaviour.
+
 Date: 2026-08-25
 
 Scope: decision record only. No production model was fitted or registered;

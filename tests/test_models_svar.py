@@ -5,16 +5,13 @@ from types import SimpleNamespace
 
 import src.models.svar as svar
 from src.models.svar import (
-    DEFAULT_HORIZONS,
     calculate_dof_lag_cap,
-    compare_system_a_to_b_irf_bands,
     check_var_stability,
     bootstrap_cholesky_irf_bands,
     historical_decomposition,
     johansen_cointegration_check,
     select_bic_lag_order,
     structural_shocks,
-    system_a_requires_full_treatment,
 )
 
 
@@ -357,75 +354,3 @@ def test_draw_contiguous_residual_blocks_preserves_residual_runs():
             np.array_equal(chunk, residuals[candidate : candidate + len(chunk)])
             for candidate in range(0, len(residuals) - len(chunk) + 1)
         )
-
-
-def test_compare_system_a_to_b_irf_bands_flags_non_overlap_by_shared_shock_horizon():
-    rows_a = []
-    rows_b = []
-    for shock in svar.SHARED_ESCALATION_SHOCKS:
-        for horizon in DEFAULT_HORIZONS:
-            rows_a.append(
-                {
-                    "response": "cpi_yoy",
-                    "shock": shock,
-                    "horizon": horizon,
-                    "lower": -0.2,
-                    "upper": 0.2,
-                }
-            )
-            rows_b.append(
-                {
-                    "response": "trimmed_mean_cpi_yoy",
-                    "shock": shock,
-                    "horizon": horizon,
-                    "lower": -0.1,
-                    "upper": 0.3,
-                }
-            )
-    rows_b[0]["lower"] = 0.25
-    rows_b[0]["upper"] = 0.40
-    system_a_bands = pd.DataFrame(rows_a)
-    system_b_bands = pd.DataFrame(rows_b)
-
-    comparison = compare_system_a_to_b_irf_bands(system_a_bands, system_b_bands)
-
-    triggers = comparison.loc[comparison["escalate_system_a"]]
-    assert len(comparison) == len(svar.SHARED_ESCALATION_SHOCKS) * len(DEFAULT_HORIZONS)
-    assert len(triggers) == 1
-    assert triggers.iloc[0]["shock"] == "unemployment_rate"
-    assert triggers.iloc[0]["horizon"] == 1
-    assert system_a_requires_full_treatment(comparison) is True
-
-
-def test_compare_system_a_to_b_irf_bands_allows_irfs_only_when_bands_overlap():
-    system_a_bands = pd.DataFrame(
-        [
-            {
-                "response": "cpi_yoy",
-                "shock": shock,
-                "horizon": horizon,
-                "lower": -0.2,
-                "upper": 0.2,
-            }
-            for shock in svar.SHARED_ESCALATION_SHOCKS
-            for horizon in DEFAULT_HORIZONS
-        ]
-    )
-    system_b_bands = pd.DataFrame(
-        [
-            {
-                "response": "trimmed_mean_cpi_yoy",
-                "shock": shock,
-                "horizon": horizon,
-                "lower": -0.1,
-                "upper": 0.3,
-            }
-            for shock in svar.SHARED_ESCALATION_SHOCKS
-            for horizon in DEFAULT_HORIZONS
-        ]
-    )
-
-    comparison = compare_system_a_to_b_irf_bands(system_a_bands, system_b_bands)
-
-    assert comparison["escalate_system_a"].any() is np.False_
-    assert system_a_requires_full_treatment(comparison) is False

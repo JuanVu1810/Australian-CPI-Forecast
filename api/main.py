@@ -188,8 +188,6 @@ class FamilyForecastData:
     draws: np.ndarray
     quarters: list[str]
     forecast_origin: str
-    horizon_served: int
-    horizon_cap: int | None
 
 
 def load_curated_data() -> pd.DataFrame:
@@ -292,17 +290,15 @@ def _parse_bool(value: object) -> bool:
     return bool(value)
 
 
-@lru_cache(maxsize=2)
-def _load_interval_coverage_report(
-    path: Path | None = None,
-) -> dict[tuple[str, int], dict[str, object]]:
+@lru_cache(maxsize=1)
+def _load_interval_coverage_report() -> dict[tuple[str, int], dict[str, object]]:
     """Load the held-out calibrated coverage report that the API discloses.
 
     Only the held-out validation report is used. The in-sample coverage report would
     look similar but is circular, so a missing report gives null coverage fields
     instead of quietly switching to it.
     """
-    path = INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH if path is None else path
+    path = INTERVAL_CALIBRATION_VALIDATION_REPORT_PATH
     if not path.exists():
         return {}
     try:
@@ -364,7 +360,6 @@ def _coverage_fields_for_family(
     horizon_served: int,
     lower: float,
     upper: float,
-    interval_calibration_validation_report_path: Path | None = None,
 ) -> tuple[list[float | None], list[int | None], list[bool | None]]:
     """Held-out coverage, sample size and miscalibration flag per horizon; None where there is no matching report row."""
     if not _validated_interval_bounds(lower, upper):
@@ -374,7 +369,7 @@ def _coverage_fields_for_family(
             [None] * horizon_served,
         )
 
-    coverage = _load_interval_coverage_report(interval_calibration_validation_report_path)
+    coverage = _load_interval_coverage_report()
     requested_nominal = upper - lower
     empirical = []
     sample_sizes = []
@@ -486,8 +481,6 @@ def _sarima_family_forecast(
         draws=draws,
         quarters=quarters,
         forecast_origin=forecast_origin,
-        horizon_served=requested_horizon,
-        horizon_cap=None,
     )
 
 
@@ -525,8 +518,6 @@ def _elastic_net_family_forecast(
         draws=draws,
         quarters=next_quarters(forecast_origin, requested_horizon),
         forecast_origin=forecast_origin,
-        horizon_served=requested_horizon,
-        horizon_cap=None,
     )
 
 
@@ -560,8 +551,6 @@ def _ensemble_family_forecast(
         draws=draws,
         quarters=sarima_result.quarters,
         forecast_origin=sarima_result.forecast_origin,
-        horizon_served=requested_horizon,
-        horizon_cap=None,
     )
 
 
@@ -697,26 +686,24 @@ def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
 
     A family that fails to load goes to ``unavailable`` instead of failing the whole request.
     """
-    family_handlers = FAMILY_HANDLERS
-    model_paths = HEADLINE_MODEL_PATHS
     load_curated_data()
 
     models = []
     unavailable = []
     # Elastic Net forecasts from the same origin as SARIMA so the families line up.
     anchor_forecast_origin = None
-    for family, handler in family_handlers.items():
+    for family, handler in FAMILY_HANDLERS.items():
         try:
             if family == "elastic_net" and anchor_forecast_origin is not None:
                 result = handler(
-                    model_paths,
+                    HEADLINE_MODEL_PATHS,
                     request.horizon,
                     request.n_sims,
                     seed=42,
                     forecast_origin=anchor_forecast_origin,
                 )
             else:
-                result = handler(model_paths, request.horizon, request.n_sims, seed=42)
+                result = handler(HEADLINE_MODEL_PATHS, request.horizon, request.n_sims, seed=42)
         except (RuntimeError, OSError) as exc:
             unavailable.append(UnavailableFamily(model_family=family, reason=_public_message(exc)))
             continue
@@ -736,15 +723,16 @@ def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
         )
         empirical_coverage, coverage_n, significantly_miscalibrated = _coverage_fields_for_family(
             family,
-            result.horizon_served,
+            request.horizon,
             request.interval_lower,
             request.interval_upper,
         )
         models.append(
             FamilyForecast(
                 model_family=family,
-                horizon=result.horizon_served,
-                horizon_cap=result.horizon_cap,
+                horizon=request.horizon,
+                # Always None now that every family serves all horizons; kept for a stable response schema.
+                horizon_cap=None,
                 forecast=[float(value) for value in result.forecast],
                 interval_lower=interval_lower,
                 interval_upper=interval_upper,
@@ -763,7 +751,6 @@ def forecast_all(request: AllForecastsRequest) -> AllForecastsResponse:
         models=models,
         unavailable=unavailable,
     )
-
 
 
 @lru_cache(maxsize=1)

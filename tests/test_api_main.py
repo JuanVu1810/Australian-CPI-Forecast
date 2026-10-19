@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import joblib
 import numpy as np
 import pandas as pd
@@ -163,8 +161,6 @@ def test_rba_action_returns_live_policy_breakdown_and_marks_threshold(
             draws=np.zeros((n_sims, 1)),
             quarters=["2022Q1"],
             forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
         )
 
     def fake_predict_single_quarter(train, test, **kwargs):
@@ -459,8 +455,6 @@ def test_forecast_all_attaches_held_out_interval_coverage_for_validated_bounds(
             draws=np.tile(np.array([0.5, 2.5]), (n_sims, 1)),
             quarters=["2022Q1", "2022Q2"],
             forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
         )
 
     monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"sarima": fake_sarima_family_forecast})
@@ -499,8 +493,6 @@ def test_forecast_all_leaves_interval_coverage_null_for_unvalidated_bounds(
             draws=np.tile(np.array([0.5, 2.5]), (n_sims, 1)),
             quarters=["2022Q1", "2022Q2"],
             forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
         )
 
     monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"sarima": fake_sarima_family_forecast})
@@ -543,8 +535,6 @@ def test_forecast_all_leaves_interval_coverage_null_for_validation_nominal_misma
             draws=np.tile(np.array([0.5, 2.5]), (n_sims, 1)),
             quarters=["2022Q1", "2022Q2"],
             forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
         )
 
     monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"sarima": fake_sarima_family_forecast})
@@ -575,8 +565,6 @@ def test_forecast_all_leaves_interval_coverage_null_when_report_missing(
             draws=np.tile(np.array([0.5, 2.5]), (n_sims, 1)),
             quarters=["2022Q1", "2022Q2"],
             forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
         )
 
     monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"sarima": fake_sarima_family_forecast})
@@ -615,8 +603,6 @@ def test_forecast_all_applies_interval_calibration_for_validated_bounds(
             ),
             quarters=["2022Q1", "2022Q2"],
             forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
         )
 
     monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"sarima": fake_sarima_family_forecast})
@@ -650,8 +636,6 @@ def test_forecast_all_scales_a_skewed_interval_on_each_side_around_the_point(
             draws=np.linspace(9.75, 12.25, n_sims).reshape(n_sims, 1),
             quarters=["2022Q1"],
             forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
         )
 
     monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"sarima": fake_sarima_family_forecast})
@@ -708,8 +692,6 @@ def test_forecast_all_keeps_raw_intervals_when_calibration_bounds_do_not_match(
             draws=np.linspace(9.0, 11.0, n_sims).reshape(n_sims, 1),
             quarters=["2022Q1"],
             forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
         )
 
     monkeypatch.setattr(api_main, "FAMILY_HANDLERS", {"sarima": fake_sarima_family_forecast})
@@ -773,8 +755,6 @@ def _fake_ensemble_components(monkeypatch, seen):
             draws=np.tile(np.array([1.0, 2.0, 3.0]), (n_sims, 1)),
             quarters=["2022Q1", "2022Q2", "2022Q3"],
             forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
         )
 
     def fake_elastic_net_family_forecast(
@@ -791,8 +771,6 @@ def _fake_ensemble_components(monkeypatch, seen):
             draws=np.tile(np.array([3.0, 4.0, 5.0]), (n_sims, 1)),
             quarters=["2022Q1", "2022Q2", "2022Q3"],
             forecast_origin="2021Q4",
-            horizon_served=requested_horizon,
-            horizon_cap=None,
         )
 
     monkeypatch.setattr(api_main, "_sarima_family_forecast", fake_sarima_family_forecast)

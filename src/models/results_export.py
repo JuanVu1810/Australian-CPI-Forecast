@@ -60,13 +60,11 @@ HISTORICAL_INDICATOR_COLUMNS = {
     "inflation_expectations_business": "Business Inflation Expectations",
 }
 
-FORECAST_TARGETS = {
-    "Headline": {
-        "endpoint": "/forecast/all",
-        "comparison_report": PROJECT_ROOT / "reports/model_comparison_all.csv",
-        "coverage_report": PROJECT_ROOT / "reports/model_interval_coverage.csv",
-    },
-}
+# Every forecast export row is headline CPI; the label fills the CSVs' "target" column.
+TARGET_LABEL = "Headline"
+FORECAST_ENDPOINT = "/forecast/all"
+COMPARISON_REPORT_PATH = PROJECT_ROOT / "reports/model_comparison_all.csv"
+COVERAGE_REPORT_PATH = PROJECT_ROOT / "reports/model_interval_coverage.csv"
 
 SVAR_SYSTEMS = {
     "System A": {
@@ -82,24 +80,23 @@ SVAR_SYSTEMS = {
 }
 
 
-def build_forecast_frame(payloads_by_target: dict[str, dict]) -> pd.DataFrame:
-    """One row per target, model and forecast quarter from the /forecast responses."""
+def build_forecast_frame(payload: dict) -> pd.DataFrame:
+    """One row per model and forecast quarter from the /forecast/all response."""
     rows = []
-    for target_label, payload in payloads_by_target.items():
-        for model in payload.get("models", []):
-            for index in range(len(model["quarters"])):
-                rows.append(
-                    {
-                        "target": target_label,
-                        "model_family": model["model_family"],
-                        "forecast_origin": model["forecast_origin"],
-                        "quarter": model["quarters"][index],
-                        "horizon": index + 1,
-                        "forecast": model["forecast"][index],
-                        "interval_lower": model["interval_lower"][index],
-                        "interval_upper": model["interval_upper"][index],
-                    }
-                )
+    for model in payload.get("models", []):
+        for index in range(len(model["quarters"])):
+            rows.append(
+                {
+                    "target": TARGET_LABEL,
+                    "model_family": model["model_family"],
+                    "forecast_origin": model["forecast_origin"],
+                    "quarter": model["quarters"][index],
+                    "horizon": index + 1,
+                    "forecast": model["forecast"][index],
+                    "interval_lower": model["interval_lower"][index],
+                    "interval_upper": model["interval_upper"][index],
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -157,42 +154,30 @@ def build_credit_stress_frame(payload: dict) -> pd.DataFrame:
 
 def build_model_comparison_frame() -> pd.DataFrame:
     """Overall RMSE/MAE per model, without the RBA row."""
-    frames = []
-    for target_label, config in FORECAST_TARGETS.items():
-        path = config["comparison_report"]
-        if not path.exists():
-            continue
-        report = pd.read_csv(path)
-        overall = report.loc[report["horizon"].astype(str).eq("overall"), ["model", "n", "rmse", "mae"]].copy()
-        # rba mixes an NSA-basis benchmark against this SA-basis target; STATUS_RULES.md
-        # requires --no-rba for SA-sourced comparisons, so it never belongs in this export.
-        overall = overall.loc[overall["model"].ne("rba")]
-        overall["target"] = target_label
-        frames.append(overall)
-    if not frames:
+    if not COMPARISON_REPORT_PATH.exists():
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)[["target", "model", "n", "rmse", "mae"]]
+    report = pd.read_csv(COMPARISON_REPORT_PATH)
+    overall = report.loc[report["horizon"].astype(str).eq("overall"), ["model", "n", "rmse", "mae"]].copy()
+    # rba mixes an NSA-basis benchmark against this SA-basis target; STATUS_RULES.md
+    # requires --no-rba for SA-sourced comparisons, so it never belongs in this export.
+    overall = overall.loc[overall["model"].ne("rba")]
+    overall["target"] = TARGET_LABEL
+    return overall[["target", "model", "n", "rmse", "mae"]].reset_index(drop=True)
 
 
 def build_coverage_frame() -> pd.DataFrame:
     """Overall interval coverage per model."""
-    frames = []
-    for target_label, config in FORECAST_TARGETS.items():
-        path = config["coverage_report"]
-        if not path.exists():
-            continue
-        report = pd.read_csv(path)
-        overall = report.loc[
-            report["horizon"].astype(str).eq("overall"),
-            ["model", "n", "nominal_coverage", "empirical_coverage", "significantly_miscalibrated"],
-        ].copy()
-        overall["target"] = target_label
-        frames.append(overall)
-    if not frames:
+    if not COVERAGE_REPORT_PATH.exists():
         return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)[
+    report = pd.read_csv(COVERAGE_REPORT_PATH)
+    overall = report.loc[
+        report["horizon"].astype(str).eq("overall"),
+        ["model", "n", "nominal_coverage", "empirical_coverage", "significantly_miscalibrated"],
+    ].copy()
+    overall["target"] = TARGET_LABEL
+    return overall[
         ["target", "model", "n", "nominal_coverage", "empirical_coverage", "significantly_miscalibrated"]
-    ]
+    ].reset_index(drop=True)
 
 
 def build_historical_indicators_frame() -> pd.DataFrame:
@@ -333,13 +318,11 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        forecast_payloads = {}
-        for target_label, config in FORECAST_TARGETS.items():
-            response = requests.post(
-                args.api_base_url + config["endpoint"], json={"horizon": args.horizon}, timeout=60
-            )
-            response.raise_for_status()
-            forecast_payloads[target_label] = response.json()
+        response = requests.post(
+            args.api_base_url + FORECAST_ENDPOINT, json={"horizon": args.horizon}, timeout=60
+        )
+        response.raise_for_status()
+        forecast_payload = response.json()
         response = requests.get(args.api_base_url + "/rba-action", timeout=60)
         response.raise_for_status()
         rba_action_payload = response.json()
@@ -352,7 +335,7 @@ def main() -> None:
             "Start it first with: uvicorn api.main:app --reload"
         ) from exc
 
-    forecast_frame = build_forecast_frame(forecast_payloads)
+    forecast_frame = build_forecast_frame(forecast_payload)
     historical_frame = build_historical_indicators_frame()
 
     forecast_frame.to_csv(args.output_dir / "forecast.csv", index=False)

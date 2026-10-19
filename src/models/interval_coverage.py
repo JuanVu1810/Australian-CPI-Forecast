@@ -46,18 +46,6 @@ DEFAULT_UPPER_QUANTILE = 0.9
 DEFAULT_INITIAL_TRAIN_SIZE = ELASTIC_NET_INITIAL_TRAIN_SIZE
 
 
-def _normalise_families(families: tuple[str, ...] | None) -> tuple[str, ...]:
-    """Return the requested families (all three when None); reject unknown names."""
-    available = ("sarima", "elastic_net", "ensemble")
-    if families is None:
-        return available
-    requested = tuple(str(family) for family in families)
-    unknown = sorted(set(requested).difference(available))
-    if unknown:
-        raise ValueError(f"unknown interval coverage families: {unknown}")
-    return requested
-
-
 def apply_interval_calibration(
     predictions: pd.DataFrame,
     factors: pd.DataFrame,
@@ -143,12 +131,10 @@ def run_family_interval_backtests(
     seed: int = DEFAULT_SEED,
     max_origins: int | None = None,
     skip_origins: int = 0,
-    families: tuple[str, ...] | None = None,
     verbose: bool = False,
 ) -> pd.DataFrame:
-    """Run raw interval walk-forward backtests for selected served model families."""
+    """Run raw interval walk-forward backtests for the three served model families."""
     requested_horizons = tuple(int(horizon) for horizon in horizons)
-    requested_families = _normalise_families(families)
     series = load_target_series(
         curated_path,
         target_column=TARGET_COLUMN,
@@ -182,81 +168,65 @@ def run_family_interval_backtests(
             target_column=TARGET_COLUMN,
         )
 
-    def simulate_ensemble(train_series, train_exog, steps, n_sims, seed):
-        train_frame = pd.concat([train_series.rename(TARGET_COLUMN), train_exog], axis=1).dropna()
-        return simulate_ensemble_paths(
-            train_frame,
-            steps=steps,
-            n_sims=n_sims,
-            seed=seed,
-            sarima_series=train_series,
-        )
+    if verbose:
+        print("Running SARIMA interval coverage backtest...", flush=True)
+    sarima_predictions = walk_forward_interval_coverage_backtest(
+        series=series,
+        simulate_func=simulate_sarima,
+        initial_train_size=initial_train_size,
+        horizons=requested_horizons,
+        model_name="sarima",
+        lower_quantile=lower_quantile,
+        upper_quantile=upper_quantile,
+        n_sims=n_sims,
+        seed=seed,
+        max_origins=max_origins,
+        skip_origins=skip_origins,
+    )
 
-    frames = []
-    if "sarima" in requested_families:
-        if verbose:
-            print("Running SARIMA interval coverage backtest...", flush=True)
-        frames.append(
-            walk_forward_interval_coverage_backtest(
-                series=series,
-                simulate_func=simulate_sarima,
-                initial_train_size=initial_train_size,
-                horizons=requested_horizons,
-                model_name="sarima",
-                lower_quantile=lower_quantile,
-                upper_quantile=upper_quantile,
-                n_sims=n_sims,
-                seed=seed,
-                max_origins=max_origins,
-                skip_origins=skip_origins,
-            )
-        )
+    if verbose:
+        print("Running Elastic Net interval coverage backtest...", flush=True)
+    elastic_net_predictions = walk_forward_interval_coverage_backtest(
+        series=series,
+        exog=elastic_net_exog,
+        simulate_func=simulate_elastic_net,
+        initial_train_size=initial_train_size,
+        horizons=requested_horizons,
+        model_name="elastic_net",
+        lower_quantile=lower_quantile,
+        upper_quantile=upper_quantile,
+        n_sims=n_sims,
+        seed=seed + 10_000,
+        target_column=TARGET_COLUMN,
+        max_origins=max_origins,
+        skip_origins=skip_origins,
+    )
 
-    if "elastic_net" in requested_families:
-        if verbose:
-            print("Running Elastic Net interval coverage backtest...", flush=True)
-        frames.append(
-            walk_forward_interval_coverage_backtest(
-                series=series,
-                exog=elastic_net_exog,
-                initial_train_size=initial_train_size,
-                horizons=requested_horizons,
-                model_name="elastic_net",
-                lower_quantile=lower_quantile,
-                upper_quantile=upper_quantile,
-                n_sims=n_sims,
-                seed=seed + 10_000,
-                training_data="frame",
-                target_column=TARGET_COLUMN,
-                simulate_func=simulate_elastic_net,
-                max_origins=max_origins,
-                skip_origins=skip_origins,
-            )
-        )
+    if verbose:
+        print("Running ensemble interval coverage backtest...", flush=True)
+    # The ensemble gets the same target-plus-features frame as Elastic Net; its SARIMA half
+    # uses that frame's target column.
+    ensemble_predictions = walk_forward_interval_coverage_backtest(
+        series=series,
+        exog=elastic_net_exog,
+        simulate_func=simulate_ensemble_paths,
+        initial_train_size=initial_train_size,
+        horizons=requested_horizons,
+        model_name="ensemble",
+        lower_quantile=lower_quantile,
+        upper_quantile=upper_quantile,
+        n_sims=n_sims,
+        seed=seed + 30_000,
+        target_column=TARGET_COLUMN,
+        max_origins=max_origins,
+        skip_origins=skip_origins,
+    )
 
-    if "ensemble" in requested_families:
-        if verbose:
-            print("Running ensemble interval coverage backtest...", flush=True)
-        frames.append(
-            walk_forward_interval_coverage_backtest(
-                series=series,
-                exog=elastic_net_exog,
-                simulate_func=simulate_ensemble,
-                initial_train_size=initial_train_size,
-                horizons=requested_horizons,
-                model_name="ensemble",
-                lower_quantile=lower_quantile,
-                upper_quantile=upper_quantile,
-                n_sims=n_sims,
-                seed=seed + 30_000,
-                training_data="series_exog",
-                target_column=TARGET_COLUMN,
-                max_origins=max_origins,
-                skip_origins=skip_origins,
-            )
-        )
-
-    return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
+    return pd.concat(
+        [sarima_predictions, elastic_net_predictions, ensemble_predictions],
+        ignore_index=True,
+        sort=False,
+    )
 
 
 def run_interval_coverage(
@@ -270,7 +240,6 @@ def run_interval_coverage(
     seed: int = DEFAULT_SEED,
     max_origins: int | None = None,
     skip_origins: int = 0,
-    families: tuple[str, ...] | None = None,
     apply_calibration: bool = True,
     verbose: bool = False,
 ) -> pd.DataFrame:
@@ -290,7 +259,6 @@ def run_interval_coverage(
         seed=seed,
         max_origins=max_origins,
         skip_origins=skip_origins,
-        families=families,
         verbose=verbose,
     )
 

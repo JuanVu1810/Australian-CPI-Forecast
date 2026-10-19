@@ -17,7 +17,6 @@ from statsmodels.tools.sm_exceptions import ConvergenceWarning
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 
-DEFAULT_TARGET_COLUMN = "cpi_yoy"
 CPI_INDEX_NOTEBOOK_ORDER = (0, 1, 1)
 CPI_INDEX_NOTEBOOK_SEASONAL_ORDER = (0, 1, 1, 4)
 

@@ -49,13 +49,12 @@ PREDICTIONS_COLUMNS = [
     "rba_reported_error",
     "horizon_cap",
 ]
-KEY_COLUMNS = ["forecast_origin", "target_quarter", "horizon"]
 MODEL_ORDER = {
     "sarima": 0,
     "elastic_net": 1,
     "ensemble": 2,
-    "seasonal_naive": 4,
-    "rba": 5,
+    "seasonal_naive": 3,
+    "rba": 4,
 }
 
 
@@ -92,7 +91,6 @@ def _with_grid_metadata(
     predictions: pd.DataFrame,
     comparison_grid: str,
     evaluation_status: str,
-    group_id: str = "",
 ) -> pd.DataFrame:
     """Add grid, status, origin-count and evaluated-horizon columns to a metric table."""
     result = metrics.copy()
@@ -108,7 +106,8 @@ def _with_grid_metadata(
         )
         for row in result.itertuples(index=False)
     ]
-    result["group_id"] = group_id
+    # Empty column kept so the saved report keeps its established columns.
+    result["group_id"] = ""
     return result
 
 
@@ -305,8 +304,8 @@ def main(argv: list[str] | None = None) -> None:
             "workbook is on the officially quoted NSA basis."
         ),
     )
-    parser.add_argument("--output", type=Path, default=None)
-    parser.add_argument("--predictions-output", type=Path, default=None)
+    parser.add_argument("--output", type=Path, default=COMPARISON_ALL_OUTPUT_PATH)
+    parser.add_argument("--predictions-output", type=Path, default=PREDICTIONS_OUTPUT_PATH)
     parser.add_argument(
         "--no-predictions-output",
         action="store_true",
@@ -321,10 +320,8 @@ def main(argv: list[str] | None = None) -> None:
         curated_path=args.data,
         rba_path=args.rba_data,
         include_rba=not args.no_rba,
-        output_path=args.output or COMPARISON_ALL_OUTPUT_PATH,
-        predictions_output_path=(
-            None if args.no_predictions_output else args.predictions_output or PREDICTIONS_OUTPUT_PATH
-        ),
+        output_path=args.output,
+        predictions_output_path=None if args.no_predictions_output else args.predictions_output,
         initial_train_size=args.initial_train_size,
         seed=args.seed,
         max_origins=args.max_origins,

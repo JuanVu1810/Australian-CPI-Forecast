@@ -402,10 +402,6 @@ def run_elastic_net_comparison(
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
     seed: int = DEFAULT_SEED,
     max_origins: int | None = None,
-    target_column: str = TARGET_COLUMN,
-    feature_columns: tuple[str, ...] = ELASTIC_NET_FEATURE_COLUMNS,
-    sarima_order: tuple[int, int, int] | None = None,
-    sarima_seasonal_order: tuple[int, int, int, int] | None = None,
     include_rba: bool = True,
     model_output_path: Path = ELASTIC_NET_MODEL_PATH,
     verbose: bool = False,
@@ -416,22 +412,22 @@ def run_elastic_net_comparison(
 
     started = time.perf_counter()
     requested_horizons = tuple(int(horizon) for horizon in horizons)
-    sarima_order = DEFAULT_ORDER if sarima_order is None else sarima_order
-    sarima_seasonal_order = (
-        DEFAULT_SEASONAL_ORDER if sarima_seasonal_order is None else sarima_seasonal_order
-    )
-    series = load_target_series(curated_path, target_column=target_column, max_quarter=max_quarter)
+    series = load_target_series(curated_path, target_column=TARGET_COLUMN, max_quarter=max_quarter)
     exog = load_elastic_net_feature_frame(
-        curated_path, feature_columns=feature_columns, max_quarter=max_quarter
+        curated_path, feature_columns=ELASTIC_NET_FEATURE_COLUMNS, max_quarter=max_quarter
     )
 
     def forecast_elastic_net(train_frame, steps):
         return forecast_elastic_net_direct(
-            train_frame, steps=steps, seed=seed, feature_columns=feature_columns, target_column=target_column
+            train_frame,
+            steps=steps,
+            seed=seed,
+            feature_columns=ELASTIC_NET_FEATURE_COLUMNS,
+            target_column=TARGET_COLUMN,
         )
 
     def forecast_sarima_baseline(train, steps):
-        return forecast_sarima(train, steps=steps, order=sarima_order, seasonal_order=sarima_seasonal_order)
+        return forecast_sarima(train, steps=steps, order=DEFAULT_ORDER, seasonal_order=DEFAULT_SEASONAL_ORDER)
 
     if verbose:
         print("Running Elastic Net direct-multihorizon walk-forward backtest...", flush=True)
@@ -442,7 +438,7 @@ def run_elastic_net_comparison(
         initial_train_size=initial_train_size,
         horizons=requested_horizons,
         model_name="elastic_net",
-        target_column=target_column,
+        target_column=TARGET_COLUMN,
         max_origins=max_origins,
     )
     if elastic_net_predictions.empty:
@@ -476,18 +472,18 @@ def run_elastic_net_comparison(
             "Elastic Net horizons 1-8 use only the past origin row (direct "
             "multi-horizon, lag-safe feature set)."
         ),
-        features=";".join(feature_columns),
+        features=";".join(ELASTIC_NET_FEATURE_COLUMNS),
     )
 
     if verbose:
         print("Fitting final full-sample Elastic Net for coefficients and the saved model...", flush=True)
-    full_frame = pd.concat([series.rename(target_column), exog], axis=1)
+    full_frame = pd.concat([series.rename(TARGET_COLUMN), exog], axis=1)
     final_fit = fit_elastic_net_direct(
         full_frame,
         horizons=requested_horizons,
         seed=seed,
-        feature_columns=feature_columns,
-        target_column=target_column,
+        feature_columns=ELASTIC_NET_FEATURE_COLUMNS,
+        target_column=TARGET_COLUMN,
     )
     coefficients = coefficient_table(final_fit)
 

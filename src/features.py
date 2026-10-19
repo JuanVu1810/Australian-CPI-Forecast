@@ -112,8 +112,7 @@ def add_intervention_dummies(
                 "lead_quarters value."
             )
         # WHY: the shock quarters were picked by looking at CPI itself, so a dummy is only safe to use from
-        # the date the event was public. The "_lag{N}" suffix (N = lead_quarters) makes
-        # evaluation.infer_min_lag_from_columns cap the dummy's forecast horizon at N.
+        # the date the event was public. The "_lag{N}" suffix records N = lead_quarters.
         lag = int(lead_values[0])
         result[f"{dummy_name}_lag{lag}"] = quarter_strings.isin(shock_quarters).astype(int)
 

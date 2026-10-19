@@ -59,15 +59,6 @@ def test_recenter_paths_to_median_shifts_without_changing_spread():
         ensemble.recenter_paths_to_median(paths, target_median[:1])
 
 
-def test_ensemble_interval_from_paths_uses_combined_draw_quantiles():
-    paths = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
-
-    lower, upper = ensemble.ensemble_interval_from_paths(paths, lower=0.0, upper=1.0)
-
-    np.testing.assert_array_equal(lower, np.array([1.0, 2.0]))
-    np.testing.assert_array_equal(upper, np.array([5.0, 6.0]))
-
-
 def test_forecast_ensemble_averages_the_two_component_forecasts(monkeypatch):
     frame = _synthetic_frame()
     monkeypatch.setattr(

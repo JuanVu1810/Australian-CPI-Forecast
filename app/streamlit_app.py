@@ -76,17 +76,13 @@ ACTION_COLORS = {"cut": "#2a78d6", "hold": "#898781", "hike": "#eb6834"}
 PALETTE = {
     "light": {
         "fan": "#eb6834", "median": "#a33d19", "muted": "#898781", "grid": "#e1e0d9",
-        "ink": "#1c1b1a", "paper": "#fbfaf8", "border": "#e5e2dc", "accent2": "#3a6b63",
-        "headline": "#2a78d6", "target": "#2f8f5b", "midpoint": "#4d6b57",
+        "accent2": "#3a6b63", "headline": "#2a78d6", "target": "#2f8f5b", "midpoint": "#4d6b57",
         "scenario": "#eb6834", "baseline": "#2a78d6",
-        "actual": "#2a78d6", "forecast": "#eb6834", "miscalibrated": "#b83232", "nominal": "#898781",
     },
     "dark": {
         "fan": "#d95926", "median": "#ffb08f", "muted": "#a8a49c", "grid": "#2c2c2a",
-        "ink": "#ece9e4", "paper": "#15140f", "border": "#33312b", "accent2": "#7fc4b8",
-        "headline": "#3987e5", "target": "#61b983", "midpoint": "#8eb89b",
+        "accent2": "#7fc4b8", "headline": "#3987e5", "target": "#61b983", "midpoint": "#8eb89b",
         "scenario": "#d95926", "baseline": "#3987e5",
-        "actual": "#3987e5", "forecast": "#d95926", "miscalibrated": "#ff8a8a", "nominal": "#898781",
     },
 }
 
@@ -191,21 +187,19 @@ def api_request(method: str, base_url: str, path: str, **kwargs) -> tuple[dict |
         )
 
 
-def _anchor_value(
-    curated: pd.DataFrame, target_column: str, forecast_origin: str, fallback: float | None = None
-) -> float:
-    """Observed value at the forecast origin, so the forecast line joins the history line."""
-    target = curated.set_index("quarter")[target_column].dropna()
-    if forecast_origin in target.index:
-        return float(target.loc[forecast_origin])
-    return float(fallback) if fallback is not None else float(target.iloc[-1])
+def _anchor_value(curated: pd.DataFrame, forecast_origin: str) -> float:
+    """Observed CPI at the forecast origin (else the latest one), so the forecast line joins the history line."""
+    observed = curated.set_index("quarter")[HISTORY_COLUMN].dropna()
+    if forecast_origin in observed.index:
+        return float(observed.loc[forecast_origin])
+    return float(observed.iloc[-1])
 
 
 # ---------------------------------------------------------------------------
 # Chart builders
 # ---------------------------------------------------------------------------
 def build_ensemble_path_chart(
-    sample: pd.DataFrame, fan: pd.DataFrame, n_reveal: int, theme_type: str, value_label: str
+    sample: pd.DataFrame, fan: pd.DataFrame, n_reveal: int, theme_type: str
 ) -> alt.LayerChart:
     colors = PALETTE[theme_type]
     # One shared x definition so every layer agrees on the title and on whole-quarter ticks.
@@ -215,7 +209,7 @@ def build_ensemble_path_chart(
     layers = [
         alt.Chart(revealed)
         .mark_line(strokeWidth=0.8, opacity=0.35, color=colors["fan"])
-        .encode(x=horizon_axis, y=alt.Y("value:Q", title=value_label), detail="draw_id:N")
+        .encode(x=horizon_axis, y=alt.Y("value:Q", title=ENSEMBLE_VALUE_LABEL), detail="draw_id:N")
     ]
     if final_step:
         outer_band = (
@@ -377,19 +371,19 @@ def build_forecast_chart(history: pd.DataFrame, forecast: pd.DataFrame, theme_ty
     )
 
 
-def build_scenario_chart(forecast: pd.DataFrame, theme_type: str, y_axis_title: str) -> alt.LayerChart:
+def build_scenario_chart(forecast: pd.DataFrame, theme_type: str) -> alt.LayerChart:
     colors = PALETTE[theme_type]
     color_scale = alt.Scale(domain=["Ensemble baseline", "SVAR shock scenario"], range=[colors["baseline"], colors["scenario"]])
     dash_scale = alt.Scale(domain=["Ensemble baseline", "SVAR shock scenario"], range=[[5, 3], [1, 0]])
     target_band, midpoint_rule = _rba_target_band(
-        forecast["quarter_date"].min(), forecast["quarter_date"].max(), colors, y_axis_title
+        forecast["quarter_date"].min(), forecast["quarter_date"].max(), colors, SCENARIO_AXIS_TITLE
     )
     band = (
         alt.Chart(forecast)
         .mark_area(opacity=0.14)
         .encode(
             x=alt.X("quarter_date:T", title="Quarter"),
-            y=alt.Y("lower_ci:Q", title=y_axis_title),
+            y=alt.Y("lower_ci:Q", title=SCENARIO_AXIS_TITLE),
             y2="upper_ci:Q",
             color=alt.Color("series:N", scale=color_scale, title=None),
             tooltip=[
@@ -404,7 +398,7 @@ def build_scenario_chart(forecast: pd.DataFrame, theme_type: str, y_axis_title: 
         .mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=45))
         .encode(
             x="quarter_date:T",
-            y=alt.Y("forecast:Q", title=y_axis_title),
+            y=alt.Y("forecast:Q", title=SCENARIO_AXIS_TITLE),
             color=alt.Color("series:N", scale=color_scale, title=None, legend=alt.Legend(orient="bottom")),
             strokeDash=alt.StrokeDash("series:N", scale=dash_scale, legend=None),
             tooltip=["series:N", "quarter_date:T", alt.Tooltip("forecast:Q", title="Forecast", format=".2f")],
@@ -446,8 +440,7 @@ def _history_frame(curated: pd.DataFrame) -> pd.DataFrame:
 
 def _forecast_frame(curated: pd.DataFrame, family_forecast: dict) -> pd.DataFrame:
     """One family's forecast rows, bridged to the observed value at the forecast origin."""
-    fallback = float(curated[HISTORY_COLUMN].dropna().iloc[-1])
-    anchor_value = _anchor_value(curated, HISTORY_COLUMN, family_forecast["forecast_origin"], fallback)
+    anchor_value = _anchor_value(curated, family_forecast["forecast_origin"])
     frame = _scenario_frame(family_forecast, anchor_value, "Forecast")
     frame["target"] = "Headline"
     return frame
@@ -618,17 +611,17 @@ with ensemble_tab:
         if play:
             for step in range(1, n_draws + 1, max(1, n_draws // 60)):
                 chart_placeholder.altair_chart(
-                    build_ensemble_path_chart(sample, fan, step, theme_type, ENSEMBLE_VALUE_LABEL),
+                    build_ensemble_path_chart(sample, fan, step, theme_type),
                     width="stretch",
                 )
                 time.sleep(0.03)
             chart_placeholder.altair_chart(
-                build_ensemble_path_chart(sample, fan, n_draws, theme_type, ENSEMBLE_VALUE_LABEL),
+                build_ensemble_path_chart(sample, fan, n_draws, theme_type),
                 width="stretch",
             )
         else:
             chart_placeholder.altair_chart(
-                build_ensemble_path_chart(sample, fan, n_reveal, theme_type, ENSEMBLE_VALUE_LABEL),
+                build_ensemble_path_chart(sample, fan, n_reveal, theme_type),
                 width="stretch",
             )
 
@@ -704,24 +697,21 @@ with scenario_tab:
     scenario_result = st.session_state.get("scenario_result")
     if scenario_result is None:
         st.info("Run the scenario to fetch the live SVAR-adjusted forecast.")
+    elif scenario_result["error"]:
+        st.info(scenario_result["error"])
     else:
         scenario_payload = scenario_result["payload"]
-        scenario_error = scenario_result["error"]
         baseline_payload = scenario_result["baseline_payload"]
-
-    if scenario_result is not None and scenario_error:
-        st.info(scenario_error)
-    elif scenario_result is not None and scenario_payload is not None:
         scenario_metric_cols = st.columns(3)
         scenario_metric_cols[0].metric("Forecast origin", scenario_payload["forecast_origin"])
         scenario_metric_cols[1].metric("Shock value", f"{scenario_payload['shock_value']:.3f}")
         scenario_metric_cols[2].metric("Shock size", f"{scenario_payload['shock_size']:.3f}")
 
-        anchor_value = _anchor_value(curated, HISTORY_COLUMN, scenario_payload["forecast_origin"])
+        anchor_value = _anchor_value(curated, scenario_payload["forecast_origin"])
         scenario_frame = _scenario_frame(scenario_payload, anchor_value, "SVAR shock scenario")
         baseline_ensemble = _family_map(baseline_payload).get("ensemble") if baseline_payload else None
         if baseline_ensemble is not None:
-            baseline_anchor_value = _anchor_value(curated, HISTORY_COLUMN, baseline_ensemble["forecast_origin"])
+            baseline_anchor_value = _anchor_value(curated, baseline_ensemble["forecast_origin"])
             baseline_frame = _scenario_frame(baseline_ensemble, baseline_anchor_value, "Ensemble baseline")
             scenario_chart_frame = pd.concat([baseline_frame, scenario_frame], ignore_index=True)
         else:
@@ -732,7 +722,7 @@ with scenario_tab:
             "Read-only overlay: the dashed Ensemble baseline is SARIMA + Elastic Net only; the "
             "solid line is the scenario endpoint's SVAR-adjusted Ensemble draw."
         )
-        st.altair_chart(build_scenario_chart(scenario_chart_frame, theme_type, SCENARIO_AXIS_TITLE), width="stretch")
+        st.altair_chart(build_scenario_chart(scenario_chart_frame, theme_type), width="stretch")
         st.warning(scenario_payload["caveat"])
         with st.expander("Scenario forecast table"):
             scenario_table = pd.DataFrame(

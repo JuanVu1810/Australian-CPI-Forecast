@@ -2,6 +2,8 @@
 
 [![content: AI-generated](../book/australian_cpi_forecasting/_static/badges/ai-generated.svg)](https://juanvu1810.github.io/Australian-CPI-Forecast/intro.html#ai-acknowledgement)
 
+> **Update 2026-10-19:** the project now forecasts headline CPI only. System B (trimmed mean) is kept inside the SVAR as an underlying-inflation robustness check and as the source of the credit-stress unemployment scenarios, but it is no longer a forecast target.
+
 Date: 2026-08-28
 
 Scope: Phase 1b evidence note for the two five-variable SVAR systems gated in

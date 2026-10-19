@@ -12,7 +12,6 @@ project (ETL, models, API, Streamlit) reads this table.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import create_engine, text

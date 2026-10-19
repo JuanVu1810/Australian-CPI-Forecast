@@ -1,8 +1,8 @@
 """Five-variable SVAR utilities for CPI scenario and impulse-response work.
 
-The Phase 1a gate checks live here alongside the Phase 1b VAR(2)-in-levels
-wrappers, recursive Cholesky IRFs, bootstrap bands, diagnostics, and primary
-System B walk-forward diagnostic backtest.
+The Phase 1a gate checks (lag order, unit roots, cointegration, stability) live
+here alongside the Phase 1b VAR(2)-in-levels wrappers, recursive Cholesky IRFs,
+bootstrap bands and residual diagnostics.
 """
 
 from __future__ import annotations
@@ -19,12 +19,7 @@ from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.vector_ar.var_model import VAR
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 
-from src.models.evaluation import (
-    DEFAULT_HORIZONS,
-    DEFAULT_INITIAL_TRAIN_SIZE,
-    compute_metric_table,
-    walk_forward_backtest_direct_multihorizon,
-)
+from src.models.evaluation import DEFAULT_HORIZONS
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -133,14 +128,6 @@ class SVARDiagnostics:
 
     multivariate_tests: pd.DataFrame
     equation_tests: pd.DataFrame
-
-
-@dataclass(frozen=True)
-class SVARBacktestResult:
-    """System-level point-forecast backtest and metric summary."""
-
-    predictions: pd.DataFrame
-    metrics: pd.DataFrame
 
 
 def load_svar_level_frame(
@@ -332,18 +319,6 @@ def forecast_from_fit(fitted, steps: int = max(DEFAULT_HORIZONS)) -> pd.DataFram
     history = np.asarray(fitted.endog, dtype=float)[-fitted.k_ar :]
     forecast = fitted.forecast(y=history, steps=steps)
     return pd.DataFrame(forecast, index=_future_index(fitted, steps), columns=list(fitted.names))
-
-
-def forecast_svar(
-    data: pd.DataFrame,
-    steps: int = max(DEFAULT_HORIZONS),
-    lag_order: int = DEFAULT_SVAR_LAG_ORDER,
-    ordering: Sequence[str] | None = None,
-    trend: str = "c",
-) -> pd.DataFrame:
-    """Fit a levels VAR and return ``steps`` out-of-sample forecasts."""
-    fitted = fit_svar(data=data, lag_order=lag_order, ordering=ordering, trend=trend)
-    return forecast_from_fit(fitted=fitted, steps=steps)
 
 
 def simulate_paths_from_fit(
@@ -593,52 +568,6 @@ def bootstrap_orth_irf_draws(
     )
 
 
-def compare_system_a_to_b_irf_bands(
-    system_a_bands: pd.DataFrame,
-    system_b_bands: pd.DataFrame,
-    shared_shocks: Sequence[str] = SHARED_ESCALATION_SHOCKS,
-    horizons: Sequence[int] = DEFAULT_HORIZONS,
-    system_a_response: str = "cpi_yoy",
-    system_b_response: str = "trimmed_mean_cpi_yoy",
-) -> pd.DataFrame:
-    """Compare 80% IRF bands for the fixed Phase 1b System A escalation rule."""
-    requested_horizons = _validate_positive_horizons(horizons)
-    a = _select_irf_band_rows(
-        system_a_bands,
-        response=system_a_response,
-        shocks=shared_shocks,
-        horizons=requested_horizons,
-        system_label="system_a",
-    )
-    b = _select_irf_band_rows(
-        system_b_bands,
-        response=system_b_response,
-        shocks=shared_shocks,
-        horizons=requested_horizons,
-        system_label="system_b",
-    )
-    comparison = a.merge(b, on=["shock", "horizon"], how="outer", validate="one_to_one")
-    required = ["system_a_lower", "system_a_upper", "system_b_lower", "system_b_upper"]
-    if comparison[required].isna().any(axis=None):
-        missing = comparison.loc[comparison[required].isna().any(axis=1), ["shock", "horizon"]]
-        raise ValueError(f"missing IRF band rows for escalation comparison: {missing.to_dict('records')}")
-
-    comparison["non_overlapping"] = (
-        comparison["system_a_upper"].astype(float) < comparison["system_b_lower"].astype(float)
-    ) | (
-        comparison["system_b_upper"].astype(float) < comparison["system_a_lower"].astype(float)
-    )
-    comparison["escalate_system_a"] = comparison["non_overlapping"].astype(bool)
-    return comparison.sort_values(["shock", "horizon"]).reset_index(drop=True)
-
-
-def system_a_requires_full_treatment(comparison: pd.DataFrame) -> bool:
-    """Return whether any shared-shock horizon triggers System A escalation."""
-    if "escalate_system_a" not in comparison:
-        raise ValueError("comparison must contain an 'escalate_system_a' column.")
-    return bool(comparison["escalate_system_a"].astype(bool).any())
-
-
 def svar_diagnostics(
     fitted,
     whiteness_nlags: int = DEFAULT_WHITENESS_NLAGS,
@@ -691,41 +620,6 @@ def svar_diagnostics(
     return SVARDiagnostics(
         multivariate_tests=pd.DataFrame(multivariate_rows),
         equation_tests=pd.DataFrame(equation_rows),
-    )
-
-
-def walk_forward_svar_backtest(
-    data: pd.DataFrame,
-    target_column: str,
-    ordering: Sequence[str],
-    lag_order: int = DEFAULT_SVAR_LAG_ORDER,
-    initial_train_size: int = DEFAULT_INITIAL_TRAIN_SIZE,
-    horizons: Sequence[int] = DEFAULT_HORIZONS,
-    trend: str = "c",
-    model_name: str = "svar",
-) -> SVARBacktestResult:
-    """Run a diagnostic expanding-window point forecast backtest for one SVAR."""
-    frame = _prepare_ordered_var_frame(data, ordering=ordering)
-    if target_column not in frame.columns:
-        raise ValueError(f"target_column {target_column!r} is not present in data.")
-    exog_columns = tuple(column for column in frame.columns if column != target_column)
-
-    def forecast_target(train_frame, steps):
-        forecast = forecast_svar(train_frame, steps=steps, lag_order=lag_order, ordering=ordering, trend=trend)
-        return forecast[target_column]
-
-    predictions = walk_forward_backtest_direct_multihorizon(
-        series=frame[target_column],
-        exog=frame.loc[:, list(exog_columns)],
-        forecast_func=forecast_target,
-        initial_train_size=initial_train_size,
-        horizons=horizons,
-        model_name=model_name,
-        target_column=target_column,
-    )
-    return SVARBacktestResult(
-        predictions=predictions,
-        metrics=compute_metric_table(predictions),
     )
 
 
@@ -930,34 +824,6 @@ def _simulate_var_history_with_residuals(
             predicted += np.asarray(fitted.coefs[lag - 1], dtype=float) @ values[t - lag]
         values[t] = predicted + residuals[t - fitted.k_ar]
     return values
-
-
-def _select_irf_band_rows(
-    bands: pd.DataFrame,
-    response: str,
-    shocks: Sequence[str],
-    horizons: Sequence[int],
-    system_label: str,
-) -> pd.DataFrame:
-    """Pick one system's band rows for the given response, shocks and horizons."""
-    required = {"response", "shock", "horizon", "lower", "upper"}
-    missing = required.difference(bands.columns)
-    if missing:
-        raise ValueError(f"{system_label} bands missing required columns: {sorted(missing)}")
-    selected = bands.loc[
-        bands["response"].eq(response)
-        & bands["shock"].isin(tuple(shocks))
-        & bands["horizon"].astype(int).isin(tuple(horizons)),
-        ["shock", "horizon", "lower", "upper"],
-    ].copy()
-    selected["horizon"] = selected["horizon"].astype(int)
-    selected = selected.rename(
-        columns={
-            "lower": f"{system_label}_lower",
-            "upper": f"{system_label}_upper",
-        }
-    )
-    return selected
 
 
 def _hypothesis_test_row(test_name: str, result) -> dict[str, object]:

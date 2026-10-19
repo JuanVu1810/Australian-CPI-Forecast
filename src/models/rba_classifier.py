@@ -55,16 +55,10 @@ CONFIDENCE_MODELS = (
     "taylor_rule_estimated",
 )
 PROBABILITY_COLUMNS = tuple(f"p_{action}" for action in ACTION_ORDER)
-THRESHOLD_FEATURE_COLUMNS = ("headline_forecast",)
-TAYLOR_FEATURE_COLUMNS = ("headline_forecast", "unemployment_rate_change_lag1")
-BASE_CLASSIFIER_FEATURE_COLUMNS = (
-    "headline_forecast",
-    "unemployment_rate_change_lag1",
-)
-ORDINAL_FEATURE_COLUMNS = BASE_CLASSIFIER_FEATURE_COLUMNS
+# Inputs of the ordered models; the threshold rule uses headline_forecast alone.
+ORDINAL_FEATURE_COLUMNS = ("headline_forecast", "unemployment_rate_change_lag1")
 TAYLOR_IMPLIED_CHANGE_COLUMN = "taylor_implied_change"
-XGBOOST_FEATURE_COLUMNS = (*BASE_CLASSIFIER_FEATURE_COLUMNS, TAYLOR_IMPLIED_CHANGE_COLUMN)
-FEATURE_COLUMNS = ORDINAL_FEATURE_COLUMNS
+XGBOOST_FEATURE_COLUMNS = (*ORDINAL_FEATURE_COLUMNS, TAYLOR_IMPLIED_CHANGE_COLUMN)
 TAYLOR_INFLATION_TARGET_MIDPOINT = 2.5
 TAYLOR_INFLATION_COEFFICIENT = 0.5
 TAYLOR_UNEMPLOYMENT_CHANGE_COEFFICIENT = 0.5
@@ -161,7 +155,7 @@ def assemble_policy_sample(
     sample["policy_action"] = discretize_cash_rate_change(sample["cash_rate_change"])
     sample = sample.dropna(
         subset=[
-            *FEATURE_COLUMNS,
+            *ORDINAL_FEATURE_COLUMNS,
             "cash_rate",
             "cash_rate_lag1",
             "cash_rate_change",

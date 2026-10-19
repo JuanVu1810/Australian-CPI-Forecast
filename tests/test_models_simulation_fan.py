@@ -142,16 +142,3 @@ def test_sample_paths_frame_rejects_out_of_range_horizons():
     else:
         raise AssertionError("expected a ValueError for an out-of-range horizon")
 
-
-def test_simulation_fan_output_paths_are_distinct_and_named():
-    expected_names = {
-        "simulation_fan_sarima.csv",
-        "simulation_fan_elastic_net.csv",
-        "simulation_fan_ensemble.csv",
-        "simulation_fan_svar_headline.csv",
-    }
-    output_paths = tuple(simulation_fan.SIMULATION_FAN_OUTPUT_PATHS.values())
-
-    assert len(output_paths) == 4
-    assert len(set(output_paths)) == 4
-    assert {path.name for path in output_paths} == expected_names

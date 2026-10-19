@@ -32,7 +32,7 @@ INTERVAL_CALIBRATION_VALIDATION_OUTPUT_PATH = (
     PROJECT_ROOT / "reports/model_interval_calibration_validation.csv"
 )
 DEFAULT_CALIBRATION_FRACTION = 0.7
-DEFAULT_FAMILIES = ("sarima", "elastic_net", "ensemble")
+SERVED_FAMILIES = ("sarima", "elastic_net", "ensemble")
 
 
 def _calibration_origin_count(total_origins: int, calibration_fraction: float) -> int:
@@ -143,7 +143,6 @@ def run_interval_calibration(
     n_sims: int = DEFAULT_N_SIMS,
     seed: int = DEFAULT_SEED,
     calibration_fraction: float = DEFAULT_CALIBRATION_FRACTION,
-    families: tuple[str, ...] = DEFAULT_FAMILIES,
     verbose: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Write the serving scale factors and a held-out before/after coverage comparison; return both tables.
@@ -161,7 +160,6 @@ def run_interval_calibration(
         upper_quantile=upper_quantile,
         n_sims=n_sims,
         seed=seed,
-        families=families,
         verbose=verbose,
     )
     if predictions.empty:
@@ -175,7 +173,7 @@ def run_interval_calibration(
     )
 
     comparison_frames = []
-    for family in families:
+    for family in SERVED_FAMILIES:
         family_rows = predictions.loc[predictions["model"].eq(family)]
         origins = sorted(family_rows["forecast_origin"].unique())
         calibration_origins = _calibration_origin_count(len(origins), calibration_fraction)

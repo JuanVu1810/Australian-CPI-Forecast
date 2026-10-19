@@ -62,14 +62,22 @@ def recenter_paths_to_median(paths: np.ndarray, target_median) -> np.ndarray:
     return values + (target - current_median)
 
 
+def _sarima_training_series(train_frame: pd.DataFrame, sarima_series: pd.Series | None) -> pd.Series:
+    """The series SARIMA fits on: ``sarima_series`` when given, else the frame's target column."""
+    if sarima_series is None:
+        return train_frame[TARGET_COLUMN]
+    return pd.Series(sarima_series).dropna().astype(float)
+
+
 def forecast_ensemble(
     train_frame: pd.DataFrame,
     steps: int = 8,
     seed: int = DEFAULT_SEED,
+    sarima_series: pd.Series | None = None,
 ) -> np.ndarray:
     """Fit both components on raw training data and average their point forecasts."""
     sarima_forecast = forecast_sarima(
-        train_frame[TARGET_COLUMN],
+        _sarima_training_series(train_frame, sarima_series),
         steps=steps,
         order=SARIMA_DEFAULT_ORDER,
         seasonal_order=SARIMA_DEFAULT_SEASONAL_ORDER,
@@ -92,13 +100,8 @@ def simulate_ensemble_paths(
     sarima_series: pd.Series | None = None,
 ) -> np.ndarray:
     """Fit both components on raw training data and average their predictive draws."""
-    sarima_train = (
-        pd.Series(sarima_series).dropna().astype(float)
-        if sarima_series is not None
-        else train_frame[TARGET_COLUMN]
-    )
     sarima_paths = simulate_sarima_paths(
-        sarima_train,
+        _sarima_training_series(train_frame, sarima_series),
         steps=steps,
         n_sims=n_sims,
         order=SARIMA_DEFAULT_ORDER,
@@ -117,34 +120,8 @@ def simulate_ensemble_paths(
     # WHY recenter: the median of an average of two simulations is not the average of their point
     # forecasts, so shift the draws onto the ensemble point forecast to make the reported forecast
     # and the interval centre agree exactly.
-    sarima_point = forecast_sarima(
-        sarima_train,
-        steps=steps,
-        order=SARIMA_DEFAULT_ORDER,
-        seasonal_order=SARIMA_DEFAULT_SEASONAL_ORDER,
-    )
-    elastic_net_point = forecast_elastic_net_direct(
-        train_frame,
-        steps=steps,
-        seed=seed,
-        feature_columns=ELASTIC_NET_FEATURE_COLUMNS,
-        target_column=TARGET_COLUMN,
-    )
-    return recenter_paths_to_median(combined, combine_point_forecasts(sarima_point, elastic_net_point))
-
-
-def ensemble_interval_from_paths(
-    paths,
-    lower: float = 0.1,
-    upper: float = 0.9,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Convert ensemble draws into lower/upper forecast interval arrays."""
-    lower_values, upper_values = np.percentile(
-        np.asarray(paths, dtype=float),
-        [lower * 100, upper * 100],
-        axis=0,
-    )
-    return lower_values, upper_values
+    point_forecast = forecast_ensemble(train_frame, steps=steps, seed=seed, sarima_series=sarima_series)
+    return recenter_paths_to_median(combined, point_forecast)
 
 
 def _ensemble_prediction_frame(
@@ -173,14 +150,4 @@ def _ensemble_prediction_frame(
     result["actual"] = merged["actual_sarima"].astype(float).to_numpy()
     result["forecast"] = forecast
     result["error"] = result["actual"] - result["forecast"]
-    return result[
-        [
-            "model",
-            "forecast_origin",
-            "target_quarter",
-            "horizon",
-            "actual",
-            "forecast",
-            "error",
-        ]
-    ]
+    return result
