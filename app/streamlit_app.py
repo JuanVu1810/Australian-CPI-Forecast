@@ -237,6 +237,7 @@ def build_ensemble_path_chart(
         alt.layer(*layers)
         .properties(height=300)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
+        .configure_axisX(grid=False)
         .configure_view(strokeWidth=0)
     )
 
@@ -261,6 +262,7 @@ def build_static_rba_probability_chart(rba: pd.DataFrame, theme_type: str) -> al
         )
         .properties(height=200)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
+        .configure_axisY(grid=False)
         .configure_view(strokeWidth=0)
     )
 
@@ -368,6 +370,7 @@ def build_forecast_chart(history: pd.DataFrame, forecast: pd.DataFrame, theme_ty
         (target_band + midpoint_rule + band + actual_line + forecast_line + origin_rule)
         .properties(height=300)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
+        .configure_axisX(grid=False)
         .configure_view(strokeWidth=0)
     )
 
@@ -410,6 +413,7 @@ def build_scenario_chart(forecast: pd.DataFrame, theme_type: str) -> alt.LayerCh
         (target_band + midpoint_rule + band + forecast_line + origin_rule)
         .properties(height=300)
         .configure_axis(gridColor=colors["grid"], labelColor=colors["muted"], titleColor=colors["muted"])
+        .configure_axisX(grid=False)
         .configure_view(strokeWidth=0)
     )
 
