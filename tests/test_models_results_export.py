@@ -6,23 +6,21 @@ from src.models import results_export
 
 def test_build_svar_shock_events_frame_filters_to_target_own_shock(monkeypatch):
     target = "cpi_yoy"
-    systems = {
-        "Synthetic": {
-            "target": target,
-            "columns": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
-            "ordering": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
-        }
+    system = {
+        "target": target,
+        "columns": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
+        "ordering": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
     }
     index = pd.period_range("2023Q2", periods=12, freq="Q")
-    frame = pd.DataFrame(1.0, index=index, columns=list(systems["Synthetic"]["columns"]))
+    frame = pd.DataFrame(1.0, index=index, columns=list(system["columns"]))
 
     def fake_load_svar_level_frame(columns):
-        assert columns == systems["Synthetic"]["columns"]
+        assert columns == system["columns"]
         return frame
 
     def fake_fit_svar(data, ordering):
         assert data.index.max() == results_export.SVAR_EXPORT_FORECAST_ORIGIN
-        assert ordering == systems["Synthetic"]["ordering"]
+        assert ordering == system["ordering"]
         return object()
 
     def fake_structural_shocks(fitted):
@@ -36,7 +34,7 @@ def test_build_svar_shock_events_frame_filters_to_target_own_shock(monkeypatch):
                 rows.append({"quarter": quarter, "shock": shock, "shock_value": value})
         return pd.DataFrame(rows)
 
-    monkeypatch.setattr(results_export, "SVAR_SYSTEMS", systems)
+    monkeypatch.setattr(results_export, "SVAR_SYSTEM", system)
     monkeypatch.setattr(results_export.svar, "load_svar_level_frame", fake_load_svar_level_frame)
     monkeypatch.setattr(results_export.svar, "fit_svar", fake_fit_svar)
     monkeypatch.setattr(results_export.svar, "structural_shocks", fake_structural_shocks)
@@ -44,7 +42,6 @@ def test_build_svar_shock_events_frame_filters_to_target_own_shock(monkeypatch):
     events = results_export.build_svar_shock_events_frame()
 
     assert list(events.columns) == [
-        "system",
         "target",
         "forecast_origin",
         "quarter",
@@ -63,24 +60,22 @@ def test_build_svar_shock_events_frame_filters_to_target_own_shock(monkeypatch):
 def test_build_svar_historical_decomposition_frame_keeps_target_baseline_and_own_shock(
     monkeypatch,
 ):
-    target = "trimmed_mean_cpi_yoy"
-    systems = {
-        "Synthetic": {
-            "target": target,
-            "columns": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
-            "ordering": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
-        }
+    target = "cpi_yoy"
+    system = {
+        "target": target,
+        "columns": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
+        "ordering": (target, *results_export.svar.COMMON_MACRO_COLUMNS),
     }
     index = pd.period_range("2023Q2", periods=12, freq="Q")
-    frame = pd.DataFrame(1.0, index=index, columns=list(systems["Synthetic"]["columns"]))
+    frame = pd.DataFrame(1.0, index=index, columns=list(system["columns"]))
 
     def fake_load_svar_level_frame(columns):
-        assert columns == systems["Synthetic"]["columns"]
+        assert columns == system["columns"]
         return frame
 
     def fake_fit_svar(data, ordering):
         assert data.index.max() == results_export.SVAR_EXPORT_FORECAST_ORIGIN
-        assert ordering == systems["Synthetic"]["ordering"]
+        assert ordering == system["ordering"]
         return object()
 
     def fake_historical_decomposition(fitted):
@@ -97,7 +92,7 @@ def test_build_svar_historical_decomposition_frame_keeps_target_baseline_and_own
                 )
         return pd.DataFrame(rows)
 
-    monkeypatch.setattr(results_export, "SVAR_SYSTEMS", systems)
+    monkeypatch.setattr(results_export, "SVAR_SYSTEM", system)
     monkeypatch.setattr(results_export.svar, "load_svar_level_frame", fake_load_svar_level_frame)
     monkeypatch.setattr(results_export.svar, "fit_svar", fake_fit_svar)
     monkeypatch.setattr(
@@ -109,7 +104,6 @@ def test_build_svar_historical_decomposition_frame_keeps_target_baseline_and_own
     decomposition = results_export.build_svar_historical_decomposition_frame()
 
     assert list(decomposition.columns) == [
-        "system",
         "target",
         "forecast_origin",
         "quarter",

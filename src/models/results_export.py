@@ -16,12 +16,12 @@ Writes to reports/results/:
     model_comparison.csv      -- overall RMSE/MAE per family
     model_interval_coverage.csv -- overall coverage per family
     historical_indicators.csv -- tidy full-history series for every distinct
-                                 macro variable plus both CPI measures, with a
+                                 macro variable plus headline CPI, with a
                                  per-variable z-scored `value_standardized`
     svar_irf.csv              -- target responses to one-SD recursive Cholesky
                                  structural shocks, with bootstrap bands
     svar_shock_events.csv     -- located historical own-target structural
-                                 shocks, standardized within each system
+                                 shocks, standardized over its own history
     svar_historical_decomposition.csv -- each target's fitted-history path
                                  decomposed into baseline, own-shock and
                                  macro-shock contributions
@@ -47,7 +47,6 @@ SVAR_EXPORT_HORIZONS = tuple(range(1, 9))
 
 HISTORICAL_INDICATOR_COLUMNS = {
     "cpi_yoy": "Headline CPI YoY",
-    "trimmed_mean_cpi_yoy": "Trimmed Mean CPI YoY",
     "unemployment_rate": "Unemployment Rate",
     "cash_rate": "Cash Rate",
     "wpi_growth": "Wage Price Growth",
@@ -66,17 +65,10 @@ FORECAST_ENDPOINT = "/forecast/all"
 COMPARISON_REPORT_PATH = PROJECT_ROOT / "reports/model_comparison_all.csv"
 COVERAGE_REPORT_PATH = PROJECT_ROOT / "reports/model_interval_coverage.csv"
 
-SVAR_SYSTEMS = {
-    "System A": {
-        "target": "cpi_yoy",
-        "columns": svar.SYSTEM_A_COLUMNS,
-        "ordering": svar.SYSTEM_A_CHOLESKY_ORDER,
-    },
-    "System B": {
-        "target": "trimmed_mean_cpi_yoy",
-        "columns": svar.SYSTEM_B_COLUMNS,
-        "ordering": svar.SYSTEM_B_CHOLESKY_ORDER,
-    },
+SVAR_SYSTEM = {
+    "target": "cpi_yoy",
+    "columns": svar.SYSTEM_A_COLUMNS,
+    "ordering": svar.SYSTEM_A_CHOLESKY_ORDER,
 }
 
 
@@ -196,44 +188,27 @@ def build_historical_indicators_frame() -> pd.DataFrame:
     return long_frame.drop(columns=["mean", "std"])
 
 
-def _fit_pinned_svar(config: dict):
-    """Fit one SVAR system on data up to the export forecast origin."""
-    frame = svar.load_svar_level_frame(columns=config["columns"])
+def _fit_pinned_svar():
+    """Fit the SVAR on data up to the export forecast origin."""
+    frame = svar.load_svar_level_frame(columns=SVAR_SYSTEM["columns"])
     frame = frame.loc[frame.index <= SVAR_EXPORT_FORECAST_ORIGIN]
-    return svar.fit_svar(frame, ordering=config["ordering"])
+    return svar.fit_svar(frame, ordering=SVAR_SYSTEM["ordering"])
 
 
 def build_svar_irf_frame() -> pd.DataFrame:
-    """Each target's response to the four macro shocks, with bootstrap bands."""
-    frames = []
-    for system, config in SVAR_SYSTEMS.items():
-        target = str(config["target"])
-        fitted = _fit_pinned_svar(config)
-        point = svar.recursive_cholesky_irfs(
-            fitted,
-            horizons=SVAR_EXPORT_HORIZONS,
-        )
-        bands = svar.bootstrap_cholesky_irf_bands(
-            fitted,
-            horizons=SVAR_EXPORT_HORIZONS,
-        )
-        combined = point.merge(
-            bands.drop(columns=["irf"]),
-            on=["response", "shock", "horizon"],
-            how="left",
-        )
-        filtered = combined.loc[
-            combined["response"].eq(target)
-            & combined["shock"].isin(svar.COMMON_MACRO_COLUMNS)
-        ].copy()
-        filtered["system"] = system
-        filtered["target"] = target
-        filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
-        frames.append(filtered)
-
-    return pd.concat(frames, ignore_index=True)[
+    """The target's response to the four macro shocks, with bootstrap bands."""
+    target = str(SVAR_SYSTEM["target"])
+    fitted = _fit_pinned_svar()
+    point = svar.recursive_cholesky_irfs(fitted, horizons=SVAR_EXPORT_HORIZONS)
+    bands = svar.bootstrap_cholesky_irf_bands(fitted, horizons=SVAR_EXPORT_HORIZONS)
+    combined = point.merge(bands.drop(columns=["irf"]), on=["response", "shock", "horizon"], how="left")
+    filtered = combined.loc[
+        combined["response"].eq(target) & combined["shock"].isin(svar.COMMON_MACRO_COLUMNS)
+    ].copy()
+    filtered["target"] = target
+    filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
+    return filtered[
         [
-            "system",
             "target",
             "forecast_origin",
             "response",
@@ -246,66 +221,34 @@ def build_svar_irf_frame() -> pd.DataFrame:
             "upper_quantile",
             "bootstrap_replications",
         ]
-    ]
+    ].reset_index(drop=True)
 
 
 def build_svar_shock_events_frame() -> pd.DataFrame:
-    """Each target's own structural shock per quarter, z-scored and flagged when |z| > 2."""
-    frames = []
-    for system, config in SVAR_SYSTEMS.items():
-        target = str(config["target"])
-        fitted = _fit_pinned_svar(config)
-        shocks = svar.structural_shocks(fitted)
-        # Locate quarters where the system target itself has an unusual
-        # structural shock; macro-driver contributions are shown separately
-        # in svar_historical_decomposition.csv.
-        filtered = shocks.loc[shocks["shock"].eq(target)].copy()
-        stats = filtered.groupby("shock")["shock_value"].agg(["mean", "std"])
-        filtered = filtered.join(stats, on="shock")
-        shock_std = filtered["std"].replace(0, np.nan)
-        filtered["shock_z"] = (filtered["shock_value"] - filtered["mean"]) / shock_std
-        filtered["flagged"] = filtered["shock_z"].abs().gt(2).fillna(False).astype(bool)
-        filtered["system"] = system
-        filtered["target"] = target
-        filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
-        frames.append(filtered)
-
-    return pd.concat(frames, ignore_index=True)[
-        [
-            "system",
-            "target",
-            "forecast_origin",
-            "quarter",
-            "shock",
-            "shock_z",
-            "flagged",
-        ]
-    ]
+    """The target's own structural shock per quarter, z-scored and flagged when |z| > 2."""
+    target = str(SVAR_SYSTEM["target"])
+    shocks = svar.structural_shocks(_fit_pinned_svar())
+    # Locate quarters where the target itself has an unusual structural shock; macro-driver
+    # contributions are shown separately in svar_historical_decomposition.csv.
+    filtered = shocks.loc[shocks["shock"].eq(target)].copy()
+    stats = filtered.groupby("shock")["shock_value"].agg(["mean", "std"])
+    filtered = filtered.join(stats, on="shock")
+    shock_std = filtered["std"].replace(0, np.nan)
+    filtered["shock_z"] = (filtered["shock_value"] - filtered["mean"]) / shock_std
+    filtered["flagged"] = filtered["shock_z"].abs().gt(2).fillna(False).astype(bool)
+    filtered["target"] = target
+    filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
+    return filtered[["target", "forecast_origin", "quarter", "shock", "shock_z", "flagged"]].reset_index(drop=True)
 
 
 def build_svar_historical_decomposition_frame() -> pd.DataFrame:
-    """Each target's fitted history split into baseline and per-shock contributions."""
-    frames = []
-    for system, config in SVAR_SYSTEMS.items():
-        target = str(config["target"])
-        fitted = _fit_pinned_svar(config)
-        decomposition = svar.historical_decomposition(fitted)
-        filtered = decomposition.loc[decomposition["response"].eq(target)].copy()
-        filtered["system"] = system
-        filtered["target"] = target
-        filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
-        frames.append(filtered)
-
-    return pd.concat(frames, ignore_index=True)[
-        [
-            "system",
-            "target",
-            "forecast_origin",
-            "quarter",
-            "component",
-            "contribution",
-        ]
-    ]
+    """The target's fitted history split into baseline and per-shock contributions."""
+    target = str(SVAR_SYSTEM["target"])
+    decomposition = svar.historical_decomposition(_fit_pinned_svar())
+    filtered = decomposition.loc[decomposition["response"].eq(target)].copy()
+    filtered["target"] = target
+    filtered["forecast_origin"] = str(SVAR_EXPORT_FORECAST_ORIGIN)
+    return filtered[["target", "forecast_origin", "quarter", "component", "contribution"]].reset_index(drop=True)
 
 
 def main() -> None:

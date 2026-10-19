@@ -269,10 +269,10 @@ def test_simulate_paths_from_fit_slices_presample_and_returns_stochastic_first_s
     assert not np.allclose(paths[:, 0, :], paths[0, 0, :])
 
 
-def test_forecast_cumulative_unemployment_change_quantiles_uses_system_b(monkeypatch):
+def test_forecast_cumulative_unemployment_change_quantiles_uses_the_svar(monkeypatch):
     frame = pd.DataFrame(
         {
-            "trimmed_mean_cpi_yoy": [2.1, 2.2, 2.3, 8.9],
+            "cpi_yoy": [2.1, 2.2, 2.3, 8.9],
             "unemployment_rate": [4.1, 4.2, 4.3, 9.9],
             "cash_rate": [3.8, 3.9, 4.0, 8.8],
             "commodity_growth": [0.5, 0.6, 0.7, 7.7],
@@ -283,7 +283,7 @@ def test_forecast_cumulative_unemployment_change_quantiles_uses_system_b(monkeyp
 
     class FakeFitted:
         names = [
-            "trimmed_mean_cpi_yoy",
+            "cpi_yoy",
             "unemployment_rate",
             "cash_rate",
             "commodity_growth",
@@ -294,13 +294,13 @@ def test_forecast_cumulative_unemployment_change_quantiles_uses_system_b(monkeyp
     simulated_unemployment = np.array([4.0, 4.4, 4.8, 5.2, 6.0])
 
     def fake_load_svar_level_frame(columns):
-        assert columns == svar.SYSTEM_B_COLUMNS
+        assert columns == svar.SYSTEM_A_COLUMNS
         return frame
 
     def fake_fit_svar(data, lag_order, ordering):
         assert data.index.tolist() == list(pd.period_range("2025Q2", "2025Q4", freq="Q"))
         assert lag_order == svar.DEFAULT_SVAR_LAG_ORDER
-        assert ordering == svar.SYSTEM_B_CHOLESKY_ORDER
+        assert ordering == svar.SYSTEM_A_CHOLESKY_ORDER
         return fitted_marker
 
     def fake_simulate_paths_from_fit(fitted, steps, n_sims, seed):

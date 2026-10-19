@@ -32,18 +32,10 @@ COMMON_MACRO_COLUMNS = (
     "inflation_expectations_business",
 )
 SYSTEM_A_COLUMNS = ("cpi_yoy", *COMMON_MACRO_COLUMNS)
-SYSTEM_B_COLUMNS = ("trimmed_mean_cpi_yoy", *COMMON_MACRO_COLUMNS)
 SYSTEM_A_CHOLESKY_ORDER = (
     "commodity_growth",
     "unemployment_rate",
     "cpi_yoy",
-    "inflation_expectations_business",
-    "cash_rate",
-)
-SYSTEM_B_CHOLESKY_ORDER = (
-    "commodity_growth",
-    "unemployment_rate",
-    "trimmed_mean_cpi_yoy",
     "inflation_expectations_business",
     "cash_rate",
 )
@@ -372,7 +364,7 @@ def forecast_cumulative_unemployment_change_quantiles(
     n_sims: int = DEFAULT_BOOTSTRAP_REPLICATIONS,
     seed: int = 42,
 ) -> tuple[list[float], str]:
-    """Return quantiles of System B's simulated cumulative unemployment-rate change.
+    """Return quantiles of the SVAR's simulated cumulative unemployment-rate change.
 
     Reuses the same block-bootstrap simulation machinery as
     ``simulate_paths_from_fit`` (already used for IRF bands and CPI simulation
@@ -382,13 +374,13 @@ def forecast_cumulative_unemployment_change_quantiles(
     if horizon < 1:
         raise ValueError("horizon must be at least 1.")
 
-    frame = load_svar_level_frame(columns=SYSTEM_B_COLUMNS)
+    frame = load_svar_level_frame(columns=SYSTEM_A_COLUMNS)
     frame = frame.loc[frame.index <= FORECAST_ORIGIN_PIN]
     forecast_origin = str(frame.index[-1])
     fitted = fit_svar(
         frame,
         lag_order=DEFAULT_SVAR_LAG_ORDER,
-        ordering=SYSTEM_B_CHOLESKY_ORDER,
+        ordering=SYSTEM_A_CHOLESKY_ORDER,
     )
     paths = simulate_paths_from_fit(fitted, steps=horizon, n_sims=n_sims, seed=seed)
     unemployment_index = fitted.names.index("unemployment_rate")
@@ -574,7 +566,7 @@ def svar_diagnostics(
     arch_lags: int = DEFAULT_ARCH_LAGS,
     significance_level: float = 0.05,
 ) -> SVARDiagnostics:
-    """Run full VAR diagnostics for a fitted System B or escalated System A."""
+    """Run full VAR diagnostics for a fitted system."""
     if whiteness_nlags <= fitted.k_ar:
         raise ValueError("whiteness_nlags must exceed the fitted VAR lag order.")
     if arch_lags < 1:

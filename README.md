@@ -28,7 +28,7 @@ call. This README only covers status and how to run the project.
 |---|---|
 | Data retrieval, ETL, validation (custom + Pandera), Parquet, DuckDB | implemented |
 | SARIMA, Elastic Net and a 50/50 Ensemble for headline CPI, walk-forward validated | implemented |
-| SVAR and scenario engine | implemented locally; illustrative, since both VAR systems fail residual whiteness and normality diagnostics |
+| SVAR and scenario engine | implemented locally; illustrative, since the VAR fails residual whiteness and normality diagnostics |
 | RBA policy-action classifier | implemented; served by the Cloud Run API since 2026-09-21 |
 | Credit-risk stress test and illustrative 12-month ECL | implemented; illustrative only; served by the Cloud Run API since 2026-09-21 |
 | Saved models | the fitted SARIMA and Elastic Net models are `joblib` files in `models/`, committed to the repository (about 5 MB); the API loads them. No experiment tracking, no model registry |
@@ -372,7 +372,7 @@ accounts, so skip them unless you want to host your own copy.
 ### Deploy to Google Cloud Run
 
 The live service is `cpi-forecast-juan` in `asia-southeast1`. **It was deployed on 2026-10-19 from the code before the
-simplification pass:** it still serves `/forecast/trimmed-mean/all` and an Ensemble weighted by inverse RMSE, while this
+simplification pass:** it still serves `/forecast/trimmed-mean/all`, an Ensemble weighted by inverse RMSE and credit-stress scenarios from the old trimmed-mean SVAR, while this
 repository serves headline CPI only, with a plain 50/50 Ensemble. Redeploy to bring them in line (the numbers in the book
 come from the repository, not from the live service). The steps below push the exact image
 you tested to Artifact Registry and deploy it. They assume the Artifact Registry repository `cpi-forecast`
@@ -542,8 +542,8 @@ is not in the repository. The executed EDA is in the book's appendix.
 
 ## Scope and caveats
 
-The forecasts are a methodology demonstration, not decision-ready. Both SVAR
-systems fail multivariate residual whiteness and normality diagnostics, so the
+The forecasts are a methodology demonstration, not decision-ready. The SVAR
+fails multivariate residual whiteness and normality diagnostics, so the
 scenario outputs are illustrative rather than causal. The credit-stress ECL is
 a simplified, Stage-1-only, 12-month calculation. It is not comparable to any
 bank's real provision and must not be used for credit, regulatory or accounting
