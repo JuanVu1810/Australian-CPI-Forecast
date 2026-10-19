@@ -71,18 +71,19 @@ SECONDARY_MODELS = (
     "majority_vote_ensemble",
 )
 ACTION_LABELS = {"cut": "P(Cut)", "hold": "P(Hold)", "hike": "P(Hike)"}
-ACTION_COLORS = {"cut": "#2a78d6", "hold": "#898781", "hike": "#eb6834"}
+ACTION_COLORS = {"cut": "#2f6db5", "hold": "#898781", "hike": "#b8651b"}
 
+# Same three colours as the book (teal, amber, blue), checked with the data-viz palette validator in both themes.
 PALETTE = {
     "light": {
-        "fan": "#eb6834", "median": "#a33d19", "muted": "#898781", "grid": "#e1e0d9",
-        "accent2": "#3a6b63", "headline": "#2a78d6", "target": "#2f8f5b", "midpoint": "#4d6b57",
-        "scenario": "#eb6834", "baseline": "#2a78d6",
+        "fan": "#0a8f7a", "median": "#076b5c", "muted": "#898781", "grid": "#e1e0d9",
+        "accent2": "#3a6b63", "headline": "#0a8f7a", "target": "#2f8f5b", "midpoint": "#4d6b57",
+        "scenario": "#b8651b", "baseline": "#2f6db5",
     },
     "dark": {
-        "fan": "#d95926", "median": "#ffb08f", "muted": "#a8a49c", "grid": "#2c2c2a",
-        "accent2": "#7fc4b8", "headline": "#3987e5", "target": "#61b983", "midpoint": "#8eb89b",
-        "scenario": "#d95926", "baseline": "#3987e5",
+        "fan": "#0a8f7a", "median": "#5fd1bd", "muted": "#a8a49c", "grid": "#2c2c2a",
+        "accent2": "#7fc4b8", "headline": "#0a8f7a", "target": "#61b983", "midpoint": "#8eb89b",
+        "scenario": "#b8651b", "baseline": "#2f6db5",
     },
 }
 
