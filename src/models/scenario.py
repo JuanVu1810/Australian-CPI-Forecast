@@ -78,6 +78,26 @@ def compute_shock_size(
     return float(shock_value) - expected_h1
 
 
+def irf_per_unit_of_shock(irf_draws: np.ndarray, shock_index: int) -> np.ndarray:
+    """Rescale IRF draws from "per one-SD shock" to "per one unit of the shocked variable".
+
+    WHY: statsmodels' orthogonalised IRFs answer "what follows a one-standard-deviation shock", but the
+    scenario shock is in the variable's own units (for example +0.5 points of unemployment). Dividing each
+    draw by how far its own shock moves the shocked variable on impact (period 0, a positive Cholesky
+    diagonal) makes the impact exactly 1 unit, so shock_size * IRF is in the right units.
+    """
+    irfs = np.asarray(irf_draws, dtype=float)
+    if irfs.ndim != 4:
+        raise ValueError("irf_draws must have shape (n_draws, periods, n_vars, n_vars).")
+    if not 0 <= shock_index < irfs.shape[3]:
+        raise ValueError("shock_index is outside the IRF shock dimension.")
+
+    own_impact = irfs[:, 0, shock_index, shock_index]
+    if not (np.isfinite(own_impact).all() and (own_impact > 0).all()):
+        raise ValueError("every IRF draw needs a positive, finite own-variable impact at period 0.")
+    return irfs / own_impact[:, None, None, None]
+
+
 def combine_scenario_paths(
     tier1_paths: np.ndarray,
     irf_draws: np.ndarray,
@@ -87,6 +107,8 @@ def combine_scenario_paths(
     horizons: Sequence[int] = DEFAULT_HORIZONS,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Pair ensemble draw ``i`` with SVAR IRF draw ``i`` and add shock_size * IRF; return (combined, contribution).
+
+    The IRF draws must already be per one unit of the shocked variable (see ``irf_per_unit_of_shock``).
 
     The shock happens at t+1 (it is measured against the SVAR's horizon-1 forecast), so CPI horizon h
     takes the IRF at index h - 1, and horizon 1 gets the same-quarter impact at index 0.
@@ -177,6 +199,7 @@ def run_scenario(
         seed=seed + 10_000,
     )
     names = tuple(str(name) for name in fitted_svar.names)
+    irf_draws = irf_per_unit_of_shock(irf_draws, shock_index=names.index(shock_variable))
     combined_paths, contribution = combine_scenario_paths(
         tier1_paths=tier1_paths,
         irf_draws=irf_draws,

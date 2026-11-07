@@ -23,6 +23,26 @@ def test_compute_shock_size_uses_horizon_one_svar_surprise():
     assert shock_size == 0.5
 
 
+def test_irf_per_unit_of_shock_makes_the_own_impact_exactly_one():
+    irf_draws = np.zeros((2, 3, 2, 2), dtype=float)
+    irf_draws[:, 0, 1, 1] = [0.25, 0.5]  # a one-SD shock moves the shocked variable by 0.25 or 0.5
+    irf_draws[:, 1, 0, 1] = [0.5, 0.5]  # and moves the target by 0.5 a quarter later
+
+    rescaled = scenario.irf_per_unit_of_shock(irf_draws, shock_index=1)
+
+    np.testing.assert_allclose(rescaled[:, 0, 1, 1], [1.0, 1.0])
+    np.testing.assert_allclose(rescaled[:, 1, 0, 1], [2.0, 1.0])
+    assert irf_draws[0, 1, 0, 1] == 0.5  # the input is not changed
+
+
+def test_irf_per_unit_of_shock_rejects_a_zero_own_impact():
+    irf_draws = np.zeros((2, 3, 2, 2), dtype=float)
+    irf_draws[:, 0, 1, 1] = [1.0, 0.0]
+
+    with pytest.raises(ValueError, match="own-variable impact"):
+        scenario.irf_per_unit_of_shock(irf_draws, shock_index=1)
+
+
 def test_combine_scenario_paths_zero_shock_collapses_exactly_to_tier1():
     tier1_paths = np.array(
         [
@@ -140,6 +160,7 @@ def test_run_scenario_keeps_tier1_paths_independent_of_shock_size(monkeypatch, t
         ]
     )
     irf_draws = np.zeros((3, 3, 5, 5), dtype=float)
+    irf_draws[:, 0, 1, 1] = 1.0  # own impact of 1 leaves the unit rescaling a no-op in this test
     irf_draws[:, 1, 2, 1] = [0.2, 0.3, 0.4]
     irf_draws[:, 2, 2, 1] = [0.5, 0.6, 0.7]
     captured_tier1 = []
