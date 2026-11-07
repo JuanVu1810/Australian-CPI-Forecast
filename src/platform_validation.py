@@ -8,8 +8,9 @@ import pandera.pandas as pa
 from src.validation import QualityRecord
 
 
-# The first rows of cpi_qoq and cpi_yoy are missing on purpose (no earlier quarter
-# to compare with), so those two columns allow nulls. Types are checked, not coerced.
+# The last rows of cpi_qoq and cpi_yoy are empty on purpose (quarters the ABS has not
+# published yet, 2026Q3 and 2026Q4 today), so those two columns allow nulls. Types are
+# checked, not coerced.
 CURATED_SCHEMA = pa.DataFrameSchema(
     {
         "quarter": pa.Column(str, nullable=False),
