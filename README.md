@@ -33,7 +33,7 @@ call. This README only covers status and how to run the project.
 | Credit-risk stress test and illustrative 12-month ECL | implemented; illustrative only; served by the Cloud Run API since 2026-09-21 |
 | Saved models | the fitted SARIMA and Elastic Net models are `joblib` files in `models/`, committed to the repository (about 5 MB); the API loads them. No experiment tracking, no model registry |
 | FastAPI | implemented, 7 endpoints; live on Cloud Run |
-| Docker and Google Cloud Run | last deployed 2026-10-19 as the Cloud Run service `cpi-forecast-juan` (revision `cpi-forecast-juan-00008-sus`, image tag `c0fa38e` in Artifact Registry repo `cpi-forecast`), with its forecasts checked against the repository's the same day. Serves the forecast, scenario, RBA and credit endpoints; redeploy is manual |
+| Docker and Google Cloud Run | last deployed 2026-11-07 as the Cloud Run service `cpi-forecast-juan` (revision `cpi-forecast-juan-00010-tif`, built from source with `gcloud run deploy --source .`, image in the Artifact Registry repo `cloud-run-source-deploy`). The new revision was deployed with no traffic first, then switched to 100%. Serves the forecast, scenario, RBA and credit endpoints; redeploy is manual (no workflow deploys it) |
 | Streamlit | deployed on Streamlit Community Cloud, verified live 2026-09-21: <https://cpi-forecast-demo.streamlit.app/>. A four-tab interactive demo that goes with the book (live forecast, Ensemble path reveal, scenario engine, RBA call) |
 | Jupyter Book | deployed to GitHub Pages by GitHub Actions |
 | Pinned setup | pinned versions (`constraints.txt`), saved models, and tests on the saved reports, SQL queries and models; see [Reproduce the results](#reproduce-the-results) |
@@ -371,9 +371,37 @@ accounts, so skip them unless you want to host your own copy.
 
 ### Deploy to Google Cloud Run
 
-The live service is `cpi-forecast-juan` in `asia-southeast1`. The steps below push the exact image
-you tested to Artifact Registry and deploy it. They assume the Artifact Registry repository `cpi-forecast`
-already exists in your project and that billing is on. Commit first, so the image tag names the code in it.
+The live service is `cpi-forecast-juan` in `asia-southeast1`. No workflow deploys it: pushing to GitHub
+updates the book and the Streamlit demo, but the API only changes when you run a deploy yourself. The image
+holds the code, the saved models, `data/curated`, `data/metadata` and `reports/`, so change any of those and
+you need a new deploy. Commit first, so the deploy matches a git commit.
+
+There are two ways. Option A is the one the live service uses today.
+
+**Option A: build in Google's cloud from the source (no local Docker).** Cloud Run uploads the folder, builds
+it from the `Dockerfile` and deploys it. The image goes into an Artifact Registry repository called
+`cloud-run-source-deploy`, which Cloud Run creates itself.
+
+```bash
+PROJECT=<project-id>; REGION=asia-southeast1; SERVICE=cpi-forecast-juan
+gcloud auth login
+gcloud config set project $PROJECT
+
+# One-off per project: the build runs as the default Compute Engine service account, which needs this role.
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member="serviceAccount:<project-number>-compute@developer.gserviceaccount.com" \
+  --role="roles/run.builder"
+
+# Hold the new version back on a private test address (the existing service keeps its settings).
+gcloud run deploy $SERVICE --source . --region $REGION --no-traffic --tag candidate
+```
+
+Without the role, the build fails with `403 ... does not have storage.objects.get access`. The upload sends
+your working folder, not the committed code, so keep `git status` clean.
+
+**Option B: build the image yourself and push it (needs Docker running).** Create the Artifact Registry
+repository once (`gcloud artifacts repositories create cpi-forecast --repository-format=docker
+--location=asia-southeast1`), then push the exact image you tested:
 
 ```bash
 PROJECT=<project-id>; REGION=asia-southeast1; SERVICE=cpi-forecast-juan
@@ -387,7 +415,7 @@ gcloud auth print-access-token | docker login -u oauth2accesstoken --password-st
 docker push $REPO/cpi-forecast-api:$TAG
 ```
 
-The first deploy creates the service:
+The very first deploy of a new service creates it and sets its size:
 
 ```bash
 gcloud run deploy $SERVICE --image $REPO/cpi-forecast-api:$TAG --region $REGION \
@@ -395,12 +423,21 @@ gcloud run deploy $SERVICE --image $REPO/cpi-forecast-api:$TAG --region $REGION 
   --min-instances 0 --max-instances 3 --allow-unauthenticated
 ```
 
-Later deploys can hold the new version back, test it, then switch:
+Later deploys keep those settings. Hold the new version back, test it, then switch:
 
 ```bash
 gcloud run deploy $SERVICE --image $REPO/cpi-forecast-api:$TAG --region $REGION \
   --no-traffic --tag candidate                                   # test the candidate URL it prints
+```
+
+**Test, switch and roll back (both options).** Open the candidate address
+(`https://candidate---<service-address>`), check `/health`, `/forecast/all` and anything you changed, then
+give the new revision all the traffic. In the console that is Cloud Run, the service, **Revisions**,
+**Manage traffic**.
+
+```bash
 gcloud run services update-traffic $SERVICE --region $REGION --to-latest
+gcloud run services describe $SERVICE --region $REGION --format='yaml(status.traffic)'   # the new revision must show percent: 100
 gcloud run services update-traffic $SERVICE --region $REGION --to-revisions <older-revision>=100   # roll back
 ```
 
